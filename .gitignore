@@ -1,0 +1,120 @@
+# Node / package managers
+node_modules/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.npm/
+
+# Frontend build and test output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Rust / Tauri build output
+target/
+src-tauri/target/
+
+# Logs, caches, and temporary files
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.dmp
+*.stackdump
+*~
+tmp/
+.tmp/
+.temp/
+.cache/
+logs/
+captures/
+recordings/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables and local runtime configuration
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+!.env.sample
+!*.env.sample
+.envrc
+.direnv/
+*.local
+
+# Credentials, tokens, private keys, and signing material
+.npmrc
+.yarnrc
+.pypirc
+.netrc
+.git-credentials
+.docker/config.json
+.aws/
+.azure/
+.config/gcloud/
+**/.cargo/credentials
+**/.cargo/credentials.toml
+credentials.json
+credentials.*.json
+*-credentials.json
+service-account*.json
+firebase-adminsdk-*.json
+google-services.json
+GoogleService-Info.plist
+secrets/
+.secrets/
+secret.*
+secrets.*
+*.secret
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.ppk
+*.jks
+*.keystore
+*.snk
+*.kdbx
+*.ovpn
+*.tfvars
+*.tfvars.json
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Local user data and diagnostic captures
+*.db
+*.sqlite
+*.sqlite3
+*.pcm
+*.raw
+*.wav
+*.reg
+
+# Optional third-party binary supplied locally by the developer
+src-tauri/assets/winuhid/WinUHid.dll
+
+# Editor / IDE / local agent tooling
+.vscode/
+.idea/
+.cursor/
+.reasonix/
+.codegraph/
+reasonix.toml
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Accidental installer copies in the repository root
+/*.msi
+/*-setup.exe
