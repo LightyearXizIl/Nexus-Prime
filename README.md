@@ -26,15 +26,15 @@ Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具�
 
 首页截图中的真实蓝牙地址已替换为占位符。
 
-![Nexus Prime 首页](./image/首页.png)
+![Nexus Prime 首页](./image/首页-v0.0.6.png)
 
 ### 按键映射
 
-![Nexus Prime 按键映射](./image/按键映射.jpg)
+![Nexus Prime 按键映射](./image/按键映射-v0.0.6.jpg)
 
 ### 全局设置
 
-![Nexus Prime 全局设置](./image/设置.jpg)
+![Nexus Prime 全局设置](./image/设置-v0.0.6.jpg)
 
 截图文件统一存放在 [`image/`](./image/)。
 
