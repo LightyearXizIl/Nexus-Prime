@@ -19,7 +19,7 @@ const theme = useThemeStore();
 const saved = ref(true);
 const saving = ref(false);
 const saveError = ref("");
-const appVersion = ref("v0.0.4");
+const appVersion = ref("v0.0.5");
 const activeSection = ref<SectionId>("general");
 const sectionRefs: Record<SectionId, Ref<HTMLElement | null>> = {
   general: ref(null),
@@ -231,26 +231,87 @@ async function openExternal(url: string) {
           </div>
           <div class="about-overview">
             <div><span>当前版本</span><strong>{{ appVersion }}</strong></div>
-            <div><span>运行时</span><strong>Rust · Tauri 2 · Vue 3</strong></div>
+            <div><span>技术栈</span><strong>Rust · Tauri 2 · Vue 3</strong></div>
             <div><span>支持设备</span><strong>小米遥控器 2 Pro</strong></div>
           </div>
           <div class="credits-grid">
             <article class="author-card">
               <img class="author-avatar" :src="lightYearAuthor" alt="Light year" />
-              <div>
+              <div class="author-card-copy">
                 <p class="credit-kicker">NEXUS PRIME</p>
                 <h3>Light year</h3>
-                <p>Windows 版重构与维护</p>
-                <span>微信号：XizllHZ_007</span>
+                <p class="author-description">Windows 版重构与维护</p>
+                <span class="author-contact">微信号：XizllHZ_007</span>
+                <button
+                  class="credit-link author-project-link"
+                  type="button"
+                  aria-label="打开 Nexus Prime GitHub 项目：LightyearXizIl/Nexus-Prime"
+                  @click="openExternal('https://github.com/LightyearXizIl/Nexus-Prime')"
+                >
+                  <span>GitHub：</span>
+                  <small>LightyearXizIl/Nexus-Prime</small>
+                </button>
               </div>
             </article>
-            <div class="source-list">
-              <p class="credit-kicker">源码与致谢</p>
-              <button type="button" @click="openExternal('https://gitee.com/mwlt/remote-voice-vibe-coding')"><span>原版 · Gitee</span><small>mwlt / remote-voice-vibe-coding</small></button>
-              <button type="button" @click="openExternal('https://github.com/mwlt/Voice_VibeCoding')"><span>原版 · GitHub</span><small>mwlt / Voice_VibeCoding</small></button>
-              <button type="button" @click="openExternal('https://github.com/xxb26553663-star/remote-bridge-hub')"><span>Python Windows 版</span><small>xxb26553663-star / remote-bridge-hub</small></button>
-              <button type="button" @click="openExternal('https://github.com/nijez/open-voice-bridge')"><span>macOS 版</span><small>nijez / open-voice-bridge</small></button>
-            </div>
+            <section class="source-list" aria-labelledby="source-list-title">
+              <p id="source-list-title" class="credit-kicker">源码与致谢</p>
+              <div class="source-cards">
+                <article class="source-card">
+                  <h3>Voice VibeCoding版</h3>
+                  <p class="source-author"><span>作者：</span><strong>mwlt</strong></p>
+                  <div class="source-links">
+                    <button
+                      class="credit-link"
+                      type="button"
+                      aria-label="打开 Voice VibeCoding 版 Gitee 项目：mwlt/remote-voice-vibe-coding"
+                      @click="openExternal('https://gitee.com/mwlt/remote-voice-vibe-coding')"
+                    >
+                      <span>Gitee：</span>
+                      <small>mwlt/remote-voice-vibe-coding</small>
+                    </button>
+                    <button
+                      class="credit-link"
+                      type="button"
+                      aria-label="打开 Voice VibeCoding 版 GitHub 项目：mwlt/Voice_VibeCoding"
+                      @click="openExternal('https://github.com/mwlt/Voice_VibeCoding')"
+                    >
+                      <span>GitHub：</span>
+                      <small>mwlt/Voice_VibeCoding</small>
+                    </button>
+                  </div>
+                </article>
+                <article class="source-card">
+                  <h3>Python Windows版</h3>
+                  <p class="source-author"><span>作者：</span><strong>xxb26553663-star</strong></p>
+                  <div class="source-links">
+                    <button
+                      class="credit-link"
+                      type="button"
+                      aria-label="打开 Python Windows 版 GitHub 项目：xxb26553663-star/remote-bridge-hub"
+                      @click="openExternal('https://github.com/xxb26553663-star/remote-bridge-hub')"
+                    >
+                      <span>GitHub：</span>
+                      <small>xxb26553663-star/remote-bridge-hub</small>
+                    </button>
+                  </div>
+                </article>
+                <article class="source-card">
+                  <h3>macOS版</h3>
+                  <p class="source-author"><span>作者：</span><strong>nijez</strong></p>
+                  <div class="source-links">
+                    <button
+                      class="credit-link"
+                      type="button"
+                      aria-label="打开 macOS 版 GitHub 项目：nijez/open-voice-bridge"
+                      @click="openExternal('https://github.com/nijez/open-voice-bridge')"
+                    >
+                      <span>GitHub：</span>
+                      <small>nijez/open-voice-bridge</small>
+                    </button>
+                  </div>
+                </article>
+              </div>
+            </section>
           </div>
         </section>
       </main>
@@ -323,17 +384,26 @@ async function openExternal(url: string) {
 .about-overview span { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 10px; }
 .about-overview strong { display: block; overflow: hidden; color: var(--text); font-size: 12px; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
 .credits-grid { display: grid; grid-template-columns: minmax(210px, 0.78fr) minmax(0, 1.22fr); gap: 14px; padding-top: 17px; border-top: 1px solid var(--border); }
-.author-card { display: flex; align-items: center; gap: 12px; padding: 14px; border-radius: 10px; background: var(--surface-soft); }
+.author-card { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 14px; border-radius: 10px; background: var(--surface-soft); }
 .author-avatar { width: 54px; height: 54px; flex: 0 0 54px; border: 1px solid var(--border); border-radius: 10px; object-fit: cover; background: #000; }
+.author-card-copy { min-width: 0; flex: 1; }
 .author-card h3 { margin: 0; color: var(--text); font-size: 14px; }
-.author-card p:not(.credit-kicker), .author-card span { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
-.author-card span { display: block; color: var(--text-muted); }
-.source-list { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.source-list .credit-kicker { grid-column: 1 / -1; margin-bottom: 1px; }
-.source-list button { display: grid; gap: 3px; min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface-raised); font: inherit; text-align: left; cursor: pointer; transition: border-color 0.15s ease, transform 0.15s ease; }
-.source-list button:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); transform: translateY(-1px); }
-.source-list button span { overflow: hidden; font-size: 11px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
-.source-list button small { overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.author-description, .author-contact { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
+.author-contact { display: block; color: var(--text-muted); }
+.source-list { min-width: 0; }
+.source-list > .credit-kicker { margin-bottom: 8px; }
+.source-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: stretch; gap: 7px; }
+.source-card { display: flex; min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); flex-direction: column; }
+.source-card h3 { margin: 0; color: var(--text); font-size: 12px; line-height: 1.35; }
+.source-author { display: flex; min-width: 0; margin: 5px 0 10px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; flex-wrap: wrap; }
+.source-author strong { color: var(--text); font-weight: 720; overflow-wrap: anywhere; }
+.source-links { display: grid; gap: 6px; margin-top: auto; }
+.credit-link { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px; width: 100%; min-width: 0; min-height: 34px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; text-align: left; cursor: pointer; transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease; }
+.credit-link:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--card-bg); transform: translateY(-1px); }
+.credit-link:focus-visible { border-color: var(--primary); outline: 2px solid color-mix(in srgb, var(--primary) 60%, transparent); outline-offset: 2px; }
+.credit-link span { color: var(--text); font-size: 10px; font-weight: 720; white-space: nowrap; }
+.credit-link small { min-width: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+.author-project-link { margin-top: 10px; }
 
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: 1fr; gap: 13px; }
@@ -352,7 +422,11 @@ async function openExternal(url: string) {
   .theme-preference { grid-template-columns: 1fr; padding: 13px 0; }
   .theme-segmented { justify-self: stretch; }
   .theme-segmented button { flex: 1; }
-  .about-overview, .credits-grid, .source-list { grid-template-columns: 1fr; }
-  .source-list .credit-kicker { grid-column: auto; }
+  .about-overview, .credits-grid { grid-template-columns: 1fr; }
+  .source-cards { grid-template-columns: 1fr; }
+  .credit-link { min-height: 38px; }
+}
+@media (max-width: 420px) {
+  .author-card { align-items: stretch; flex-direction: column; }
 }
 </style>

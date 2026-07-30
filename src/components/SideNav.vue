@@ -16,7 +16,7 @@ const showQuitConfirm = ref(false);
 const quitting = ref(false);
 const accountMenuOpen = ref(false);
 const accountMenuRef = ref<HTMLElement | null>(null);
-const appVersion = ref("v0.0.4");
+const appVersion = ref("v0.0.5");
 
 const device = computed(() => bridge.devices.xiaomi);
 const isDevicePage = computed(() => route.path === "/xiaomi" || route.path === "/xiaomi/");
@@ -208,8 +208,8 @@ onBeforeUnmount(() => {
   padding: 0 28px;
   background: var(--nav);
   color: var(--nav-ink);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--nav-border);
+  box-shadow: 0 1px 0 var(--nav-shadow);
   user-select: none;
   flex-shrink: 0;
 }
@@ -236,7 +236,7 @@ onBeforeUnmount(() => {
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
-  color: #fff;
+  color: var(--text-inverse);
   background: linear-gradient(145deg, #2f7cf8, #6b5cf4);
   box-shadow: 0 8px 18px rgba(52, 120, 246, 0.25);
 }
@@ -263,10 +263,10 @@ onBeforeUnmount(() => {
   gap: 7px;
   margin-left: 2px;
   padding: 0 11px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  border: 1px solid var(--nav-device-border);
   border-radius: 9px;
-  color: #dfe7f5;
-  background: rgba(255, 255, 255, 0.06);
+  color: var(--nav-device-ink);
+  background: var(--nav-device-bg);
   font-weight: 650;
   font-size: 13px;
 }
@@ -289,10 +289,11 @@ onBeforeUnmount(() => {
 .device-chip.error .status-dot { background: var(--danger); }
 
 .main-nav {
-  gap: 4px;
-  padding: 4px;
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.055);
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--nav-segment-border);
+  border-radius: 999px;
+  background: var(--nav-segment-bg);
 }
 
 .main-nav button {
@@ -300,8 +301,8 @@ onBeforeUnmount(() => {
   min-width: 84px;
   padding: 0 17px;
   border: 0;
-  border-radius: 8px;
-  color: #9ea9bd;
+  border-radius: 999px;
+  color: var(--nav-muted);
   background: transparent;
   font: inherit;
   font-size: 13px;
@@ -310,8 +311,12 @@ onBeforeUnmount(() => {
   transition: 0.18s ease;
 }
 
-.main-nav button:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
-.main-nav button.active { color: #fff; background: var(--primary); box-shadow: 0 5px 14px rgba(52, 120, 246, 0.32); }
+.main-nav button:hover { color: var(--nav-ink); background: var(--nav-segment-hover); }
+.main-nav button.active {
+  color: var(--nav-segment-active-ink);
+  background: var(--nav-segment-active);
+  box-shadow: var(--nav-segment-shadow);
+}
 
 .top-actions { justify-content: flex-end; gap: 6px; }
 
@@ -322,7 +327,7 @@ onBeforeUnmount(() => {
   height: 34px;
   border: 0;
   border-radius: 9px;
-  color: #aeb8c9;
+  color: var(--nav-icon);
   background: transparent;
   cursor: pointer;
   transition: color 0.18s ease, background 0.18s ease;
@@ -333,7 +338,10 @@ onBeforeUnmount(() => {
 .icon-button:hover:not(:disabled),
 .icon-button.active,
 .account-button:hover,
-.account-button[aria-expanded="true"] { color: #fff; background: rgba(255, 255, 255, 0.07); }
+.account-button[aria-expanded="true"] {
+  color: var(--nav-icon-hover);
+  background: var(--nav-icon-hover-bg);
+}
 .icon-button:disabled { cursor: wait; opacity: 0.58; }
 
 .account-wrap { position: relative; }
@@ -343,8 +351,8 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 5px solid transparent;
   border-radius: 12px;
-  color: #fff;
-  background: #354056;
+  color: var(--nav-account-ink);
+  background: var(--nav-account-bg);
   font-size: 10px;
   font-weight: 800;
 }

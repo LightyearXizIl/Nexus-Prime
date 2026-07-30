@@ -145,7 +145,6 @@ function isVolumeButton(id: string): id is "volume_up" | "volume_down" {
 }
 
 function selectedClick(id: string): MappingSlot {
-  if (isVoiceButton(id)) return 1;
   return selectedClickById.value[id] || 1;
 }
 
@@ -200,12 +199,10 @@ function clickMenuId(id: string) {
 }
 
 function toggleClickMenu(id: string) {
-  if (isVoiceButton(id)) return;
   openClickMenuId.value = openClickMenuId.value === id ? null : id;
 }
 
 function setClickCount(id: string, count: MappingSlot) {
-  if (isVoiceButton(id)) return;
   selectedClickById.value = {
     ...selectedClickById.value,
     [id]: count,
@@ -459,12 +456,29 @@ function updateLine() {
 
 async function selectButton(id: string) {
   selectedId.value = id;
-  if (isVoiceButton(id)) {
-    selectedClickById.value = { ...selectedClickById.value, [id]: 1 };
-    openClickMenuId.value = null;
-  }
   await nextTick();
   updateLine();
+}
+
+const hasTruncatedCodexVoiceBinding = computed(() => {
+  const action = actionOf("mic", 1);
+  const keys = action.type === "ComboKey" && Array.isArray(action.value) ? action.value.map(Number) : [];
+  return keys.length === 2 && keys[0] === 0xa2 && keys[1] === 0xa0;
+});
+
+const voiceUsesExtendedGestures = computed(() => configuredGestureSlots("mic").length > 0);
+
+function repairCodexVoiceBinding() {
+  setClickCount("mic", 1);
+  applyCapturedKeys("mic", [0xa2, 0xa0, 0x44]);
+  props.config.trigger_mode = "Hold";
+  emit("save", {
+    ...props.config,
+    trigger_mode: "Hold",
+    button_bindings: { ...props.config.button_bindings },
+    long_press_bindings: { ...(props.config.long_press_bindings || {}) },
+    multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
+  });
 }
 
 function onRemoteHover(id: string | null) {
@@ -484,11 +498,17 @@ function stopPolling() {
   }
 }
 
-/** 录入期间拦截 WebView 加速键（Ctrl+A / Alt 菜单等）；OS 层吞键由 LL 钩子负责 */
+/** 录入期间只拦截 WebView 加速键；组合键结果由 Rust LL 钩子统一提交。 */
 function blockBrowserKeysDuringCapture(e: KeyboardEvent) {
   if (!capturing.value) return;
   e.preventDefault();
   e.stopPropagation();
+  if (e.key === "BrightnessUp" || e.key === "BrightnessDown") {
+    captureError.value = "该亮度键未向 Windows 上报可保存的键盘事件，无法录入。";
+  }
+  // 浏览器事件不能作为结果来源；否则会与 OS 级事件竞争并截断三键组合。
+  return;
+  /* c8 ignore start -- legacy fallback retained below for source-history context */
   if (applied || e.repeat) return;
   if (e.type === "keydown") {
     const main = eventKeyToVk(e);
@@ -498,15 +518,16 @@ function blockBrowserKeysDuringCapture(e: KeyboardEvent) {
       }
       return;
     }
-    void onCaptured([...modifierVksFromEvent(e), main], []);
+    void onCaptured([...modifierVksFromEvent(e), main!], []);
     return;
   }
   if (e.type === "keyup") {
     const mod = modifierVkForKey(e.key);
     if (mod != null) {
-      void onCaptured([mod], []);
+      void onCaptured([mod!], []);
     }
   }
+  /* c8 ignore stop */
 }
 
 function eventKeyToVk(e: KeyboardEvent): number | null {
@@ -829,7 +850,7 @@ onUnmounted(() => {
           >
             {{ capturing && selectedId === selectedMappingButton.id ? "取消录入" : "录入快捷键" }}
           </button>
-          <div v-if="!isVoiceButton(selectedMappingButton.id)" class="click-select-wrap">
+          <div class="click-select-wrap">
             <button
               type="button"
               class="selection-action"
@@ -888,6 +909,13 @@ onUnmounted(() => {
             @click.stop="clearBinding(selectedMappingButton.id)"
           >清除</button>
         </div>
+        <p v-if="isVoiceButton(selectedMappingButton.id) && hasTruncatedCodexVoiceBinding" class="capture-err">
+          当前语音快捷键缺少主键 D，无法触发 Codex 听写。
+          <button type="button" class="selection-action primary" @click.stop="repairCodexVoiceBinding">修复为 Ctrl+Shift+D（按住）</button>
+        </p>
+        <p v-if="isVoiceButton(selectedMappingButton.id) && voiceUsesExtendedGestures" class="capture-hint">
+          已启用语音五档手势；单击、双击、三击、四连击和长按优先于旧的点击/按住触发模式。
+        </p>
         <p v-if="capturing && selectedId === selectedMappingButton.id" class="capture-live">
           {{ liveLabels.length ? liveLabels.join(" + ") + " …" : "请按目标键或组合键" }}
         </p>
@@ -1007,7 +1035,7 @@ onUnmounted(() => {
             >
               {{ capturing && selectedId === btn.id ? "取消录入" : "录入" }}
             </button>
-            <div v-if="!isVoiceButton(btn.id)" class="click-select-wrap">
+            <div class="click-select-wrap">
               <button
                 type="button"
                 class="btn-sm btn-click-select"

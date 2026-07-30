@@ -13,6 +13,7 @@ struct Client {
     peer: SocketAddr,
     prev: i16,
     have_prev: bool,
+    source_rate_hz: Option<u32>,
     sent: AtomicU64,
     dropped: AtomicU64,
 }
@@ -69,6 +70,7 @@ pub fn ensure_started() -> Result<(), String> {
         peer,
         prev: 0,
         have_prev: false,
+        source_rate_hz: None,
         sent: AtomicU64::new(0),
         dropped: AtomicU64::new(0),
     });
@@ -112,6 +114,7 @@ pub fn clear() {
     }
     if let Some(c) = CLIENT.lock().as_mut() {
         c.have_prev = false;
+        c.source_rate_hz = None;
     }
 }
 
@@ -121,10 +124,20 @@ pub fn end_session() {
     }
 }
 
-pub fn push_16k(samples: &[i16]) {
+/// 将 ATVV 单声道 PCM 重采样到 router 所需的 48kHz。
+/// 目前协议支持 8kHz 和 16kHz；切换采样率时丢弃插值历史，避免跨速率产生爆音。
+pub fn push_pcm(samples: &[i16], source_rate_hz: u32) {
     if samples.is_empty() {
         return;
     }
+    let ratio = match source_rate_hz {
+        8_000 => 6,
+        16_000 => 3,
+        other => {
+            log::warn!("XIAOMI VOICE PCM unsupported source_rate={other}Hz; drop frame");
+            return;
+        }
+    };
     if !READY.load(Ordering::Acquire) && ensure_started().is_err() {
         return;
     }
@@ -133,15 +146,21 @@ pub fn push_16k(samples: &[i16]) {
         READY.store(false, Ordering::Release);
         return;
     };
+    if c.source_rate_hz != Some(source_rate_hz) {
+        c.have_prev = false;
+        c.source_rate_hz = Some(source_rate_hz);
+        log::info!("XIAOMI VOICE PCM source_rate={source_rate_hz}Hz -> 48000Hz ratio={ratio}");
+    }
     let mut previous = if c.have_prev { c.prev } else { samples[0] };
-    let mut out = Vec::with_capacity(samples.len() * 3 * 2);
+    let mut out = Vec::with_capacity(samples.len() * ratio * 2);
     for &current in samples {
         let delta = current as i32 - previous as i32;
-        for s in [
-            (previous as i32 + delta / 3) as i16,
-            (previous as i32 + delta * 2 / 3) as i16,
-            current,
-        ] {
+        for step in 1..=ratio {
+            let s = if step == ratio {
+                current
+            } else {
+                (previous as i32 + delta * step as i32 / ratio as i32) as i16
+            };
             out.extend_from_slice(&s.to_le_bytes());
         }
         previous = current;
@@ -163,6 +182,11 @@ pub fn push_16k(samples: &[i16]) {
     crate::bridges::xiaomi::voice_meter::on_pcm(samples, udp_ok);
 }
 
+/// 保留旧调用点兼容性；新代码应明确传入 ATVV 协商出的采样率。
+pub fn push_16k(samples: &[i16]) {
+    push_pcm(samples, 16_000);
+}
+
 pub fn stop() {
     READY.store(false, Ordering::Release);
     if let Some(c) = CLIENT.lock().take() {
@@ -178,5 +202,14 @@ pub fn stats() -> (u64, u64) {
             c.dropped.load(Ordering::Relaxed),
         ),
         None => (0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn source_rates_have_expected_48k_ratios() {
+        assert_eq!(48_000 / 8_000, 6);
+        assert_eq!(48_000 / 16_000, 3);
     }
 }

@@ -941,6 +941,10 @@ struct AtvvVoiceState {
     last_mic_off: Option<Instant>,
     gain_db: f32,
     frames: u64,
+    /// 当前 ATVV 流的 ADPCM 源采样率。协议默认/旧设备兼容 16kHz。
+    sample_rate_hz: u32,
+    /// 显式报告未知 codec 时阻止错误速率的音频进入虚拟声卡。
+    codec_supported: bool,
     /// 遥控语音键当前是否按下
     remote_pressed: bool,
     /// 按下时刻（点击模式区分短按/长按）
@@ -949,6 +953,47 @@ struct AtvvVoiceState {
     hold_chord_armed: bool,
     /// 取消过期的「长按判定」定时器
     press_gen: u64,
+}
+
+const ATVV_LEGACY_SAMPLE_RATE_HZ: u32 = 16_000;
+
+fn atvv_codec_sample_rate(codec: u8) -> Option<u32> {
+    match codec {
+        // 部分旧固件把“未声明编码”填为 0；按历史默认值继续以 16kHz 处理。
+        0x00 => Some(16_000),
+        0x01 => Some(8_000),
+        0x02 => Some(16_000),
+        _ => None,
+    }
+}
+
+fn update_atvv_codec(state: &Arc<Mutex<AtvvVoiceState>>, codec: Option<u8>, source: &str) {
+    let Ok(mut st) = state.lock() else {
+        return;
+    };
+    match codec {
+        Some(codec) => match atvv_codec_sample_rate(codec) {
+            Some(rate) => {
+                let changed = st.sample_rate_hz != rate || !st.codec_supported;
+                st.sample_rate_hz = rate;
+                st.codec_supported = true;
+                if changed {
+                    st.pending.clear();
+                    log::info!("XIAOMI ATVV {source} codec=0x{codec:02X} sample_rate={rate}Hz");
+                }
+            }
+            None => {
+                st.codec_supported = false;
+                st.pending.clear();
+                log::warn!("XIAOMI ATVV {source} unsupported codec=0x{codec:02X}; audio muted");
+            }
+        },
+        None => {
+            st.sample_rate_hz = ATVV_LEGACY_SAMPLE_RATE_HZ;
+            st.codec_supported = true;
+            log::debug!("XIAOMI ATVV {source} codec missing; fallback=16000Hz");
+        }
+    }
 }
 
 fn voice_trigger_is_toggle(app: &AppHandle) -> bool {
@@ -1004,6 +1049,7 @@ fn reset_pcm_session(state: &Arc<Mutex<AtvvVoiceState>>, clear_frames: bool) {
 /// 遥控语音键按下：传声 + 按模式注入快捷键
 fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     let toggle = voice_trigger_is_toggle(app);
+    let gesture_mode = key_mapping::voice_uses_extended_gestures(app);
     let gen = {
         let Ok(mut st) = state.lock() else {
             return;
@@ -1025,7 +1071,10 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
     }
     crate::bridges::xiaomi::voice_meter::set_session(true);
 
-    if toggle {
+    if gesture_mode {
+        key_mapping::on_remote_button(app, "mic", true);
+        log::info!("XIAOMI ATVV AUDIO_START extended gesture mode");
+    } else if toggle {
         // 点击模式：短按抬起再 TAP；长按阈值到再 DOWN
         let app2 = app.clone();
         let state2 = Arc::clone(state);
@@ -1056,6 +1105,7 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
 fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     use crate::bridges::xiaomi::voice_pcm;
     let toggle = voice_trigger_is_toggle(app);
+    let gesture_mode = key_mapping::voice_uses_extended_gestures(app);
     let (was_pressed, hold_armed, press_ms) = {
         let Ok(mut st) = state.lock() else {
             return;
@@ -1086,7 +1136,10 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
 
     notify_voice_phase(app, gate, false);
 
-    if toggle {
+    if gesture_mode {
+        key_mapping::on_remote_button(app, "mic", false);
+        log::info!("XIAOMI ATVV AUDIO_STOP extended gesture mode ms={press_ms}");
+    } else if toggle {
         if hold_armed || press_ms >= CLICK_HOLD_THRESHOLD_MS {
             key_mapping::on_remote_button(app, "mic", false);
             log::info!("XIAOMI ATVV AUDIO_STOP click-mode HOLD release ms={press_ms}");
@@ -1194,6 +1247,8 @@ fn subscribe_atvv_service(
         last_mic_off: None,
         gain_db,
         frames: 0,
+        sample_rate_hz: ATVV_LEGACY_SAMPLE_RATE_HZ,
+        codec_supported: true,
         remote_pressed: false,
         press_at: None,
         hold_chord_armed: false,
@@ -1312,6 +1367,9 @@ fn handle_atvv_audio(state: &Arc<Mutex<AtvvVoiceState>>, payload: &[u8]) {
     let Ok(mut st) = state.lock() else {
         return;
     };
+    if !st.codec_supported {
+        return;
+    }
     if !st.streaming {
         // 按键已按下但 streaming 尚未置位时，音频首帧可直接入流
         if st.remote_pressed {
@@ -1341,7 +1399,7 @@ fn handle_atvv_audio(state: &Arc<Mutex<AtvvVoiceState>>, payload: &[u8]) {
         }
         let samples = st.decoder.decode_bytes(&frame);
         let samples = postprocess(&samples, st.gain_db);
-        voice_pcm::push_16k(&samples);
+        voice_pcm::push_pcm(&samples, st.sample_rate_hz);
         st.frames += 1;
         if st.frames == 1 || st.frames == 10 || st.frames % 200 == 0 {
             let (sent, drop) = voice_pcm::stats();
@@ -1377,19 +1435,23 @@ fn handle_atvv_control(
         0x04 => {
             key_mapping::mark_direct_signal("voice");
             key_mapping::mark_direct_signal("mic");
+            // AUDIO_START: [opcode, reason, codec, stream_id].
+            update_atvv_codec(state, payload.get(2).copied(), "AUDIO_START");
             on_voice_remote_press(app, gate, state);
         }
         0x00 => {
             on_voice_remote_release(app, gate, state);
         }
         0x0A if payload.len() >= 7 => {
+            // AUDIO_SYNC: [opcode, codec, frame_no_hi, frame_no_lo, predictor_hi, predictor_lo, step].
+            update_atvv_codec(state, payload.get(1).copied(), "AUDIO_SYNC");
             let predictor = i16::from_be_bytes([payload[4], payload[5]]) as i32;
             let step_index = payload[6] as i32;
             if let Ok(mut st) = state.lock() {
                 st.pending.clear();
                 st.pending_sync = Some((predictor, step_index));
             }
-            log::info!("XIAOMI ATVV AUDIO_SYNC predictor={predictor} step={step_index}");
+            log::info!("XIAOMI ATVV AUDIO_SYNC predictor={predictor} step={step_index} codec=0x{:02X}", payload[1]);
         }
         0x0B if payload.len() >= 7 => {
             let frame_size = u16::from_be_bytes([payload[5], payload[6]]) as usize;
@@ -1521,7 +1583,15 @@ fn handle_hid_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_hid_usages;
+    use super::{atvv_codec_sample_rate, parse_hid_usages};
+
+    #[test]
+    fn atvv_codec_selects_expected_sample_rate() {
+        assert_eq!(atvv_codec_sample_rate(0x01), Some(8_000));
+        assert_eq!(atvv_codec_sample_rate(0x02), Some(16_000));
+        assert_eq!(atvv_codec_sample_rate(0x00), Some(16_000));
+        assert_eq!(atvv_codec_sample_rate(0x03), None);
+    }
 
     #[test]
     fn parse_six_byte_usages() {

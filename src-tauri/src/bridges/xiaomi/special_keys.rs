@@ -176,13 +176,26 @@ fn hook_loop() {
                 return LRESULT(1);
             }
 
+            // 长按 Alt+Tab 已打开系统任务切换器时，遥控器物理左右键本身会被
+            // Windows 原样观察到但不会完成导航。吞掉物理事件并转发为带标记的
+            // SendInput 方向键，使其在仍保持按下的 Alt 会话内可靠切换窗口。
+            let down = msg == 0x0100 || msg == 0x0104;
+            let up = msg == 0x0101 || msg == 0x0105;
+            if !injected
+                && crate::bridges::xiaomi::key_mapping::alt_tab_hold_active()
+                && matches!(vk, 0x25..=0x28)
+                && (down || up)
+            {
+                crate::bridges::xiaomi::key_mapping::relay_alt_tab_navigation(vk as u16, up);
+                log::debug!("XIAOMI SPECIAL KEY alt_tab relay vk=0x{vk:02X} up={up}");
+                return LRESULT(1);
+            }
+
             if injected {
                 return CallNextHookEx(hook, code, wparam, lparam);
             }
 
             let scan = info.scanCode;
-            let down = msg == 0x0100 || msg == 0x0104;
-            let up = msg == 0x0101 || msg == 0x0105;
             let tap_ready = HID_TAP_READY.load(Ordering::Acquire);
 
             // 对齐 Python：音量仅在 Tap 就绪后抑制；其它键在 recent 信号时抑制

@@ -233,6 +233,14 @@ fn windows_vk_poll_logger(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc
         for &(vk, id) in keys {
             let down = unsafe { GetAsyncKeyState(vk) as u16 } & 0x8000 != 0;
             let was = prev.get(&vk).copied().unwrap_or(false);
+            // 某些蓝牙遥控器的方向键不会进入 LL hook，但会在这里被观察到。
+            // Alt+Tab 长按会话下，使用同一状态机补发带标记的方向键。
+            if down != was && matches!(vk, 0x25..=0x28)
+                && crate::bridges::xiaomi::key_mapping::alt_tab_hold_active()
+            {
+                crate::bridges::xiaomi::key_mapping::relay_alt_tab_navigation(vk as u16, !down);
+                log::info!("XIAOMI VK alt_tab relay key={id} vk=0x{vk:02X} up={}", !down);
+            }
             if down && !was && gate.try_emit(id) {
                 emit_key(&app, id, button_label(id));
                 log::info!("XIAOMI VK observe key={id} vk=0x{vk:02X} (no map)");

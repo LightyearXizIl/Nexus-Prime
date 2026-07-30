@@ -1,5 +1,5 @@
-import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { GlobalSettings, ThemePreference } from "../types";
@@ -46,10 +46,13 @@ function applyDocumentTheme(theme: EffectiveTheme) {
 }
 
 function syncNativeTheme(preference: ThemePreference) {
-  void setNativeTheme(preference === "system" ? null : preference).catch((error) => {
+  void getCurrentWindow()
+    .setTheme(preference === "system" ? null : preference)
+    .catch((error) => {
     // 浏览器预览环境不具备 Tauri 原生标题栏，此时仅保留网页主题。
     console.warn("Failed to sync native theme:", error);
-  });
+      console.warn("Failed to sync native theme:", error);
+    });
 }
 
 /** 在 Vue 挂载前应用缓存，避免已保存的手动主题出现闪白。 */

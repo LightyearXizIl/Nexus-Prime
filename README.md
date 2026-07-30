@@ -2,7 +2,7 @@
 
 Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具。它通过蓝牙读取遥控器按键与 ATVV 语音数据，把按键转换为可自定义的键盘快捷键，并将语音路由到虚拟声卡，供输入法或其他语音软件使用。
 
-当前版本：**v0.0.4**
+当前版本：**v0.0.6**
 
 技术栈：**Rust · Tauri 2 · Vue 3 · TypeScript**
 
@@ -65,10 +65,11 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 ### 使用发布版
 
-项目发布后，可从 GitHub Releases 下载以下任一安装包：
+项目发布后，可从 GitHub Releases 下载 NSIS 安装包：
 
-- MSI：`Nexus Prime_0.0.4_x64_zh-CN.msi`
-- NSIS：`Nexus Prime_0.0.4_x64-setup.exe`
+- NSIS：`Nexus Prime_0.0.6_x64-setup.exe`
+
+从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
 
 安装步骤：
 
@@ -116,11 +117,11 @@ src-tauri/target/release/bundle/nsis/
 ### 1. 获取源码
 
 ```powershell
-git clone https://github.com/<your-account>/nexus-prime.git
-cd nexus-prime
+git clone https://github.com/LightyearXizIl/Nexus-Prime.git
+cd Nexus-Prime
 ```
 
-创建 GitHub 仓库后，请将示例地址替换为实际仓库地址。
+项目主页：[GitHub：LightyearXizIl/Nexus-Prime](https://github.com/LightyearXizIl/Nexus-Prime)
 
 ### 2. 安装依赖
 
@@ -290,7 +291,16 @@ MIT License 允许使用、复制、修改、合并、发布、分发、再许�
 
 ## 致谢与相关项目
 
-- 原版 Gitee：[mwlt/remote-voice-vibe-coding](https://gitee.com/mwlt/remote-voice-vibe-coding)
-- 原版 GitHub：[mwlt/Voice_VibeCoding](https://github.com/mwlt/Voice_VibeCoding)
-- Python Windows 版：[xxb26553663-star/remote-bridge-hub](https://github.com/xxb26553663-star/remote-bridge-hub)
-- macOS 版：[nijez/open-voice-bridge](https://github.com/nijez/open-voice-bridge)
+- Nexus Prime
+  - 作者：Light year
+  - GitHub：[LightyearXizIl/Nexus-Prime](https://github.com/LightyearXizIl/Nexus-Prime)
+- Voice VibeCoding版
+  - 作者：mwlt
+  - Gitee：[mwlt/remote-voice-vibe-coding](https://gitee.com/mwlt/remote-voice-vibe-coding)
+  - GitHub：[mwlt/Voice_VibeCoding](https://github.com/mwlt/Voice_VibeCoding)
+- Python Windows版
+  - 作者：xxb26553663-star
+  - GitHub：[xxb26553663-star/remote-bridge-hub](https://github.com/xxb26553663-star/remote-bridge-hub)
+- macOS版
+  - 作者：nijez
+  - GitHub：[nijez/open-voice-bridge](https://github.com/nijez/open-voice-bridge)

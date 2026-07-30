@@ -14,21 +14,25 @@ const emit = defineEmits<{
 
 const rootRef = ref<HTMLElement | null>(null);
 
-/** Coordinates are normalized to the cropped product photograph. */
+/**
+ * Coordinates are normalized from the physical button bounds in the
+ * 401 x 1919 product cutout. Keeping the source-pixel measurements here
+ * prevents a future asset crop from silently shifting the hit targets.
+ */
 const HOTSPOTS = [
-  { id: "power", label: "电源键", x: 24.5, y: 5.8, w: 21, h: 4.6, shape: "circle" },
-  { id: "mic", label: "语音键", x: 75.5, y: 5.8, w: 21, h: 4.6, shape: "circle" },
-  { id: "up", label: "上键", x: 50, y: 11.2, w: 42, h: 6.7, shape: "dpad dpad-up" },
-  { id: "left", label: "左键", x: 27.7, y: 18.2, w: 13, h: 15.4, shape: "dpad dpad-left" },
-  { id: "right", label: "右键", x: 72.3, y: 18.2, w: 13, h: 15.4, shape: "dpad dpad-right" },
-  { id: "down", label: "下键", x: 50, y: 25.2, w: 42, h: 6.7, shape: "dpad dpad-down" },
-  { id: "ok", label: "确认键", x: 50, y: 18.2, w: 30, h: 10.8, shape: "circle dpad-ok" },
-  { id: "back", label: "返回键", x: 25.5, y: 30.5, w: 28, h: 6.1, shape: "circle" },
-  { id: "volume_up", label: "音量加键", x: 70.3, y: 30.5, w: 28, h: 6.1, shape: "pill" },
-  { id: "home", label: "主页键", x: 25.5, y: 37.5, w: 28, h: 6.1, shape: "circle" },
-  { id: "volume_down", label: "音量减键", x: 70.3, y: 37.5, w: 28, h: 6.1, shape: "pill" },
-  { id: "menu", label: "菜单键", x: 25.5, y: 44.5, w: 28, h: 6.1, shape: "circle" },
-  { id: "tv", label: "TV 键", x: 70.3, y: 44.5, w: 28, h: 6.1, shape: "circle" },
+  { id: "power", label: "电源键", x: 24.56, y: 6.54, w: 22.44, h: 4.79, shape: "circle" },
+  { id: "mic", label: "语音键", x: 75.19, y: 6.51, w: 22.44, h: 4.85, shape: "circle" },
+  { id: "up", label: "上键", x: 50, y: 13, w: 43.39, h: 4.06, shape: "dpad dpad-up" },
+  { id: "left", label: "左键", x: 18.7, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-left" },
+  { id: "right", label: "右键", x: 81.3, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-right" },
+  { id: "down", label: "下键", x: 50, y: 26.39, w: 43.39, h: 4.06, shape: "dpad dpad-down" },
+  { id: "ok", label: "确认键", x: 50, y: 19.67, w: 42.89, h: 9.07, shape: "circle dpad-ok" },
+  { id: "back", label: "返回键", x: 29.3, y: 32.78, w: 32.42, h: 7.03, shape: "circle" },
+  { id: "volume_up", label: "音量加键", x: 70.32, y: 32.78, w: 32.42, h: 7.03, shape: "pill" },
+  { id: "home", label: "主页键", x: 29.3, y: 40.78, w: 32.42, h: 6.98, shape: "circle" },
+  { id: "volume_down", label: "音量减键", x: 70.32, y: 40.78, w: 32.42, h: 6.98, shape: "pill" },
+  { id: "menu", label: "菜单键", x: 29.3, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
+  { id: "tv", label: "TV 键", x: 70.32, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
 ] as const;
 
 function keyEl(id: string): HTMLElement | null {

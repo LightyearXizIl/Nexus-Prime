@@ -23,6 +23,8 @@ static CLICK_STATE: Mutex<Option<HashMap<String, ClickState>>> = Mutex::new(None
 static PRESS_STATE: Mutex<Option<HashMap<String, PressState>>> = Mutex::new(None);
 static GESTURE_EPOCH: AtomicU64 = AtomicU64::new(1);
 static ACTION_SEQ: AtomicU64 = AtomicU64::new(1);
+/// Alt+Tab 长按会话期间，物理左右键需要由 LL 钩子转发为带标记的方向键。
+static ALT_TAB_HOLD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// 语音键在 Windows 上常被译成 F5；记事本 F5=插入日期。
 /// 短窗 `direct_signal_recent` 盖不住 typematic，故额外 sticky 抑制直到 F5 抬起或截止。
@@ -40,12 +42,16 @@ struct ClickState {
     gen: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct PressState {
     gen: u64,
     active: bool,
     held_fired: bool,
     long_bound: bool,
+    /// 纯 Alt+Tab 长按时保持的 Alt；Tab 只点按一次，避免系统任务切换器自动连跳。
+    held_alt_tab_modifier: Option<u16>,
+    /// 长按语音组合键保持到物理语音键抬起，避免 Ctrl/Shift 等修饰键粘住。
+    held_keys: Option<Vec<u16>>,
 }
 
 /// 输入会话（含仅电量）运行中：供 F5 固件泄漏抑制
@@ -65,8 +71,23 @@ pub fn cancel_pending_gestures() {
     if let Some(states) = click_states().as_mut() {
         states.clear();
     }
-    if let Some(states) = press_states().as_mut() {
-        states.clear();
+    let (held_alt_tab_modifiers, held_keys) = {
+        let mut states = press_states();
+        match states.as_mut() {
+            Some(states) => {
+                let held = states.values_mut().filter_map(take_held_alt_tab_modifier).collect::<Vec<_>>();
+                let keys = states.values_mut().filter_map(|state| state.held_keys.take()).collect::<Vec<_>>();
+                states.clear();
+                (held, keys)
+            }
+            None => (Vec::new(), Vec::new()),
+        }
+    };
+    for alt_vk in held_alt_tab_modifiers {
+        release_held_alt_tab(alt_vk, "gesture_cancel");
+    }
+    for keys in held_keys {
+        release_held_keys(&keys, "gesture_cancel");
     }
     if let Some(gens) = click_gens().as_mut() {
         for gen in gens.values_mut() {
@@ -104,7 +125,7 @@ pub fn on_firmware_voice_key(pressed: bool) {
         mark_direct_signal("voice");
         mark_direct_signal("mic");
         emit_key_phase(&app, "mic", button_label("mic"), true);
-        handle_voice(&app, true);
+        on_remote_button(&app, "mic", true);
         log::debug!("XIAOMI VOICE UI down (firmware F5 fallback)");
     } else {
         if !FIRMWARE_VOICE_HELD.swap(false, Ordering::SeqCst) {
@@ -113,7 +134,7 @@ pub fn on_firmware_voice_key(pressed: bool) {
         mark_direct_signal("voice");
         mark_direct_signal("mic");
         emit_key_phase(&app, "mic", button_label("mic"), false);
-        handle_voice(&app, false);
+        on_remote_button(&app, "mic", false);
         log::debug!("XIAOMI VOICE UI up (firmware F5 fallback)");
     }
 }
@@ -415,6 +436,13 @@ fn has_long_press(config: &DeviceConfig, button_id: &str) -> bool {
     lookup_long_action(config, button_id).is_some()
 }
 
+/// 语音键仅在配置扩展槽位时进入五档手势模式；否则保留旧的点击/按住模式。
+pub fn voice_uses_extended_gestures(app: &AppHandle) -> bool {
+    load_xiaomi_config(app)
+        .map(|config| has_multi_click(&config, "mic") || has_long_press(&config, "mic"))
+        .unwrap_or(false)
+}
+
 fn has_single_binding(config: &DeviceConfig, button_id: &str) -> bool {
     lookup_action(config, button_id)
         .map(|action| !matches!(action, KeyAction::None))
@@ -455,11 +483,10 @@ fn load_xiaomi_config(app: &AppHandle) -> Option<DeviceConfig> {
 
 /// 按下遥控器物理键后的统一处理
 pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
-    if button_id == "voice" || button_id == "mic" {
+    let is_voice = button_id == "voice" || button_id == "mic";
+    if is_voice {
         mark_direct_signal("voice");
         mark_direct_signal("mic");
-        handle_voice(app, pressed);
-        return;
     }
 
     let button_id = canonical_button_id(button_id);
@@ -479,6 +506,13 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
 
     let multi_enabled = has_multi_click(&config, button_id);
     let long_enabled = has_long_press(&config, button_id);
+
+    // 兼容旧的“点击/按住触发”模式；一旦语音配置了双击、三击、四击或长按，
+    // 则由与其它按键相同的五档手势引擎独占处理。
+    if is_voice && !multi_enabled && !long_enabled {
+        handle_voice(app, pressed);
+        return;
+    }
 
     // 必须在等待连击/长按之前标记。菜单键原生 VK_APPS 会立即抵达 Windows；
     // 若等到抬起或连击结算，抖音等应用会先收到原生菜单键。
@@ -554,6 +588,8 @@ fn handle_gesture_button(
             state.active = true;
             state.held_fired = false;
             state.long_bound = long_enabled;
+            state.held_alt_tab_modifier = None;
+            state.held_keys = None;
             (state.gen, GESTURE_EPOCH.load(Ordering::Acquire))
         };
         let delay = hold_delay(button_id);
@@ -563,7 +599,7 @@ fn handle_gesture_button(
 
     mark_direct_signal(button_id);
     cancel_repeat(button_id);
-    let was_hold = {
+    let (was_hold, held_alt_tab_modifier, held_keys) = {
         let mut states = press_states();
         let Some(state) = states.as_mut().unwrap().get_mut(button_id) else {
             return;
@@ -573,8 +609,14 @@ fn handle_gesture_button(
         }
         state.gen = state.gen.wrapping_add(1);
         state.active = false;
-        state.held_fired
+        (state.held_fired, take_held_alt_tab_modifier(state), state.held_keys.take())
     };
+    if let Some(alt_vk) = held_alt_tab_modifier {
+        release_held_alt_tab(alt_vk, "remote_up");
+    }
+    if let Some(keys) = held_keys {
+        release_held_keys(&keys, "remote_up");
+    }
     if was_hold {
         return;
     }
@@ -641,7 +683,47 @@ fn start_hold_detector(
                 }
                 if long_bound {
                     if let Some(action) = lookup_long_action(&config, &button_id) {
-                        if perform_action(action) {
+                        let triggered = if let Some(alt_vk) = plain_alt_tab_modifier(action) {
+                            // Keep state registration and injected DOWN in the same critical
+                            // section. A physical UP waits for this block, so it cannot release
+                            // Alt before the hold has actually been injected.
+                            let mut states = press_states();
+                            let state = states
+                                .as_mut()
+                                .unwrap()
+                                .entry(button_id.clone())
+                                .or_default();
+                            if state.gen != gen || !state.active {
+                                false
+                            } else {
+                                begin_held_alt_tab(alt_vk);
+                                state.held_alt_tab_modifier = Some(alt_vk);
+                                true
+                            }
+                        } else if button_id == "mic" {
+                            // 语音长按的键盘动作必须持续到物理抬起，不能像普通
+                            // 映射那样立即 tap，否则 Ctrl+Shift+D 不会保持录音状态。
+                            if let Some(keys) = action_virtual_keys(action) {
+                                let mut states = press_states();
+                                let state = states
+                                    .as_mut()
+                                    .unwrap()
+                                    .entry(button_id.clone())
+                                    .or_default();
+                                if state.gen != gen || !state.active {
+                                    false
+                                } else {
+                                    key_chord(&keys, false);
+                                    state.held_keys = Some(keys);
+                                    true
+                                }
+                            } else {
+                                perform_action(action)
+                            }
+                        } else {
+                            perform_action(action)
+                        };
+                        if triggered {
                             mark_direct_signal(&button_id);
                             emit_message(&app, &format!("长按 → {}", action_label(action)));
                         }
@@ -1123,31 +1205,140 @@ fn has_alt_modifier(vks: &[u16]) -> bool {
     vks.iter().any(|&vk| is_alt_modifier(vk))
 }
 
+fn is_system_alt_tab_chord(vks: &[u16]) -> bool {
+    has_alt_modifier(vks) && vks.contains(&0x09) // VK_TAB
+}
+
+/// 仅识别没有额外修饰键或普通键的纯 Alt+Tab。
+/// 这种组合在长按槽位中需要保留 Alt，其他包含 Tab 的系统和弦仍按普通 tap 处理。
+fn plain_alt_tab_modifier(action: &KeyAction) -> Option<u16> {
+    let KeyAction::ComboKey(vks) = action else {
+        return None;
+    };
+    if vks.len() != 2 || !vks.contains(&0x09) {
+        return None;
+    }
+    vks.iter().copied().find(|&vk| is_alt_modifier(vk))
+}
+
+fn take_held_alt_tab_modifier(state: &mut PressState) -> Option<u16> {
+    state.held_alt_tab_modifier.take()
+}
+
+/// 打开 Windows 任务切换器：Alt 保持按下，Tab 仅点按一次。
+/// 不武装 ALT_CHORD_ACTIVE，确保这是系统可识别的真实 Alt+Tab。
+fn begin_held_alt_tab(alt_vk: u16) {
+    key_chord(&[alt_vk], false);
+    key_chord(&[0x09], false);
+    key_chord(&[0x09], true);
+    ALT_TAB_HOLD_ACTIVE.store(true, Ordering::Release);
+    let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+    log::info!("XIAOMI MAPPING Alt+Tab hold down alt_vk=0x{alt_vk:02X}");
+}
+
+fn release_held_alt_tab(alt_vk: u16, reason: &str) {
+    key_chord(&[alt_vk], true);
+    ALT_TAB_HOLD_ACTIVE.store(false, Ordering::Release);
+    log::info!("XIAOMI MAPPING Alt+Tab hold release alt_vk=0x{alt_vk:02X} reason={reason}");
+}
+
+/// LL 钩子或 VK 轮询兜底调用：Alt+Tab 会话打开时转发四个方向键。
+pub fn relay_alt_tab_navigation(vk: u16, key_up: bool) {
+    if ALT_TAB_HOLD_ACTIVE.load(Ordering::Acquire) && matches!(vk, 0x25..=0x28) {
+        key_chord(&[vk], key_up);
+    }
+}
+
+pub fn alt_tab_hold_active() -> bool {
+    ALT_TAB_HOLD_ACTIVE.load(Ordering::Acquire)
+}
+
+fn action_virtual_keys(action: &KeyAction) -> Option<Vec<u16>> {
+    match action {
+        KeyAction::SingleKey(vk) => Some(vec![*vk]),
+        KeyAction::ComboKey(vks) if !vks.is_empty() => Some(vks.clone()),
+        _ => None,
+    }
+}
+
+fn release_held_keys(vks: &[u16], reason: &str) {
+    key_chord(vks, true);
+    log::info!("XIAOMI MAPPING held keys release keys={vks:?} reason={reason}");
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackInjectionRoute {
+    SendInput,
+    SystemAltTabSendInput,
+    AltWindowMessage,
+}
+
+/// Select the injection route after WinUHid is unavailable or declines the chord.
+///
+/// Alt+Tab must remain a real system chord so Windows can open and navigate the
+/// task switcher. Other Alt chords intentionally use window messages to avoid
+/// activating the system menu or registered global hotkeys.
+fn fallback_injection_route(vks: &[u16]) -> FallbackInjectionRoute {
+    if is_system_alt_tab_chord(vks) {
+        FallbackInjectionRoute::SystemAltTabSendInput
+    } else if has_alt_modifier(vks) {
+        FallbackInjectionRoute::AltWindowMessage
+    } else {
+        FallbackInjectionRoute::SendInput
+    }
+}
+
+fn should_try_virtual_hid(vks: &[u16]) -> bool {
+    let bypass_virtual_hid = has_alt_modifier(vks)
+        || (vks.len() == 1 && matches!(vks[0], 0x20 | 0xAD | 0xAE | 0xAF));
+    !bypass_virtual_hid
+}
+
+fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) {
+    key_chord(vks, false);
+    std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
+    key_chord(vks, true);
+}
+
 pub fn tap_vks(vks: &[u16], hold_ms: u64) {
     // 音量/静音与 Space：优先走 SendInput。
     // 某些全屏 Web 播放器会把虚拟 HID 的 Space 误判为播放器菜单触发，
     // SendInput 可保持标准的空格键语义。
-    let force_send_input = vks.len() == 1 && matches!(vks[0], 0x20 | 0xAD | 0xAE | 0xAF);
-    if !force_send_input {
+    // 所有 Alt 组合都必须跳过 WinUHid，避免成功后提前返回并绕过下方分流：
+    // Alt+Tab 走未武装拦截标记的系统 SendInput，其余 Alt 组合走窗口消息。
+    let try_virtual_hid = should_try_virtual_hid(vks);
+    if try_virtual_hid {
         if crate::bridges::xiaomi::hid_injector::tap_vks(vks, hold_ms) {
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
             return;
         }
     }
 
-    // Alt 组合键（如 Alt+Space, Alt+S）：使用 SendMessage(WM_KEYDOWN) 注入，
-    // 避免 SendInput 触发 WM_SYSKEYDOWN → 系统菜单/全局热键
-    if has_alt_modifier(vks) {
-        inject_alt_chord_via_message(vks, hold_ms);
-        let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
-        return;
+    match fallback_injection_route(vks) {
+        FallbackInjectionRoute::SystemAltTabSendInput => {
+            // Do not arm ALT_CHORD_ACTIVE here. Alt+Tab must reach Windows as a
+            // genuine system chord rather than being swallowed by our LL hook.
+            inject_chord_via_send_input(vks, hold_ms);
+            let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+            log::debug!(
+                "XIAOMI MAPPING inject system Alt+Tab via SendInput vks={vks:?} hold_ms={hold_ms}"
+            );
+        }
+        FallbackInjectionRoute::AltWindowMessage => {
+            // Alt 组合键（如 Alt+Space, Alt+S）：使用 SendMessage(WM_KEYDOWN) 注入，
+            // 避免 SendInput 触发 WM_SYSKEYDOWN → 系统菜单/全局热键
+            inject_alt_chord_via_message(vks, hold_ms);
+            let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+        }
+        FallbackInjectionRoute::SendInput => {
+            inject_chord_via_send_input(vks, hold_ms);
+            let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+            log::debug!(
+                "XIAOMI MAPPING inject SendInput vks={vks:?} hold_ms={hold_ms} forced={}",
+                !try_virtual_hid
+            );
+        }
     }
-
-    key_chord(vks, false);
-    std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-    key_chord(vks, true);
-    let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
-    log::debug!("XIAOMI MAPPING inject SendInput vks={vks:?} hold_ms={hold_ms} forced={force_send_input}");
 }
 
 /// 通过 SendMessage(WM_KEYDOWN/WM_KEYUP) 注入 Alt 组合键。
@@ -1164,13 +1355,10 @@ fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
 
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd == HWND(std::ptr::null_mut()) {
-        // 无前台窗口，回退 SendInput
+        // 无前台窗口，回退 SendInput。这里不能武装 ALT_CHORD_ACTIVE，
+        // 否则低级键盘钩子会吞掉我们自己带 EXTRA_INFO 的回退事件。
         log::warn!("XIAOMI MAPPING alt_chord: no foreground window, fallback SendInput");
-        crate::bridges::xiaomi::special_keys::arm_alt_chord();
-        key_chord(vks, false);
-        std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-        key_chord(vks, true);
-        crate::bridges::xiaomi::special_keys::disarm_alt_chord();
+        inject_chord_via_send_input(vks, hold_ms);
         return;
     }
 
@@ -1400,5 +1588,107 @@ mod gesture_tests {
         assert!(!has_multi_click(&config, "ok"));
         assert!(has_long_press(&config, "ok"));
         assert!(should_arm_native_suppression(&config, "ok"));
+    }
+
+    #[test]
+    fn plain_alt_tab_long_press_accepts_only_one_alt_and_one_tab() {
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0x12, 0x09])),
+            Some(0x12)
+        );
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0x09, 0xA4])),
+            Some(0xA4)
+        );
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0xA5, 0x09])),
+            Some(0xA5)
+        );
+
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0x11, 0xA4, 0x09])),
+            None
+        );
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0xA4, 0x10, 0x09])),
+            None
+        );
+        assert_eq!(
+            plain_alt_tab_modifier(&KeyAction::ComboKey(vec![0xA4, 0x20])),
+            None
+        );
+        assert_eq!(plain_alt_tab_modifier(&KeyAction::SingleKey(0x09)), None);
+    }
+
+    #[test]
+    fn held_alt_tab_modifier_is_taken_only_once() {
+        let mut state = PressState {
+            held_alt_tab_modifier: Some(0xA4),
+            ..Default::default()
+        };
+
+        assert_eq!(take_held_alt_tab_modifier(&mut state), Some(0xA4));
+        assert_eq!(take_held_alt_tab_modifier(&mut state), None);
+    }
+
+    #[test]
+    fn classifies_all_alt_tab_variants_as_system_chords() {
+        assert!(is_system_alt_tab_chord(&[0x12, 0x09]));
+        assert!(is_system_alt_tab_chord(&[0xA4, 0x09]));
+        assert!(is_system_alt_tab_chord(&[0xA5, 0x09]));
+        assert!(is_system_alt_tab_chord(&[0xA4, 0x10, 0x09]));
+        assert!(is_system_alt_tab_chord(&[0x11, 0xA5, 0x09]));
+        assert!(is_system_alt_tab_chord(&[0x09, 0xA4]));
+
+        assert!(!is_system_alt_tab_chord(&[0x09]));
+        assert!(!is_system_alt_tab_chord(&[0x11, 0x09]));
+        assert!(!is_system_alt_tab_chord(&[0xA4, 0x20]));
+    }
+
+    #[test]
+    fn alt_tab_uses_unarmed_send_input_route() {
+        assert_eq!(
+            fallback_injection_route(&[0x12, 0x09]),
+            FallbackInjectionRoute::SystemAltTabSendInput
+        );
+        assert_eq!(
+            fallback_injection_route(&[0xA4, 0x10, 0x09]),
+            FallbackInjectionRoute::SystemAltTabSendInput
+        );
+        assert_eq!(
+            fallback_injection_route(&[0x11, 0xA5, 0x09]),
+            FallbackInjectionRoute::SystemAltTabSendInput
+        );
+    }
+
+    #[test]
+    fn alt_chords_never_attempt_virtual_hid_first() {
+        assert!(!should_try_virtual_hid(&[0x12, 0x09]));
+        assert!(!should_try_virtual_hid(&[0xA4, 0x10, 0x09]));
+        assert!(!should_try_virtual_hid(&[0x11, 0xA5, 0x09]));
+
+        assert!(!should_try_virtual_hid(&[0xA4, 0x20]));
+        assert!(!should_try_virtual_hid(&[0xA5, 0x53]));
+        assert!(should_try_virtual_hid(&[0x11, 0x09]));
+    }
+
+    #[test]
+    fn non_tab_alt_chords_keep_window_message_route() {
+        assert_eq!(
+            fallback_injection_route(&[0xA4, 0x20]),
+            FallbackInjectionRoute::AltWindowMessage
+        );
+        assert_eq!(
+            fallback_injection_route(&[0xA5, 0x53]),
+            FallbackInjectionRoute::AltWindowMessage
+        );
+        assert_eq!(
+            fallback_injection_route(&[0x12, 0x73]),
+            FallbackInjectionRoute::AltWindowMessage
+        );
+        assert_eq!(
+            fallback_injection_route(&[0x11, 0x09]),
+            FallbackInjectionRoute::SendInput
+        );
     }
 }

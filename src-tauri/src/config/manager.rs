@@ -119,8 +119,8 @@ impl DeviceConfig {
             long_press_bindings: HashMap::new(),
             multi_click_bindings: HashMap::new(),
             multi_click_interval_ms: default_multi_click_interval_ms(),
-            voice_hotkey: Some(vec!["rightalt".into()]),
-            trigger_mode: TriggerMode::Toggle,
+            voice_hotkey: Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()]),
+            trigger_mode: TriggerMode::Hold,
             bluetooth_address: None,
             gain_db: default_gain_db(),
             retry_delay: default_retry_delay(),
@@ -268,7 +268,7 @@ impl ConfigManager {
         let mut sanitized: HashMap<String, HashMap<u8, KeyAction>> = HashMap::new();
         for (button_id, slots) in std::mem::take(&mut config.multi_click_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
-            if canonical == "mic" || canonical == "voice" || canonical == "unknown" {
+            if canonical == "unknown" {
                 if !slots.is_empty() {
                     log::warn!("XIAOMI CONFIG ignored multi-click binding for {button_id}");
                 }
@@ -295,7 +295,7 @@ impl ConfigManager {
         let mut sanitized_long_press: HashMap<String, KeyAction> = HashMap::new();
         for (button_id, action) in std::mem::take(&mut config.long_press_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
-            if canonical == "mic" || canonical == "voice" || canonical == "unknown" {
+            if canonical == "unknown" {
                 log::warn!("XIAOMI CONFIG ignored long-press binding for {button_id}");
                 continue;
             }
@@ -408,8 +408,8 @@ impl ConfigManager {
                 long_press_bindings: HashMap::new(),
                 multi_click_bindings: HashMap::new(),
                 multi_click_interval_ms: default_multi_click_interval_ms(),
-                voice_hotkey: Some(vec!["rightalt".into()]),
-                trigger_mode: TriggerMode::Toggle,
+                voice_hotkey: Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()]),
+                trigger_mode: TriggerMode::Hold,
                 bluetooth_address: None,
                 gain_db: 10.0,
                 retry_delay: 3.0,
@@ -452,7 +452,9 @@ impl ConfigManager {
         // 对齐 Python DEFAULT_BUTTON_BINDINGS
         let mut m = HashMap::new();
         m.insert("power".into(), KeyAction::SingleKey(0x1B)); // Esc
-        m.insert("mic".into(), KeyAction::SingleKey(0xA5)); // Right Alt
+        // 新安装默认适配 Codex 语音：Left Ctrl + Left Shift + D。
+        // 已保存的用户配置不会走这套默认值，因此升级不会覆盖自定义映射。
+        m.insert("mic".into(), KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]));
         m.insert("up".into(), KeyAction::SingleKey(0x26));
         m.insert("down".into(), KeyAction::SingleKey(0x28));
         m.insert("left".into(), KeyAction::SingleKey(0x25));
@@ -470,7 +472,7 @@ impl ConfigManager {
         m.insert("dpad_down".into(), KeyAction::SingleKey(0x28));
         m.insert("dpad_left".into(), KeyAction::SingleKey(0x25));
         m.insert("dpad_right".into(), KeyAction::SingleKey(0x27));
-        m.insert("voice".into(), KeyAction::SingleKey(0xA5));
+        m.insert("voice".into(), KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]));
         m.insert("mute".into(), KeyAction::SingleKey(0xAD));
         m
     }
@@ -501,7 +503,15 @@ mod tests {
         assert!(config.button_aliases.contains_key("volume_mute"));
         assert!(config.button_bindings.contains_key("volume_up"));
         assert!(config.long_press_bindings.is_empty());
-        assert_eq!(config.voice_hotkey, Some(vec!["rightalt".to_string()]));
+        assert_eq!(
+            config.voice_hotkey,
+            Some(vec!["leftctrl".to_string(), "leftshift".to_string(), "d".to_string()])
+        );
+        assert_eq!(config.trigger_mode, TriggerMode::Hold);
+        assert_eq!(
+            config.button_bindings.get("mic"),
+            Some(&KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]))
+        );
     }
 
     #[test]

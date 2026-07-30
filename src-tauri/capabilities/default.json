@@ -10,6 +10,7 @@
     "core:event:allow-unlisten",
     "core:event:allow-emit",
     "core:window:default",
+    "core:window:allow-set-theme",
     "core:webview:default",
     "core:app:default",
     "core:tray:default",

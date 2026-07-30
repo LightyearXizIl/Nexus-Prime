@@ -482,6 +482,35 @@ async function persistVoiceSettings() {
 
 /** 微信输入法「启动语音输入」常用组合：左 Ctrl + 左 Win */
 const WECHAT_VOICE_VKS = [0xa2, 0x5b];
+/** Codex「按住进行听写」快捷键：左 Ctrl + 左 Shift + D */
+const CODEX_VOICE_VKS = [0xa2, 0xa0, 0x44];
+
+async function applyCodexVoiceMapping() {
+  if (!config.value) return;
+  const action: KeyAction = { type: "ComboKey", value: [...CODEX_VOICE_VKS] };
+  const bindings = {
+    ...config.value.button_bindings,
+    mic: action,
+    voice: action,
+  };
+  const next: DeviceConfig = {
+    ...config.value,
+    button_bindings: bindings,
+    voice_hotkey: ["leftctrl", "leftshift", "d"],
+    voice_shortcut_enabled: true,
+    trigger_mode: "Hold",
+  };
+  config.value.button_bindings = bindings;
+  config.value.voice_hotkey = next.voice_hotkey;
+  config.value.voice_shortcut_enabled = true;
+  config.value.trigger_mode = "Hold";
+  await configStore.saveConfig(type, next);
+  setupApplyHint.value = "已应用：语音键 = 左 Ctrl + 左 Shift + D，触发模式 = 按住";
+  prependLog("设置建议：已快速应用 Codex 按住听写映射（左 Ctrl + 左 Shift + D）");
+  window.setTimeout(() => {
+    if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
+  }, 4000);
+}
 
 async function applyWechatVoiceMapping() {
   if (!config.value) return;
@@ -1047,7 +1076,7 @@ watch(
             </div>
             <div class="device-meta">
               <div class="model"><span class="status-dot" />{{ deviceDisplayName }}</div>
-              <h2>小米蓝牙语音遥控器</h2>
+              <h2>小米蓝牙遥控器 2 Pro</h2>
               <div class="tag-row">
                 <span class="mini-tag">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -1366,6 +1395,30 @@ watch(
             <button class="btn btn-secondary" type="button" @click="showSetupTips = false">关闭</button>
           </div>
           <p class="setup-tips-lead">按输入法对照设置；本软件语音键映射需与输入法快捷键一致。</p>
+
+          <article class="setup-ime-card">
+            <header class="setup-ime-head">
+              <h4>Codex</h4>
+              <span class="setup-ime-tag">默认 · 按住遥控器说话，松开结束听写</span>
+            </header>
+            <div class="setup-ime-warn" role="note">
+              <p class="setup-ime-warn-title">
+                Codex 的语音快捷键必须与本软件完全一致。当前推荐组合为 <code>左 Ctrl + 左 Shift + D</code>。
+              </p>
+              <p class="setup-ime-warn-sub">在 Codex 设置中确认“按住进行听写或长按”显示为 Ctrl+Shift+D；若你改了 Codex 快捷键，请在本软件重新录入相同组合。</p>
+            </div>
+            <div class="setup-ime-apply">
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="!config"
+                @click="applyCodexVoiceMapping"
+              >
+                快速设置语音键映射为：左 Ctrl + 左 Shift + D
+              </button>
+              <span v-if="setupApplyHint" class="setup-apply-hint">{{ setupApplyHint }}</span>
+            </div>
+          </article>
 
           <article class="setup-ime-card">
             <header class="setup-ime-head">

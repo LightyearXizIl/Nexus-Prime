@@ -64,11 +64,17 @@ watch(
   }
 );
 
-/** 录入期间拦截 WebView 加速键，并用浏览器事件兜底捕获。 */
+/** 录入期间只拦截 WebView 加速键；组合键结果由 Rust LL 钩子统一提交。 */
 function blockBrowserKeysDuringCapture(e: KeyboardEvent) {
   if (!capturing.value) return;
   e.preventDefault();
   e.stopPropagation();
+  if (e.key === "BrightnessUp" || e.key === "BrightnessDown") {
+    captureError.value = "该亮度键未向 Windows 上报可保存的键盘事件，无法录入。";
+  }
+  // 浏览器事件不能作为结果来源；否则会与 OS 级事件竞争并截断三键组合。
+  return;
+  /* c8 ignore start -- legacy fallback retained below for source-history context */
   if (applied || e.repeat) return;
   if (e.type === "keydown") {
     const main = eventKeyToVk(e);
@@ -78,13 +84,14 @@ function blockBrowserKeysDuringCapture(e: KeyboardEvent) {
       }
       return;
     }
-    void onCaptured([...modifierVksFromEvent(e), main], []);
+    void onCaptured([...modifierVksFromEvent(e), main!], []);
     return;
   }
   if (e.type === "keyup") {
     const modifier = modifierVkForKey(e.key);
-    if (modifier != null) void onCaptured([modifier], []);
+    if (modifier != null) void onCaptured([modifier!], []);
   }
+  /* c8 ignore stop */
 }
 
 function eventKeyToVk(e: KeyboardEvent): number | null {

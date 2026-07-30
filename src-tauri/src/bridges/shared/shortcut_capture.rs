@@ -4,9 +4,10 @@
 //!   （`try_swallow_capture_key` 内用 vk/wParam 驱动 CaptureEngine，再 return 1）
 //! - 禁止靠 GetAsyncKeyState 识别：键被 LL 吞掉后异步状态常不更新 → 永远录不上
 //!
-//! 完成规则：
-//! - 主键按下：提交「修饰键 + 主键」
-//! - 纯修饰键：全部抬起后提交（对齐 Python；钩子路径 KEYUP 可靠）
+//! 完成规则：全部参与按键抬起后，提交完整组合。
+//!
+//! 不能在主键按下时立即提交：WebView 与低级钩子的事件先后并不稳定，
+//! 这会把 Ctrl+Shift+D 之类的三键组合截断为只有两个修饰键。
 
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -145,21 +146,9 @@ pub fn vk_to_label(vk: u32) -> String {
     }
 }
 
-fn should_commit_mods_only(hist_norm: &[u32], active_norm: &[u32], newly_up_mod: bool) -> bool {
-    if !newly_up_mod || hist_norm.is_empty() {
-        return false;
-    }
-    if hist_norm.iter().any(|vk| !is_modifier(*vk)) {
-        return false;
-    }
-    // 对齐 Python：纯修饰键等全部抬起再提交。
-    // 钩子路径能可靠收到 KEYUP；「任一抬起」会在 Ctrl+Win 时过早只交 Ctrl，并提前关吞键漏出 Win。
-    active_norm.is_empty()
-}
-
 struct CaptureEngine {
     prev: HashMap<u32, bool>,
-    active_mods: HashSet<u32>,
+    active_keys: HashSet<u32>,
     chord_history: HashSet<u32>,
 }
 
@@ -171,23 +160,23 @@ enum CaptureStep {
 
 impl CaptureEngine {
     fn new(initial_down: HashMap<u32, bool>) -> Self {
-        let mut active_mods = HashSet::new();
+        let mut active_keys = HashSet::new();
         let mut chord_history = HashSet::new();
         for (&vk, &down) in &initial_down {
-            if down && is_modifier(vk) {
-                active_mods.insert(vk);
+            if down {
+                active_keys.insert(vk);
                 chord_history.insert(vk);
             }
         }
         Self {
             prev: initial_down,
-            active_mods,
+            active_keys,
             chord_history,
         }
     }
 
-    fn progress_mods(&self) -> Vec<u32> {
-        normalize_chord(&self.active_mods.iter().copied().collect::<Vec<_>>())
+    fn progress_keys(&self) -> Vec<u32> {
+        normalize_chord(&self.active_keys.iter().copied().collect::<Vec<_>>())
     }
 
     /// 钩子路径：按单个按键事件增量更新（勿依赖 GetAsyncKeyState）
@@ -198,40 +187,25 @@ impl CaptureEngine {
     }
 
     fn step(&mut self, down: &HashMap<u32, bool>) -> CaptureStep {
-        let mut newly_down_mains: Vec<u32> = Vec::new();
-        let mut newly_up_mod = false;
+        let mut saw_release = false;
 
         for (&vk, &is_down) in down {
             let was = self.prev.get(&vk).copied().unwrap_or(false);
             if is_down && !was {
                 self.chord_history.insert(vk);
-                if is_modifier(vk) {
-                    self.active_mods.insert(vk);
-                } else {
-                    newly_down_mains.push(vk);
-                }
-            } else if !is_down && was && is_modifier(vk) {
-                self.active_mods.remove(&vk);
-                newly_up_mod = true;
+                self.active_keys.insert(vk);
+            } else if !is_down && was {
+                self.active_keys.remove(&vk);
+                saw_release = true;
             }
             self.prev.insert(vk, is_down);
         }
 
-        if newly_down_mains.len() == 1 {
-            let mut keys: Vec<u32> = self.active_mods.iter().copied().collect();
-            keys.push(newly_down_mains[0]);
-            return CaptureStep::Captured(normalize_chord(&keys));
-        }
-        if newly_down_mains.len() > 1 {
-            return CaptureStep::Progress(self.progress_mods());
-        }
-
-        let hist = normalize_chord(&self.chord_history.iter().copied().collect::<Vec<_>>());
-        let active = self.progress_mods();
-        if should_commit_mods_only(&hist, &active, newly_up_mod) {
+        if saw_release && self.active_keys.is_empty() && !self.chord_history.is_empty() {
+            let hist = normalize_chord(&self.chord_history.iter().copied().collect::<Vec<_>>());
             return CaptureStep::Captured(hist);
         }
-        CaptureStep::Progress(active)
+        CaptureStep::Progress(self.progress_keys())
     }
 }
 
@@ -541,8 +515,9 @@ mod tests {
     #[test]
     fn capture_single_key() {
         let mut eng = idle_engine();
+        assert_eq!(eng.on_event(0x41, true), CaptureStep::Progress(vec![0x41]));
         assert_eq!(
-            eng.step(&frame(&[(0x41, true)])),
+            eng.on_event(0x41, false),
             CaptureStep::Captured(vec![0x41])
         );
     }
@@ -551,8 +526,10 @@ mod tests {
     fn capture_via_hook_on_event() {
         let mut eng = idle_engine();
         eng.on_event(VK_LMENU, true);
+        eng.on_event(0x20, true);
+        eng.on_event(0x20, false);
         assert_eq!(
-            eng.on_event(0x20, true),
+            eng.on_event(VK_LMENU, false),
             CaptureStep::Captured(vec![VK_LMENU, 0x20])
         );
     }
@@ -560,10 +537,56 @@ mod tests {
     #[test]
     fn capture_ctrl_plus_a() {
         let mut eng = idle_engine();
-        eng.step(&frame(&[(VK_LCONTROL, true), (VK_CONTROL, true)]));
+        eng.on_event(VK_LCONTROL, true);
+        eng.on_event(VK_CONTROL, true);
+        eng.on_event(0x41, true);
+        eng.on_event(0x41, false);
+        eng.on_event(VK_LCONTROL, false);
+        assert_eq!(eng.on_event(VK_CONTROL, false), CaptureStep::Captured(vec![VK_LCONTROL, 0x41]));
+    }
+
+    #[test]
+    fn capture_codex_ctrl_shift_d_is_not_committed_as_modifiers_only() {
+        let mut eng = idle_engine();
+        eng.on_event(VK_LCONTROL, true);
+        eng.on_event(VK_LSHIFT, true);
+        eng.on_event(0x44, true);
+        eng.on_event(0x44, false);
+        eng.on_event(VK_LSHIFT, false);
         assert_eq!(
-            eng.step(&frame(&[(VK_LCONTROL, true), (VK_CONTROL, true), (0x41, true)])),
-            CaptureStep::Captured(vec![VK_LCONTROL, 0x41])
+            eng.on_event(VK_LCONTROL, false),
+            CaptureStep::Captured(vec![VK_LCONTROL, VK_LSHIFT, 0x44])
+        );
+    }
+
+    #[test]
+    fn capture_codex_ctrl_shift_d_accepts_modifier_order_variations() {
+        let mut eng = idle_engine();
+        eng.on_event(VK_LSHIFT, true);
+        eng.on_event(VK_LCONTROL, true);
+        eng.on_event(0x44, true);
+        eng.on_event(0x44, false);
+        eng.on_event(VK_LCONTROL, false);
+        assert_eq!(
+            eng.on_event(VK_LSHIFT, false),
+            CaptureStep::Captured(vec![VK_LCONTROL, VK_LSHIFT, 0x44])
+        );
+    }
+
+    #[test]
+    fn capture_four_keys_and_ignores_repeated_down_events() {
+        let mut eng = idle_engine();
+        for vk in [VK_LCONTROL, VK_LSHIFT, VK_LMENU, 0x44] {
+            eng.on_event(vk, true);
+        }
+        // Typematic/repeated keydown must not create a duplicate or commit early.
+        assert_eq!(eng.on_event(0x44, true), CaptureStep::Progress(vec![VK_LCONTROL, VK_LSHIFT, VK_LMENU, 0x44]));
+        eng.on_event(0x44, false);
+        eng.on_event(VK_LMENU, false);
+        eng.on_event(VK_LSHIFT, false);
+        assert_eq!(
+            eng.on_event(VK_LCONTROL, false),
+            CaptureStep::Captured(vec![VK_LCONTROL, VK_LSHIFT, VK_LMENU, 0x44])
         );
     }
 
@@ -657,10 +680,8 @@ mod tests {
             CaptureStep::Captured(vec![VK_LCONTROL])
         );
         let mut b = idle_engine();
-        assert_eq!(
-            b.step(&frame(&[(0x41, true)])),
-            CaptureStep::Captured(vec![0x41])
-        );
+        b.on_event(0x41, true);
+        assert_eq!(b.on_event(0x41, false), CaptureStep::Captured(vec![0x41]));
     }
 
     #[test]
