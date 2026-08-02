@@ -4,6 +4,8 @@ import { RouterView, useRouter } from "vue-router";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import SideNav from "./components/SideNav.vue";
+import UpdateDialog from "./components/UpdateDialog.vue";
+import { useUpdateStore } from "./stores/update";
 
 interface ConflictProcess {
   pid: number;
@@ -20,6 +22,7 @@ interface ConflictSnapshot {
 }
 
 const router = useRouter();
+const update = useUpdateStore();
 let unlistenNav: UnlistenFn | null = null;
 let unlistenConflict: UnlistenFn | null = null;
 
@@ -119,6 +122,7 @@ async function dismissConflict() {
 }
 
 onMounted(async () => {
+  void update.initialize();
   unlistenNav = await listen<string>("navigate", (ev) => {
     if (ev.payload) router.push(ev.payload);
   });
@@ -134,6 +138,7 @@ onMounted(async () => {
 onUnmounted(() => {
   unlistenNav?.();
   unlistenConflict?.();
+  update.dispose();
 });
 </script>
 
@@ -211,6 +216,7 @@ onUnmounted(() => {
       </div>
     </div>
   </Teleport>
+  <UpdateDialog />
 </template>
 
 <style>

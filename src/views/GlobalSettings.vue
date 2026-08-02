@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useThemeStore } from "../stores/theme";
+import { useUpdateStore } from "../stores/update";
 import type { GlobalSettings, ThemePreference } from "../types";
 import lightYearAuthor from "../assets/light_year_author.jpg";
 
@@ -13,9 +14,11 @@ const settings = ref<GlobalSettings>({
   autostart: false,
   language: "zh-CN",
   minimize_to_tray: true,
+  auto_check_updates: true,
   theme: "system",
 });
 const theme = useThemeStore();
+const update = useUpdateStore();
 const saved = ref(true);
 const saving = ref(false);
 const saveError = ref("");
@@ -73,6 +76,7 @@ async function saveSettings() {
     await invoke("save_global_settings", { settings: settingsToSave });
     settings.value = settingsToSave;
     saved.value = true;
+    if (settingsToSave.auto_check_updates) void update.checkAfterEnabled();
   } catch (error) {
     console.error("Failed to save settings:", error);
     saveError.value = "保存失败，请检查应用权限后重试。";
@@ -170,13 +174,16 @@ async function openExternal(url: string) {
                 <span class="toggle-slider"></span>
               </label>
             </div>
-            <div class="preference-row is-disabled" aria-disabled="true">
+            <div class="preference-row">
               <div class="preference-icon" aria-hidden="true">↑</div>
               <div class="preference-copy">
-                <strong>自动检查更新 <em>开发中</em></strong>
-                <span>将在后续版本中提供可选的更新提醒</span>
+                <strong>自动检查更新</strong>
+                <span>启动时静默检查 GitHub 的最新正式版本</span>
               </div>
-              <span class="disabled-toggle" aria-hidden="true"></span>
+              <label class="toggle" title="自动检查更新">
+                <input v-model="settings.auto_check_updates" type="checkbox" aria-label="自动检查更新" @change="onSettingChange" />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
           </div>
         </section>

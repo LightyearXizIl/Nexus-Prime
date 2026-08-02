@@ -155,9 +155,16 @@ pub struct GlobalSettings {
     pub language: String,
     /// 最小化到托盘
     pub minimize_to_tray: bool,
+    /// 是否在应用启动时静默检查 GitHub 正式更新；旧配置缺失时默认开启。
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
+}
+
+fn default_auto_check_updates() -> bool {
+    true
 }
 
 impl Default for GlobalSettings {
@@ -166,6 +173,7 @@ impl Default for GlobalSettings {
             autostart: false,
             language: "zh-CN".to_string(),
             minimize_to_tray: true,
+            auto_check_updates: true,
             theme: ThemePreference::System,
         }
     }
@@ -561,6 +569,7 @@ mod tests {
         assert!(!settings.autostart);
         assert_eq!(settings.language, "zh-CN");
         assert!(settings.minimize_to_tray);
+        assert!(settings.auto_check_updates);
         assert_eq!(settings.theme, ThemePreference::System);
     }
 
@@ -571,6 +580,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(settings.theme, ThemePreference::System);
+        assert!(settings.auto_check_updates);
     }
 
     #[test]

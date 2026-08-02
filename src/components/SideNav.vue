@@ -2,21 +2,22 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
 import { useBridgeStore } from "../stores/bridge";
 import { useThemeStore } from "../stores/theme";
+import { useUpdateStore } from "../stores/update";
 import type { BridgeStatus } from "../types";
 
 const route = useRoute();
 const router = useRouter();
 const bridge = useBridgeStore();
 const theme = useThemeStore();
+const update = useUpdateStore();
 
 const showQuitConfirm = ref(false);
 const quitting = ref(false);
 const accountMenuOpen = ref(false);
 const accountMenuRef = ref<HTMLElement | null>(null);
-const appVersion = ref("v0.0.5");
+const appVersion = computed(() => update.currentVersion);
 
 const device = computed(() => bridge.devices.xiaomi);
 const isDevicePage = computed(() => route.path === "/xiaomi" || route.path === "/xiaomi/");
@@ -69,18 +70,8 @@ function closeAccountMenuOnOutsidePointer(event: PointerEvent) {
   }
 }
 
-onMounted(async () => {
-  window.addEventListener("pointerdown", closeAccountMenuOnOutsidePointer);
-  try {
-    appVersion.value = `v${(await getVersion()).replace(/\.0$/, "")}`;
-  } catch (error) {
-    console.warn("Failed to read app version:", error);
-  }
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener("pointerdown", closeAccountMenuOnOutsidePointer);
-});
+onMounted(() => window.addEventListener("pointerdown", closeAccountMenuOnOutsidePointer));
+onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenuOnOutsidePointer));
 </script>
 
 <template>
@@ -94,7 +85,10 @@ onBeforeUnmount(() => {
       </div>
       <div class="brand-copy">
         <strong>Nexus Prime</strong>
-        <span>{{ appVersion }}</span>
+        <button v-if="update.canOpen" type="button" class="brand-version is-update" :aria-label="`发现新版本 ${update.release?.version}，查看更新详情`" @click="update.openDialog">
+          {{ appVersion }}<i aria-hidden="true"></i>
+        </button>
+        <span v-else class="brand-version">{{ appVersion }}</span>
       </div>
       <div
         :class="['device-chip', statusClass(device.status)]"
@@ -249,13 +243,16 @@ onBeforeUnmount(() => {
 }
 
 .brand-copy strong,
-.brand-copy span {
+.brand-version {
   display: block;
   white-space: nowrap;
 }
 
 .brand-copy strong { font-size: 15px; line-height: 1; letter-spacing: 0.1px; }
-.brand-copy span { margin-top: 5px; color: var(--nav-muted); font-size: 10px; }
+.brand-version { position: relative; margin-top: 5px; padding: 0; border: 0; color: var(--nav-muted); background: transparent; font-size: 10px; text-align: left; }
+.brand-version.is-update { color: var(--primary); cursor: pointer; }
+.brand-version.is-update:hover { color: var(--primary-dark); }
+.brand-version.is-update i { position: absolute; right: -8px; bottom: -3px; width: 6px; height: 6px; border: 1px solid var(--nav); border-radius: 50%; background: var(--danger); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 65%, transparent); }
 
 .device-chip {
   min-width: 0;

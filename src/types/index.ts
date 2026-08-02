@@ -47,7 +47,29 @@ export interface GlobalSettings {
   autostart: boolean;
   language: string;
   minimize_to_tray: boolean;
+  auto_check_updates: boolean;
   theme: ThemePreference;
+}
+
+export interface UpdateRelease {
+  version: string;
+  title: string;
+  notes: string;
+  publishedAt: string | null;
+  assetName: string;
+  assetSize: number;
+  downloaded: boolean;
+}
+
+export interface UpdateCheckResult {
+  currentVersion: string;
+  update: UpdateRelease | null;
+}
+
+export interface UpdateDownloadProgress {
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
 }
 
 export interface AudioDevice {

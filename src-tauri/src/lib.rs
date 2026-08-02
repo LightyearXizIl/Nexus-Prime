@@ -3,6 +3,7 @@ pub mod config;
 pub mod ipc;
 pub mod audio;
 pub mod logging;
+pub mod update;
 
 use tauri::{Manager, RunEvent};
 
@@ -47,6 +48,7 @@ pub fn run() {
             let log_path = logging::init(&config_manager.logs_dir());
             std::env::set_var("REMOTE_BRIDGE_LOG_PATH", &log_path);
             app.manage(config_manager);
+            app.manage(update::UpdateManager::default());
 
             log::info!("Nexus Prime starting...");
             #[cfg(debug_assertions)]
@@ -176,6 +178,10 @@ pub fn run() {
             ipc::commands::kill_xiaomi_conflicts,
             ipc::commands::retry_xiaomi_after_conflict_clear,
             ipc::commands::repair_xiaomi_atvv,
+            update::check_for_update,
+            update::download_update,
+            update::cancel_update_download,
+            update::install_downloaded_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

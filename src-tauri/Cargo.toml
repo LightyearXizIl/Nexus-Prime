@@ -1,6 +1,6 @@
 [package]
 name = "nexus-prime"
-version = "0.0.6"
+version = "0.0.7"
 description = "Nexus Prime - voice remote bridge (Rust)"
 authors = ["Light year"]
 edition = "2021"
@@ -27,6 +27,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 parking_lot = "0.12"
 xz2 = "0.1"
 sha2 = "0.10"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+semver = "1"
 
 # Windows APIs for BLE, HID, keyboard hooks
 [target.'cfg(target_os = "windows")'.dependencies]

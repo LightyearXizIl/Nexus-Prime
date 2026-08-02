@@ -2,7 +2,7 @@
 
 Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具。它通过蓝牙读取遥控器按键与 ATVV 语音数据，把按键转换为可自定义的键盘快捷键，并将语音路由到虚拟声卡，供输入法或其他语音软件使用。
 
-当前版本：**v0.0.6**
+当前版本：**v0.0.7**
 
 技术栈：**Rust · Tauri 2 · Vue 3 · TypeScript**
 
@@ -67,9 +67,13 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 项目发布后，可从 GitHub Releases 下载 NSIS 安装包：
 
-- NSIS：`Nexus Prime_0.0.6_x64-setup.exe`
+- NSIS：`Nexus Prime_0.0.7_x64-setup.exe`
 
 从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
+
+应用内自动更新会读取 GitHub 的最新正式 Release。发布新版本时请使用 `vX.Y.Z` 标签，并上传唯一的 `Nexus.Prime_X.Y.Z_x64-setup.exe` 安装包；Release 正文会显示为更新说明，GitHub 提供的 SHA-256 digest 会在下载完成后用于校验安装包。
+
+详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
 安装步骤：
 
