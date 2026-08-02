@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -24,6 +24,7 @@ const saving = ref(false);
 const saveError = ref("");
 const appVersion = ref("v0.0.5");
 const activeSection = ref<SectionId>("general");
+const manualUpdateChecked = ref(false);
 
 const navigation: Array<{ id: SectionId; label: string; caption: string }> = [
   { id: "general", label: "通用", caption: "启动与窗口" },
@@ -44,6 +45,34 @@ onMounted(async () => {
     console.warn("Failed to read app version:", error);
   }
 
+});
+
+const updateControlState = computed(() => {
+  if (update.phase === "checking") {
+    return { label: "正在检查…", tone: "checking", progress: 48, indeterminate: true, disabled: true };
+  }
+  if (update.phase === "downloading") {
+    return { label: `下载 ${update.progress.percent}%`, tone: "downloading", progress: update.progress.percent, indeterminate: false, disabled: false };
+  }
+  if (update.phase === "ready") {
+    return { label: "准备安装", tone: "ready", progress: 100, indeterminate: false, disabled: false };
+  }
+  if (update.phase === "installing") {
+    return { label: "正在安装…", tone: "installing", progress: 100, indeterminate: true, disabled: true };
+  }
+  if (update.phase === "error") {
+    return { label: update.release ? "下载失败，重试" : "检查失败，重试", tone: "error", progress: 100, indeterminate: false, disabled: false };
+  }
+  if (update.release) {
+    return { label: `发现 ${update.release.version}`, tone: "available", progress: 100, indeterminate: false, disabled: false };
+  }
+  if (update.error) {
+    return { label: "检查失败，重试", tone: "error", progress: 100, indeterminate: false, disabled: false };
+  }
+  if (manualUpdateChecked.value) {
+    return { label: "已是最新版本", tone: "latest", progress: 100, indeterminate: false, disabled: false };
+  }
+  return { label: "检查更新", tone: "idle", progress: 14, indeterminate: false, disabled: false };
 });
 
 async function saveSettings() {
@@ -71,6 +100,19 @@ function onSettingChange() {
 
 async function setTheme(nextPreference: ThemePreference) {
   await theme.setPreference(nextPreference);
+}
+
+async function handleUpdateControl() {
+  if (update.phase === "installing") return;
+  if (update.canOpen) {
+    update.openDialog();
+    return;
+  }
+
+  manualUpdateChecked.value = false;
+  await update.checkForUpdate(false);
+  manualUpdateChecked.value = true;
+  if (update.canOpen) update.openDialog();
 }
 
 async function openExternal(url: string) {
@@ -220,13 +262,18 @@ async function openExternal(url: string) {
             <div><span>支持设备</span><strong>小米蓝牙遥控器 2 Pro</strong></div>
           </div>
           <div class="credits-grid">
-            <article class="author-card">
-              <img class="author-avatar" :src="lightYearAuthor" alt="Light year" />
-              <div class="author-card-copy">
-                <p class="credit-kicker">NEXUS PRIME</p>
-                <h3>Light year</h3>
-                <p class="author-description">Windows 版重构与维护</p>
-                <span class="author-contact">微信号：XizllHZ_007</span>
+            <section class="author-list" aria-labelledby="author-list-title">
+              <p id="author-list-title" class="credit-kicker">作者与维护</p>
+              <article class="author-card">
+                <div class="author-identity">
+                  <img class="author-avatar" :src="lightYearAuthor" alt="Light year" />
+                  <div class="author-card-copy">
+                    <p class="credit-kicker">NEXUS PRIME</p>
+                    <h3>Light year</h3>
+                    <p class="author-description">Windows 版重构与维护</p>
+                    <span class="author-contact">微信号：XizllHZ_007</span>
+                  </div>
+                </div>
                 <button
                   class="credit-link author-project-link"
                   type="button"
@@ -236,8 +283,24 @@ async function openExternal(url: string) {
                   <span>GitHub：</span>
                   <small>LightyearXizIl/Nexus-Prime</small>
                 </button>
-              </div>
-            </article>
+                <button
+                  type="button"
+                  :class="['update-orbit', `is-${updateControlState.tone}`]"
+                  :disabled="updateControlState.disabled"
+                  :aria-busy="update.phase === 'checking' || update.phase === 'installing'"
+                  :aria-label="`应用更新：${updateControlState.label}`"
+                  @click="handleUpdateControl"
+                >
+                  <span class="update-orbit-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                      <path d="m13 2-9 12h6l-1 8 11-14h-6l-1-6Z" />
+                    </svg>
+                  </span>
+                  <span class="update-orbit-track" aria-hidden="true"><i :class="{ indeterminate: updateControlState.indeterminate }" :style="{ width: `${updateControlState.progress}%` }"></i></span>
+                  <span class="update-orbit-label">{{ updateControlState.label }}</span>
+                </button>
+              </article>
+            </section>
             <section class="source-list" aria-labelledby="source-list-title">
               <p id="source-list-title" class="credit-kicker">源码与致谢</p>
               <div class="source-cards">
@@ -368,15 +431,16 @@ async function openExternal(url: string) {
 .about-overview > div { padding: 11px; border-radius: 9px; background: var(--surface-soft); }
 .about-overview span { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 10px; }
 .about-overview strong { display: block; overflow: hidden; color: var(--text); font-size: 12px; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
-.credits-grid { display: grid; grid-template-columns: minmax(210px, 0.78fr) minmax(0, 1.22fr); gap: 14px; padding-top: 17px; border-top: 1px solid var(--border); }
-.author-card { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 14px; border-radius: 10px; background: var(--surface-soft); }
+.credits-grid { display: grid; grid-template-columns: minmax(210px, 0.78fr) minmax(0, 1.22fr); align-items: stretch; gap: 14px; padding-top: 17px; border-top: 1px solid var(--border); }
+.author-list, .source-list { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
+.author-list > .credit-kicker, .source-list > .credit-kicker { margin-bottom: 8px; }
+.author-card { display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 12px; min-width: 0; padding: 14px; border-radius: 10px; background: var(--surface-soft); }
+.author-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .author-avatar { width: 54px; height: 54px; flex: 0 0 54px; border: 1px solid var(--border); border-radius: 10px; object-fit: cover; background: #000; }
 .author-card-copy { min-width: 0; flex: 1; }
 .author-card h3 { margin: 0; color: var(--text); font-size: 14px; }
 .author-description, .author-contact { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
 .author-contact { display: block; color: var(--text-muted); }
-.source-list { min-width: 0; }
-.source-list > .credit-kicker { margin-bottom: 8px; }
 .source-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 7px; }
 .source-card { display: flex; min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); flex-direction: column; }
 .source-card-featured { grid-column: 1 / -1; }
@@ -389,7 +453,22 @@ async function openExternal(url: string) {
 .credit-link:focus-visible { border-color: var(--primary); outline: 2px solid color-mix(in srgb, var(--primary) 60%, transparent); outline-offset: 2px; }
 .credit-link span { color: var(--text); font-size: 10px; font-weight: 720; white-space: nowrap; }
 .credit-link small { min-width: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
-.author-project-link { margin-top: 10px; }
+.author-project-link { margin: 0; }
+.update-orbit { --update-accent: var(--primary); position: relative; display: grid; grid-template-columns: 26px minmax(44px, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 46px; align-self: end; overflow: hidden; padding: 8px 11px; border: 1px solid color-mix(in srgb, var(--update-accent) 38%, var(--border)); border-radius: 999px; color: #f8fbff; background: #07101d; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 18px rgba(0,0,0,.16); font: inherit; cursor: pointer; isolation: isolate; transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease; }
+.update-orbit::before { position: absolute; z-index: -1; top: 50%; left: 13px; width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--update-accent) 38%, transparent); filter: blur(14px); transform: translateY(-50%); content: ""; }
+.update-orbit:hover:not(:disabled) { border-color: color-mix(in srgb, var(--update-accent) 65%, var(--border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 10px 21px color-mix(in srgb, var(--update-accent) 17%, transparent); transform: translateY(-1px); }
+.update-orbit:focus-visible { outline: 2px solid var(--update-accent); outline-offset: 3px; }
+.update-orbit:disabled { cursor: wait; opacity: .8; }
+.update-orbit.is-latest, .update-orbit.is-ready { --update-accent: var(--success); }
+.update-orbit.is-error { --update-accent: var(--danger); }
+.update-orbit.is-available { --update-accent: var(--primary); }
+.update-orbit-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #fff; background: var(--update-accent); box-shadow: 0 0 14px color-mix(in srgb, var(--update-accent) 82%, transparent); }
+.update-orbit-icon svg { width: 14px; height: 14px; }
+.update-orbit-track { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.18); box-shadow: inset 0 1px 2px rgba(0,0,0,.38); }
+.update-orbit-track i { display: block; height: 100%; border-radius: inherit; background: var(--update-accent); box-shadow: 0 0 10px color-mix(in srgb, var(--update-accent) 78%, transparent); transition: width .2s ease; }
+.update-orbit-track i.indeterminate { width: 48% !important; animation: update-orbit-scan 1.1s ease-in-out infinite; }
+.update-orbit-label { min-width: max-content; color: #f8fbff; font-size: 10px; font-weight: 780; white-space: nowrap; }
+@keyframes update-orbit-scan { 0%, 100% { transform: translateX(-48%); } 50% { transform: translateX(112%); } }
 
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: 1fr; gap: 13px; }
@@ -409,11 +488,12 @@ async function openExternal(url: string) {
   .theme-segmented { justify-self: stretch; }
   .theme-segmented button { flex: 1; }
   .about-overview, .credits-grid { grid-template-columns: 1fr; }
+  .author-list, .source-list { grid-template-rows: auto auto; }
   .source-cards { grid-template-columns: 1fr; }
   .source-card-featured { grid-column: auto; }
   .credit-link { min-height: 38px; }
 }
 @media (max-width: 420px) {
-  .author-card { align-items: stretch; flex-direction: column; }
+  .author-identity { align-items: stretch; flex-direction: column; }
 }
 </style>

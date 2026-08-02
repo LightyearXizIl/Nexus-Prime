@@ -239,6 +239,8 @@ function toggleTheme() {
 }
 
 .top-actions {
+  justify-self: end;
+  width: max-content;
   justify-content: flex-end;
   gap: 3px;
   padding: 3px;
