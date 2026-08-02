@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/refs/heads/v2/crates/tauri-utils/schema.json",
   "productName": "Nexus Prime",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "identifier": "com.lightyear.nexusprime",
   "build": {
     "frontendDist": "../dist",
@@ -14,7 +14,7 @@
       {
         "title": "Nexus Prime",
         "width": 1080,
-        "height": 920,
+        "height": 814,
         "minWidth": 880,
         "minHeight": 720,
         "resizable": true,

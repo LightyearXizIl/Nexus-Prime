@@ -1,6 +1,6 @@
 [package]
 name = "nexus-prime"
-version = "0.0.9"
+version = "0.1.0"
 description = "Nexus Prime - voice remote bridge (Rust)"
 authors = ["Light year"]
 edition = "2021"

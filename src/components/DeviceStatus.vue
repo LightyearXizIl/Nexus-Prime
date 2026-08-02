@@ -55,17 +55,22 @@ function buttonText(status: BridgeStatus): string {
 
 <style scoped>
 .device-status {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  box-shadow: var(--shadow-sm);
 }
 
 .status-indicator {
   min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-raised);
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   font-size: 13px;
   font-weight: 650;
   display: inline-flex;
@@ -103,8 +108,8 @@ function buttonText(status: BridgeStatus): string {
 .connection-action {
   height: 34px;
   padding: 0 13px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  border: 0;
+  border-radius: 999px;
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
@@ -128,12 +133,11 @@ function buttonText(status: BridgeStatus): string {
 }
 
 .disconnect {
-  background: transparent;
-  border-color: var(--danger-border);
+  background: var(--danger-bg);
   color: var(--danger);
 }
 
 .disconnect:hover:not(:disabled) {
-  background: var(--danger-bg);
+  background: color-mix(in srgb, var(--danger) 18%, var(--danger-bg));
 }
 </style>

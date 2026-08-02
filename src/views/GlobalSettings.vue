@@ -22,9 +22,10 @@ const update = useUpdateStore();
 const saved = ref(true);
 const saving = ref(false);
 const saveError = ref("");
-const appVersion = ref("v0.0.5");
+const appVersion = ref("v0.1.0");
 const activeSection = ref<SectionId>("general");
 const manualUpdateChecked = ref(false);
+const settingsReady = ref(false);
 
 const navigation: Array<{ id: SectionId; label: string; caption: string }> = [
   { id: "general", label: "通用", caption: "启动与窗口" },
@@ -33,18 +34,22 @@ const navigation: Array<{ id: SectionId; label: string; caption: string }> = [
 ];
 
 onMounted(async () => {
-  try {
-    const loaded = await invoke<GlobalSettings>("get_global_settings");
-    settings.value = loaded;
-  } catch (error) {
-    console.error("Failed to load settings:", error);
-  }
-  try {
-    appVersion.value = `v${(await getVersion()).replace(/\.0$/, "")}`;
-  } catch (error) {
-    console.warn("Failed to read app version:", error);
-  }
+  const [settingsResult, versionResult] = await Promise.allSettled([
+    invoke<GlobalSettings>("get_global_settings"),
+    getVersion(),
+  ]);
 
+  if (settingsResult.status === "fulfilled") {
+    settings.value = settingsResult.value;
+  } else {
+    console.error("Failed to load settings:", settingsResult.reason);
+  }
+  if (versionResult.status === "fulfilled") {
+    appVersion.value = `v${versionResult.value.replace(/\.0$/, "")}`;
+  } else {
+    console.warn("Failed to read app version:", versionResult.reason);
+  }
+  settingsReady.value = true;
 });
 
 const updateControlState = computed(() => {
@@ -162,7 +167,17 @@ async function openExternal(url: string) {
         </button>
       </aside>
 
-      <main class="settings-content">
+      <main class="settings-content" :aria-busy="!settingsReady">
+        <section v-if="!settingsReady" class="settings-card settings-loading-card" aria-label="正在加载设置">
+          <div class="loading-card-head">
+            <span></span><span></span>
+          </div>
+          <div class="loading-settings-list">
+            <span v-for="index in 3" :key="index"></span>
+          </div>
+        </section>
+
+        <template v-else>
         <section v-if="activeSection === 'general'" id="settings-panel-general" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-general">
           <div class="card-head">
             <div>
@@ -254,7 +269,6 @@ async function openExternal(url: string) {
               <h2>关于</h2>
               <p>Windows 桌面版遥控器语音桥接工具。</p>
             </div>
-            <span class="version-badge">{{ appVersion }}</span>
           </div>
           <div class="about-overview">
             <div><span>当前版本</span><strong>{{ appVersion }}</strong></div>
@@ -362,6 +376,7 @@ async function openExternal(url: string) {
             </section>
           </div>
         </section>
+        </template>
       </main>
     </div>
   </div>
@@ -426,7 +441,15 @@ async function openExternal(url: string) {
 .theme-segmented button:disabled { cursor: default; opacity: 0.7; }
 .theme-error { grid-column: 1 / -1; margin: -8px 0 12px; color: var(--danger); font-size: 11px; }
 
-.version-badge { padding: 5px 8px; border-radius: 6px; color: var(--primary-dark); background: var(--surface-selected); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 800; }
+.settings-loading-card { min-height: 282px; pointer-events: none; }
+.loading-card-head { display: grid; gap: 9px; padding-bottom: 17px; border-bottom: 1px solid var(--border); }
+.loading-card-head span, .loading-settings-list > span { display: block; border-radius: 999px; background: linear-gradient(90deg, var(--surface-soft), var(--surface-hover), var(--surface-soft)); background-size: 200% 100%; animation: settings-loading-shimmer 1.25s ease-in-out infinite; }
+.loading-card-head span:first-child { width: 116px; height: 10px; }
+.loading-card-head span:last-child { width: 188px; height: 19px; }
+.loading-settings-list { display: grid; }
+.loading-settings-list > span { height: 74px; border-bottom: 1px solid var(--border); border-radius: 0; }
+.loading-settings-list > span:last-child { border-bottom: 0; }
+@keyframes settings-loading-shimmer { to { background-position: -200% 0; } }
 .about-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 17px 0; }
 .about-overview > div { padding: 11px; border-radius: 9px; background: var(--surface-soft); }
 .about-overview span { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 10px; }
@@ -454,9 +477,10 @@ async function openExternal(url: string) {
 .credit-link span { color: var(--text); font-size: 10px; font-weight: 720; white-space: nowrap; }
 .credit-link small { min-width: 0; color: var(--text-secondary); font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
 .author-project-link { margin: 0; }
-.update-orbit { --update-accent: var(--primary); position: relative; display: grid; grid-template-columns: 26px minmax(44px, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 46px; align-self: end; overflow: hidden; padding: 8px 11px; border: 1px solid color-mix(in srgb, var(--update-accent) 38%, var(--border)); border-radius: 999px; color: #f8fbff; background: #07101d; box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 18px rgba(0,0,0,.16); font: inherit; cursor: pointer; isolation: isolate; transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease; }
-.update-orbit::before { position: absolute; z-index: -1; top: 50%; left: 13px; width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--update-accent) 38%, transparent); filter: blur(14px); transform: translateY(-50%); content: ""; }
-.update-orbit:hover:not(:disabled) { border-color: color-mix(in srgb, var(--update-accent) 65%, var(--border)); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 10px 21px color-mix(in srgb, var(--update-accent) 17%, transparent); transform: translateY(-1px); }
+.update-orbit { --update-accent: var(--primary); position: relative; display: grid; grid-template-columns: 26px minmax(44px, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 46px; align-self: end; overflow: hidden; padding: 8px 11px; border: 1px solid color-mix(in srgb, var(--update-accent) 38%, var(--border)); border-radius: 999px; color: var(--text); background: var(--surface-raised); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-inverse) 24%, transparent), 0 8px 18px var(--shadow); font: inherit; cursor: pointer; isolation: isolate; transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease, background .16s ease; }
+.update-orbit::before { position: absolute; z-index: 0; top: 50%; left: 13px; width: 44px; height: 44px; border-radius: 50%; background: color-mix(in srgb, var(--update-accent) 24%, transparent); filter: blur(14px); transform: translateY(-50%); content: ""; }
+.update-orbit > span { position: relative; z-index: 1; }
+.update-orbit:hover:not(:disabled) { border-color: color-mix(in srgb, var(--update-accent) 65%, var(--border)); background: var(--card-bg); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-inverse) 28%, transparent), 0 10px 21px color-mix(in srgb, var(--update-accent) 17%, transparent); transform: translateY(-1px); }
 .update-orbit:focus-visible { outline: 2px solid var(--update-accent); outline-offset: 3px; }
 .update-orbit:disabled { cursor: wait; opacity: .8; }
 .update-orbit.is-latest, .update-orbit.is-ready { --update-accent: var(--success); }
@@ -464,10 +488,10 @@ async function openExternal(url: string) {
 .update-orbit.is-available { --update-accent: var(--primary); }
 .update-orbit-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #fff; background: var(--update-accent); box-shadow: 0 0 14px color-mix(in srgb, var(--update-accent) 82%, transparent); }
 .update-orbit-icon svg { width: 14px; height: 14px; }
-.update-orbit-track { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.18); box-shadow: inset 0 1px 2px rgba(0,0,0,.38); }
+.update-orbit-track { height: 6px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--text) 14%, transparent); box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 18%, transparent); }
 .update-orbit-track i { display: block; height: 100%; border-radius: inherit; background: var(--update-accent); box-shadow: 0 0 10px color-mix(in srgb, var(--update-accent) 78%, transparent); transition: width .2s ease; }
 .update-orbit-track i.indeterminate { width: 48% !important; animation: update-orbit-scan 1.1s ease-in-out infinite; }
-.update-orbit-label { min-width: max-content; color: #f8fbff; font-size: 10px; font-weight: 780; white-space: nowrap; }
+.update-orbit-label { min-width: max-content; color: var(--text); font-size: 10px; font-weight: 780; white-space: nowrap; }
 @keyframes update-orbit-scan { 0%, 100% { transform: translateX(-48%); } 50% { transform: translateX(112%); } }
 
 @media (max-width: 900px) {
