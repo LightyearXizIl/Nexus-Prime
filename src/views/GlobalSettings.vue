@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, type Ref } from "vue";
+import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -24,12 +24,6 @@ const saving = ref(false);
 const saveError = ref("");
 const appVersion = ref("v0.0.5");
 const activeSection = ref<SectionId>("general");
-const sectionRefs: Record<SectionId, Ref<HTMLElement | null>> = {
-  general: ref(null),
-  appearance: ref(null),
-  about: ref(null),
-};
-let sectionObserver: IntersectionObserver | undefined;
 
 const navigation: Array<{ id: SectionId; label: string; caption: string }> = [
   { id: "general", label: "通用", caption: "启动与窗口" },
@@ -50,22 +44,7 @@ onMounted(async () => {
     console.warn("Failed to read app version:", error);
   }
 
-  sectionObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      const id = visible?.target.getAttribute("data-settings-section") as SectionId | null;
-      if (id) activeSection.value = id;
-    },
-    { rootMargin: "-17% 0px -15% 0px", threshold: [0.05, 0.25, 0.55] },
-  );
-  Object.values(sectionRefs).forEach((section) => {
-    if (section.value) sectionObserver?.observe(section.value);
-  });
 });
-
-onUnmounted(() => sectionObserver?.disconnect());
 
 async function saveSettings() {
   if (saved.value || saving.value) return;
@@ -92,11 +71,6 @@ function onSettingChange() {
 
 async function setTheme(nextPreference: ThemePreference) {
   await theme.setPreference(nextPreference);
-}
-
-function scrollToSection(id: SectionId) {
-  activeSection.value = id;
-  sectionRefs[id].value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function openExternal(url: string) {
@@ -128,14 +102,18 @@ async function openExternal(url: string) {
     </header>
 
     <div class="settings-layout">
-      <aside class="settings-nav" aria-label="设置分类">
+      <aside class="settings-nav" role="tablist" aria-label="设置分类">
         <p>设置分类</p>
         <button
           v-for="item in navigation"
           :key="item.id"
           type="button"
+          role="tab"
+          :id="`settings-tab-${item.id}`"
+          :aria-controls="`settings-panel-${item.id}`"
+          :aria-selected="activeSection === item.id"
           :class="{ active: activeSection === item.id }"
-          @click="scrollToSection(item.id)"
+          @click="activeSection = item.id"
         >
           <span>{{ item.label }}</span>
           <small>{{ item.caption }}</small>
@@ -143,7 +121,7 @@ async function openExternal(url: string) {
       </aside>
 
       <main class="settings-content">
-        <section :ref="sectionRefs.general" class="settings-card" data-settings-section="general">
+        <section v-if="activeSection === 'general'" id="settings-panel-general" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-general">
           <div class="card-head">
             <div>
               <p class="card-kicker">GENERAL</p>
@@ -188,7 +166,7 @@ async function openExternal(url: string) {
           </div>
         </section>
 
-        <section :ref="sectionRefs.appearance" class="settings-card" data-settings-section="appearance">
+        <section v-else-if="activeSection === 'appearance'" id="settings-panel-appearance" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-appearance">
           <div class="card-head">
             <div>
               <p class="card-kicker">APPEARANCE</p>
@@ -227,7 +205,7 @@ async function openExternal(url: string) {
           </div>
         </section>
 
-        <section :ref="sectionRefs.about" class="settings-card about-card" data-settings-section="about">
+        <section v-else id="settings-panel-about" class="settings-card about-card" role="tabpanel" aria-labelledby="settings-tab-about">
           <div class="card-head">
             <div>
               <p class="card-kicker">ABOUT NEXUS PRIME</p>
@@ -239,7 +217,7 @@ async function openExternal(url: string) {
           <div class="about-overview">
             <div><span>当前版本</span><strong>{{ appVersion }}</strong></div>
             <div><span>技术栈</span><strong>Rust · Tauri 2 · Vue 3</strong></div>
-            <div><span>支持设备</span><strong>小米遥控器 2 Pro</strong></div>
+            <div><span>支持设备</span><strong>小米蓝牙遥控器 2 Pro</strong></div>
           </div>
           <div class="credits-grid">
             <article class="author-card">
@@ -263,7 +241,7 @@ async function openExternal(url: string) {
             <section class="source-list" aria-labelledby="source-list-title">
               <p id="source-list-title" class="credit-kicker">源码与致谢</p>
               <div class="source-cards">
-                <article class="source-card">
+                <article class="source-card source-card-featured">
                   <h3>Voice VibeCoding版</h3>
                   <p class="source-author"><span>作者：</span><strong>mwlt</strong></p>
                   <div class="source-links">
@@ -352,7 +330,7 @@ async function openExternal(url: string) {
 .settings-nav button span { font-size: 13px; font-weight: 750; }
 .settings-nav button small { font-size: 10px; }
 .settings-content { display: grid; gap: 16px; min-width: 0; }
-.settings-card { scroll-margin-top: 18px; padding: 22px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 10px 28px var(--shadow); }
+.settings-card { padding: 22px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 10px 28px var(--shadow); }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 17px; border-bottom: 1px solid var(--border); }
 .card-head h2 { margin: 0; color: var(--text); font-size: 17px; font-weight: 770; letter-spacing: -0.25px; }
 .card-head p:not(.card-kicker) { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; }
@@ -399,8 +377,9 @@ async function openExternal(url: string) {
 .author-contact { display: block; color: var(--text-muted); }
 .source-list { min-width: 0; }
 .source-list > .credit-kicker { margin-bottom: 8px; }
-.source-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); align-items: stretch; gap: 7px; }
+.source-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 7px; }
 .source-card { display: flex; min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); flex-direction: column; }
+.source-card-featured { grid-column: 1 / -1; }
 .source-card h3 { margin: 0; color: var(--text); font-size: 12px; line-height: 1.35; }
 .source-author { display: flex; min-width: 0; margin: 5px 0 10px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; flex-wrap: wrap; }
 .source-author strong { color: var(--text); font-weight: 720; overflow-wrap: anywhere; }
@@ -431,6 +410,7 @@ async function openExternal(url: string) {
   .theme-segmented button { flex: 1; }
   .about-overview, .credits-grid { grid-template-columns: 1fr; }
   .source-cards { grid-template-columns: 1fr; }
+  .source-card-featured { grid-column: auto; }
   .credit-link { min-height: 38px; }
 }
 @media (max-width: 420px) {

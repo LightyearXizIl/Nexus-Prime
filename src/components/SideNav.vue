@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { invoke } from "@tauri-apps/api/core";
 import { useBridgeStore } from "../stores/bridge";
 import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
@@ -13,10 +12,6 @@ const bridge = useBridgeStore();
 const theme = useThemeStore();
 const update = useUpdateStore();
 
-const showQuitConfirm = ref(false);
-const quitting = ref(false);
-const accountMenuOpen = ref(false);
-const accountMenuRef = ref<HTMLElement | null>(null);
 const appVersion = computed(() => update.currentVersion);
 
 const device = computed(() => bridge.devices.xiaomi);
@@ -35,7 +30,6 @@ function statusClass(status: BridgeStatus): string {
 }
 
 function navigate(path: "/xiaomi" | "/xiaomi/mapping" | "/settings") {
-  accountMenuOpen.value = false;
   if (route.path !== path) void router.push(path);
 }
 
@@ -43,35 +37,6 @@ function toggleTheme() {
   void theme.toggle();
 }
 
-function openQuitConfirm() {
-  accountMenuOpen.value = false;
-  showQuitConfirm.value = true;
-}
-
-function cancelQuit() {
-  if (quitting.value) return;
-  showQuitConfirm.value = false;
-}
-
-async function confirmQuit() {
-  if (quitting.value) return;
-  quitting.value = true;
-  try {
-    await invoke("quit_application");
-  } catch (error) {
-    console.error("quit_application failed:", error);
-    quitting.value = false;
-  }
-}
-
-function closeAccountMenuOnOutsidePointer(event: PointerEvent) {
-  if (!accountMenuRef.value?.contains(event.target as Node)) {
-    accountMenuOpen.value = false;
-  }
-}
-
-onMounted(() => window.addEventListener("pointerdown", closeAccountMenuOnOutsidePointer));
-onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenuOnOutsidePointer));
 </script>
 
 <template>
@@ -147,49 +112,8 @@ onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenu
           <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10.05 3h4v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 21 10.05v4h-.09A1.7 1.7 0 0 0 19.4 15Z" />
         </svg>
       </button>
-      <div ref="accountMenuRef" class="account-wrap">
-        <button
-          type="button"
-          class="account-button"
-          aria-label="应用菜单"
-          :aria-expanded="accountMenuOpen"
-          @click="accountMenuOpen = !accountMenuOpen"
-        >
-          NP
-        </button>
-        <div v-if="accountMenuOpen" class="account-menu" role="menu">
-          <button type="button" role="menuitem" @click="openQuitConfirm">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-              <path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9" />
-            </svg>
-            退出应用
-          </button>
-        </div>
-      </div>
     </div>
   </header>
-
-  <Teleport to="body">
-    <div
-      v-if="showQuitConfirm"
-      class="quit-backdrop"
-      role="presentation"
-      @click.self="cancelQuit"
-    >
-      <div class="quit-dialog" role="dialog" aria-modal="true" aria-labelledby="quit-title">
-        <h3 id="quit-title">退出应用？</h3>
-        <p>将彻底关闭软件（不会最小化到托盘）。确定要退出吗？</p>
-        <div class="quit-actions">
-          <button type="button" class="quit-btn quit-btn-ghost" :disabled="quitting" @click="cancelQuit">
-            取消
-          </button>
-          <button type="button" class="quit-btn quit-btn-danger" :disabled="quitting" @click="confirmQuit">
-            {{ quitting ? "退出中..." : "退出" }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>
@@ -211,8 +135,7 @@ onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenu
 .brand-block,
 .top-actions,
 .main-nav,
-.device-chip,
-.account-menu button {
+.device-chip {
   display: flex;
   align-items: center;
 }
@@ -256,14 +179,14 @@ onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenu
 
 .device-chip {
   min-width: 0;
-  height: 34px;
+  height: 42px;
   gap: 7px;
   margin-left: 2px;
-  padding: 0 11px;
-  border: 1px solid var(--nav-device-border);
-  border-radius: 9px;
+  padding: 0 14px;
+  border: 1px solid var(--nav-segment-border);
+  border-radius: 999px;
   color: var(--nav-device-ink);
-  background: var(--nav-device-bg);
+  background: var(--nav-segment-bg);
   font-weight: 650;
   font-size: 13px;
 }
@@ -315,15 +238,21 @@ onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenu
   box-shadow: var(--nav-segment-shadow);
 }
 
-.top-actions { justify-content: flex-end; gap: 6px; }
+.top-actions {
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--nav-segment-border);
+  border-radius: 999px;
+  background: var(--nav-segment-bg);
+}
 
-.icon-button,
-.account-button {
+.icon-button {
   display: grid;
   place-items: center;
   height: 34px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 999px;
   color: var(--nav-icon);
   background: transparent;
   cursor: pointer;
@@ -332,86 +261,12 @@ onBeforeUnmount(() => window.removeEventListener("pointerdown", closeAccountMenu
 
 .icon-button { width: 34px; padding: 0; }
 .icon-button svg { width: 17px; height: 17px; }
-.icon-button:hover:not(:disabled),
-.icon-button.active,
-.account-button:hover,
-.account-button[aria-expanded="true"] {
+.icon-button:hover:not(:disabled) {
   color: var(--nav-icon-hover);
   background: var(--nav-icon-hover-bg);
 }
+.icon-button.active { color: var(--nav-segment-active-ink); background: var(--nav-segment-active); box-shadow: var(--nav-segment-shadow); }
 .icon-button:disabled { cursor: wait; opacity: 0.58; }
-
-.account-wrap { position: relative; }
-.account-button {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 5px solid transparent;
-  border-radius: 12px;
-  color: var(--nav-account-ink);
-  background: var(--nav-account-bg);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.account-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 100;
-  min-width: 150px;
-  padding: 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--card-bg);
-  box-shadow: var(--dialog-shadow);
-}
-
-.account-menu button {
-  width: 100%;
-  gap: 8px;
-  height: 34px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text);
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.account-menu button:hover { color: var(--danger); background: var(--danger-bg); }
-.account-menu svg { width: 16px; height: 16px; }
-
-.quit-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: var(--overlay);
-}
-
-.quit-dialog {
-  width: min(360px, 100%);
-  padding: 18px 18px 14px;
-  border-radius: 10px;
-  background: var(--card-bg);
-  box-shadow: var(--dialog-shadow);
-  color: var(--text);
-}
-.quit-dialog h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
-.quit-dialog p { margin: 0 0 16px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
-.quit-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.quit-btn { height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid transparent; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
-.quit-btn:disabled { opacity: 0.6; cursor: wait; }
-.quit-btn-ghost { background: var(--card-bg); border-color: var(--border); color: var(--text); }
-.quit-btn-ghost:hover:not(:disabled) { background: var(--surface-hover); }
-.quit-btn-danger { background: var(--danger); color: #fff; }
-.quit-btn-danger:hover:not(:disabled) { filter: brightness(0.95); }
 
 @media (max-width: 1019px) {
   .topnav { grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 0 18px; }
