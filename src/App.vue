@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import SideNav from "./components/SideNav.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useUpdateStore } from "./stores/update";
+import { useI18n } from "vue-i18n";
 
 interface ConflictProcess {
   pid: number;
@@ -23,6 +24,7 @@ interface ConflictSnapshot {
 
 const router = useRouter();
 const update = useUpdateStore();
+const { t } = useI18n();
 let unlistenNav: UnlistenFn | null = null;
 let unlistenConflict: UnlistenFn | null = null;
 
@@ -31,18 +33,18 @@ const conflict = ref<ConflictSnapshot | null>(null);
 const busy = ref(false);
 const actionMsg = ref("");
 
-function triggerLabel(t: string): string {
-  switch (t) {
+function triggerLabel(trigger: string): string {
+  switch (trigger) {
     case "pcm_port":
-      return "语音端口冲突";
+      return t("conflict.pcm");
     case "hid_tap_port":
-      return "HID Tap 端口冲突";
+      return t("conflict.hid");
     case "atvv":
-      return "ATVV 语音通道失败";
+      return t("conflict.atvv");
     case "atvv_repair":
-      return "修复 ATVV：请先结束占用";
+      return t("conflict.repair");
     default:
-      return "桥接进程冲突";
+      return t("conflict.generic");
   }
 }
 
@@ -94,7 +96,7 @@ async function autoRetry() {
     actionMsg.value = msg;
     showConflict.value = false;
     if (trigger === "atvv_repair") {
-      actionMsg.value = "占用已清理，正在继续修复 ATVV…";
+      actionMsg.value = t("conflict.cleared");
       try {
         const result = await invoke<{
           phase: string;
@@ -165,10 +167,10 @@ onUnmounted(() => {
       >
         <h3 id="conflict-title">{{ triggerLabel(conflict.trigger) }}</h3>
         <p class="conflict-detail">
-          {{ conflict.detail || "检测到其它遥控桥接进程，可能占用端口或 BLE。" }}
+          {{ conflict.detail || t("conflict.detail") }}
         </p>
         <p class="conflict-ports">
-          关注端口：PCM UDP {{ conflict.pcmPort }}、HID Tap TCP {{ conflict.hidTapPort }}
+          {{ t("conflict.ports", { pcm: conflict.pcmPort, hid: conflict.hidTapPort }) }}
         </p>
 
         <ul class="conflict-list">
@@ -184,13 +186,13 @@ onUnmounted(() => {
               :disabled="busy"
               @click="killOne(p.pid)"
             >
-              结束此进程
+              {{ t("conflict.endOne") }}
             </button>
           </li>
         </ul>
 
         <p class="conflict-hint">
-          也可手动打开任务管理器（Ctrl+Shift+Esc）结束上列进程。仅允许结束已知桥接程序。
+          {{ t("conflict.hint") }}
         </p>
 
         <p v-if="actionMsg" class="conflict-msg">{{ actionMsg }}</p>
@@ -202,7 +204,7 @@ onUnmounted(() => {
             :disabled="busy"
             @click="dismissConflict"
           >
-            取消
+            {{ t("common.cancel") }}
           </button>
           <button
             type="button"
@@ -210,7 +212,7 @@ onUnmounted(() => {
             :disabled="busy || !conflict.processes.length"
             @click="killAll"
           >
-            {{ busy ? "处理中…" : "关掉上列全部" }}
+            {{ busy ? t("common.processing") : t("conflict.endAll") }}
           </button>
         </div>
       </div>
@@ -372,6 +374,17 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+.status-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  box-shadow: var(--shadow-sm);
 }
 
 #app {

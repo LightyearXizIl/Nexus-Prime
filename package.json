@@ -1,6 +1,6 @@
 {
   "name": "nexus-prime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Nexus Prime — 小米遥控器 2 Pro 语音与按键桥接 (Rust + Tauri 2 + Vue 3)",
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "@tauri-apps/plugin-shell": "^2.0.0",
     "pinia": "^2.1.7",
     "vue": "^3.4.0",
+    "vue-i18n": "^11.4.8",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {

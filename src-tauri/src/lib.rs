@@ -164,6 +164,7 @@ pub fn run() {
             ipc::commands::get_global_settings,
             ipc::commands::save_global_settings,
             ipc::commands::set_theme_preference,
+            ipc::commands::set_language_preference,
             ipc::commands::get_xiaomi_host_status,
             ipc::commands::get_xiaomi_voice_meter,
             ipc::commands::restart_xiaomi_bridge,

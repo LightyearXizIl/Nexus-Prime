@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { BridgeStatus } from "../types";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   status: BridgeStatus;
@@ -12,13 +15,13 @@ const emit = defineEmits<{
 
 function statusText(status: BridgeStatus): string {
   if (status.startsWith("Error|")) {
-    return status.slice("Error|".length) || "错误";
+    return status.slice("Error|".length) || t("status.error");
   }
   if (status.startsWith("Error")) return status;
   const map: Record<string, string> = {
-    Disconnected: "未连接",
-    Connecting: "连接中...",
-    Connected: "已连接",
+    Disconnected: t("status.disconnected"),
+    Connecting: t("status.connecting"),
+    Connected: t("status.connected"),
   };
   return map[status] || status;
 }
@@ -31,14 +34,14 @@ function statusClass(status: BridgeStatus): string {
 }
 
 function buttonText(status: BridgeStatus): string {
-  if (status === "Connected") return "断开连接";
-  if (status === "Connecting") return "连接中...";
-  return "连接设备";
+  if (status === "Connected") return t("status.disconnect");
+  if (status === "Connecting") return t("status.connecting");
+  return t("status.connect");
 }
 </script>
 
 <template>
-  <div class="device-status">
+  <div class="status-capsule device-status">
     <span :class="['status-indicator', statusClass(status)]">
       <span class="dot"></span>
       {{ statusText(status) }}
@@ -48,7 +51,7 @@ function buttonText(status: BridgeStatus): string {
       :disabled="loading || status === 'Connecting'"
       @click="emit('toggle')"
     >
-      {{ loading ? "处理中..." : buttonText(status) }}
+      {{ loading ? t("common.processing") : buttonText(status) }}
     </button>
   </div>
 </template>

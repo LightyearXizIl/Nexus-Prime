@@ -3,6 +3,7 @@
 export type BridgeType = "xiaomi";
 
 export type ThemePreference = "system" | "light" | "dark";
+export type AppLocale = "zh-CN" | "zh-TW" | "en";
 
 export type BridgeStatus =
   | "Disconnected"
@@ -45,7 +46,7 @@ export interface DeviceConfig {
 
 export interface GlobalSettings {
   autostart: boolean;
-  language: string;
+  language: AppLocale;
   minimize_to_tray: boolean;
   auto_check_updates: boolean;
   theme: ThemePreference;

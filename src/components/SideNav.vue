@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useBridgeStore } from "../stores/bridge";
 import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
+import { useI18n } from "vue-i18n";
 import type { BridgeStatus } from "../types";
 
 const route = useRoute();
@@ -11,6 +12,7 @@ const router = useRouter();
 const bridge = useBridgeStore();
 const theme = useThemeStore();
 const update = useUpdateStore();
+const { t } = useI18n();
 
 const appVersion = computed(() => update.currentVersion);
 
@@ -18,9 +20,9 @@ const device = computed(() => bridge.devices.xiaomi);
 const isDevicePage = computed(() => route.path === "/xiaomi" || route.path === "/xiaomi/");
 const isMappingPage = computed(() => route.path === "/xiaomi/mapping");
 const themeToggleLabel = computed(() =>
-  theme.effectiveTheme === "dark" ? "切换为浅色模式" : "切换为深色模式"
+  theme.effectiveTheme === "dark" ? t("nav.light") : t("nav.dark")
 );
-const deviceLabel = computed(() => device.value.device_name || "小米 2 Pro");
+const deviceLabel = computed(() => device.value.device_name || t("dashboard.device"));
 
 function statusClass(status: BridgeStatus): string {
   if (status === "Connected") return "connected";
@@ -64,14 +66,14 @@ function toggleTheme() {
       </div>
     </div>
 
-    <nav class="main-nav" aria-label="主导航">
+    <nav class="main-nav" :aria-label="t('nav.main')">
       <button
         type="button"
         :class="{ active: isDevicePage }"
         :aria-current="isDevicePage ? 'page' : undefined"
         @click="navigate('/xiaomi')"
       >
-        首页
+        {{ t("nav.home") }}
       </button>
       <button
         type="button"
@@ -79,7 +81,7 @@ function toggleTheme() {
         :aria-current="isMappingPage ? 'page' : undefined"
         @click="navigate('/xiaomi/mapping')"
       >
-        按键映射
+        {{ t("nav.mapping") }}
       </button>
     </nav>
 
@@ -103,8 +105,8 @@ function toggleTheme() {
       <button
         type="button"
         :class="['icon-button', { active: route.path === '/settings' }]"
-        title="设置"
-        aria-label="设置"
+        :title="t('nav.settings')"
+        :aria-label="t('nav.settings')"
         @click="navigate('/settings')"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">

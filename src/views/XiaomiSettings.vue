@@ -10,11 +10,13 @@ import KeyMappingStage from "../components/KeyMappingStage.vue";
 import type { DeviceConfig, KeyAction } from "../types";
 import wechatImeHotkeysImg from "../assets/guides/wechat-ime-hotkeys.png";
 import remoteProductImage from "../assets/xiaomi-remote-cutout.png";
+import { useI18n } from "vue-i18n";
 
 const bridge = useBridgeStore();
 const configStore = useConfigStore();
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 const type = "xiaomi" as const;
 
 const device = computed(() => bridge.devices[type]);
@@ -82,7 +84,7 @@ let mappingFlashSeq = 0;
 let mappingFlashClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 const cableActivityLabel = computed(() =>
-  voiceMeter.value.cableActive ? "输送中" : "待命"
+  voiceMeter.value.cableActive ? t("dashboard.receiving") : t("dashboard.noSignal")
 );
 
 function applyVoiceMeter(p: Record<string, unknown>) {
@@ -413,22 +415,40 @@ const showAtvvFailLabel = computed(
   () => Boolean(host.value.bridge_alive) && !(voiceMeter.value.atvvOk || host.value.atvv_ok)
 );
 
-const deviceDisplayName = computed(() => device.value.device_name || "小米 2 Pro");
+const deviceDisplayName = computed(() => device.value.device_name || t("dashboard.device"));
 const batteryLabel = computed(() =>
   device.value.battery_level != null ? `${device.value.battery_level}%` : "—"
 );
 const audioSignalLabel = computed(() => {
-  if (showAtvvFailLabel.value) return "ATVV 未连接";
-  if (voiceMeter.value.bleState === "receiving") return "接收中";
-  if (voiceMeter.value.bleState === "session") return "语音会话";
-  if (host.value.audio_alive) return "稳定";
-  return "无信号";
+  if (showAtvvFailLabel.value) return t("dashboard.atvvDisconnected");
+  if (voiceMeter.value.bleState === "receiving") return t("dashboard.receiving");
+  if (voiceMeter.value.bleState === "session") return t("dashboard.voiceSession");
+  if (host.value.audio_alive) return t("dashboard.stable");
+  return t("dashboard.noSignal");
 });
 const servicesSummary = computed(() => {
-  if (host.value.items.some((item) => item.tone === "error")) return "部分服务需要处理";
-  if (host.value.items.some((item) => item.tone === "warn")) return "服务正在检测中";
-  return "所有服务运行正常";
+  if (host.value.items.some((item) => item.tone === "error")) return t("dashboard.needsAttention");
+  if (host.value.items.some((item) => item.tone === "warn")) return t("dashboard.checking");
+  return t("dashboard.normal");
 });
+
+function hostItemLabel(id: string) {
+  return t(`dashboard.${id === "cable" ? "cable" : id === "audio" ? "route" : "bridge"}`);
+}
+
+function hostItemState(item: HostStatusItem) {
+  if (item.id === "cable") return t(item.tone === "ok" ? "dashboard.installed" : "common.unknown");
+  if (item.id === "audio") return t(item.tone === "ok" ? "dashboard.running" : "dashboard.stopped");
+  return t(item.tone === "ok" ? "dashboard.listening" : "dashboard.notStarted");
+}
+
+function bridgeStatusLabel(status: string) {
+  if (status.startsWith("Error|")) return status.slice("Error|".length) || t("status.error");
+  if (status.startsWith("Error")) return status;
+  if (status === "Connected") return t("status.connected");
+  if (status === "Connecting") return t("status.connecting");
+  return t("status.disconnected");
+}
 
 function activityTone(text: string): string {
   if (/失败|错误|异常|未连接|断开|未检测/.test(text)) return "error";
@@ -758,6 +778,7 @@ interface AtvvRepairResult {
   message: string;
   atvvOk: boolean;
   hadConflicts: boolean;
+  resultCode?: string;
 }
 
 async function repairAtvv() {
@@ -842,6 +863,7 @@ interface VoiceEnvActionResult {
   needsReboot: boolean;
   message: string;
   reportPath?: string | null;
+  resultCode?: string;
 }
 
 async function voiceDetectAndRepair() {
@@ -1057,8 +1079,7 @@ watch(
   <div class="page">
     <header v-if="!isMappingPage" class="dashboard-head">
       <div>
-        <p class="eyebrow">DEVICE DASHBOARD</p>
-        <h1>设备控制台</h1>
+        <h1>{{ t("dashboard.title") }}</h1>
       </div>
       <DeviceStatus
         :status="device.status"
@@ -1076,22 +1097,22 @@ watch(
             </div>
             <div class="device-meta">
               <div class="model"><span class="status-dot" />{{ deviceDisplayName }}</div>
-              <h2>小米蓝牙遥控器 2 Pro</h2>
+              <h2>{{ t("dashboard.device") }}</h2>
               <div class="tag-row">
                 <span class="mini-tag">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                     <path d="m12 2 5 5-4 4 4 4-5 5V2Z" />
                     <path d="m7 7 10 10M7 17 17 7" />
                   </svg>
-                  蓝牙 BLE
+                  {{ t("dashboard.ble") }}
                 </span>
-                <span class="mini-tag">低功耗连接</span>
+                <span class="mini-tag">{{ t("dashboard.lowEnergy") }}</span>
               </div>
             </div>
           </div>
           <div class="device-data">
             <div class="data-item">
-              <span class="label">电池电量</span>
+              <span class="label">{{ t("dashboard.battery") }}</span>
               <strong><span class="battery"><span :style="{ width: `${device.battery_level ?? 0}%` }" /></span>{{ batteryLabel }}</strong>
             </div>
             <div
@@ -1103,7 +1124,7 @@ watch(
               }"
               title="遥控器 BLE 解码后的 PCM"
             >
-              <span class="label">音频信号</span>
+              <span class="label">{{ t("dashboard.audio") }}</span>
               <strong>{{ audioSignalLabel }}</strong>
               <div class="ble-wave" aria-hidden="true">
                 <span
@@ -1115,22 +1136,22 @@ watch(
               </div>
             </div>
             <div class="data-item">
-              <span class="label">蓝牙地址</span>
+              <span class="label">{{ t("dashboard.address") }}</span>
               <strong>{{ device.device_address || "—" }}</strong>
             </div>
             <div class="data-item">
-              <span class="label">最近同步</span>
-              <strong>{{ device.status === "Disconnected" ? "—" : "刚刚" }}</strong>
+              <span class="label">{{ t("dashboard.synced") }}</span>
+              <strong>{{ device.status === "Disconnected" ? "—" : t("dashboard.justNow") }}</strong>
             </div>
           </div>
         </section>
 
         <section class="card host-card">
           <div class="section-title">
-            <h3>服务状态</h3>
+            <h3>{{ t("dashboard.services") }}</h3>
             <span>{{ servicesSummary }}</span>
           </div>
-          <div class="host-status-row" role="list" aria-label="运行状态">
+          <div class="host-status-row" role="list" :aria-label="t('dashboard.services')">
             <div
               v-for="item in host.items"
               :key="item.id"
@@ -1143,7 +1164,7 @@ watch(
                 :class="itemToneClass(item.tone)"
                 aria-hidden="true"
               />
-              <span class="host-item-label">{{ item.label }}</span>
+              <span class="host-item-label">{{ hostItemLabel(item.id) }}</span>
               <div
                 v-if="item.id === 'cable'"
                 class="cable-meter"
@@ -1159,7 +1180,7 @@ watch(
                 </span>
               </div>
               <span class="host-item-state" :class="itemToneClass(item.tone)">
-                {{ item.state_label }}
+                {{ hostItemState(item) }}
               </span>
             </div>
           </div>
@@ -1168,8 +1189,8 @@ watch(
 
         <section class="card quick-section">
           <div class="section-title">
-            <h3>快捷操作</h3>
-            <span>常用维护与设置</span>
+            <h3>{{ t("dashboard.actions") }}</h3>
+            <span>{{ t("dashboard.manageVoice") }}</span>
           </div>
           <div class="host-actions">
             <div class="host-action-group">
@@ -1179,7 +1200,7 @@ watch(
                 :disabled="voiceRepairing || restarting"
                 @click="voiceDetectAndRepair"
               >
-                {{ voiceRepairing ? "处理中..." : "声卡检测与修复" }}
+                {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudio") }}
               </button>
               <button
                 ref="repairInfoBtn"
@@ -1237,7 +1258,7 @@ watch(
                 :disabled="atvvRepairing || restarting || voiceRepairing"
                 @click="repairAtvv"
               >
-                {{ atvvRepairing ? "修复中..." : "修复 ATVV 连接" }}
+                {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvv") }}
               </button>
               <button
                 ref="atvvInfoBtn"
@@ -1295,7 +1316,7 @@ watch(
                 :disabled="restarting || voiceRepairing || atvvRepairing"
                 @click="restartBridge"
               >
-                {{ restarting ? "重启中..." : "重启按键桥接" }}
+                {{ restarting ? t("common.processing") : t("dashboard.restartBridge") }}
               </button>
               <button
                 ref="restartInfoBtn"
@@ -1354,7 +1375,7 @@ watch(
               type="button"
               @click="showSetupTips = true"
             >
-              输入法设置
+              {{ t("dashboard.inputSettings") }}
             </button>
           </div>
         </section>
@@ -1363,8 +1384,8 @@ watch(
       <aside class="log-aside">
         <section class="card activity-card">
           <div class="section-title">
-            <h3>实时动态</h3>
-            <span class="live"><span class="status-dot" />实时</span>
+            <h3>{{ t("dashboard.activity") }}</h3>
+            <span class="live"><span class="status-dot" />{{ t("dashboard.live") }}</span>
           </div>
           <div class="timeline" aria-live="polite">
             <article
@@ -1380,7 +1401,7 @@ watch(
             </article>
           </div>
           <div class="activity-footer">
-            <button type="button" @click="openLogs">查看完整日志</button>
+            <button type="button" @click="openLogs">{{ t("dashboard.logs") }}</button>
           </div>
         </section>
       </aside>
@@ -1535,17 +1556,16 @@ watch(
       <section v-if="isMappingPage && config" class="mapping-page">
         <header class="mapping-page-head">
           <div>
-            <p class="mapping-eyebrow">CONTROL MAPPING</p>
-            <h1>按键映射</h1>
-            <p class="mapping-subtitle">选择遥控器按键，为它设置触发方式与键盘快捷键。</p>
+            <h1>{{ t("mapping.title") }}</h1>
+            <p class="mapping-subtitle">{{ t("mapping.subtitle") }}</p>
           </div>
-          <div class="mapping-head-actions" aria-label="映射状态">
+          <div class="status-capsule mapping-head-actions" :aria-label="t('mapping.title')">
             <span class="mapping-status-pill" :style="{ '--mapping-status': bridge.statusColor(device.status) }">
-              <span aria-hidden="true"></span>{{ bridge.statusLabel(device.status) }}
+              <span aria-hidden="true"></span>{{ bridgeStatusLabel(device.status) }}
             </span>
             <span class="mapping-save-state" :class="{ saving: configStore.saving }">
               <span aria-hidden="true">{{ configStore.saving ? '↻' : '✓' }}</span>
-              {{ configStore.saving ? '正在保存映射…' : '更改自动保存' }}
+              {{ configStore.saving ? t('status.savingMapping') : t('status.autosave') }}
             </span>
           </div>
         </header>
@@ -2668,15 +2688,6 @@ watch(
   margin-bottom: 18px;
 }
 
-.eyebrow {
-  margin: 0 0 5px;
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.15px;
-  text-transform: uppercase;
-}
-
 .dashboard-head h1 {
   margin: 0;
   color: var(--text);
@@ -2852,15 +2863,15 @@ watch(
 /* 按键映射页：沿用首页的控制台层级，但让编辑区保持专注。 */
 .mapping-page { width: 100%; max-width: 1260px; margin: 0 auto; }
 .mapping-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 0 0 18px; }
-.mapping-eyebrow { margin: 0 0 7px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 800; letter-spacing: 0.13em; }
 .mapping-page-head h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 780; letter-spacing: -0.65px; }
 .mapping-subtitle { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; }
-.mapping-head-actions { display: inline-flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.mapping-head-actions { justify-content: flex-end; flex-wrap: nowrap; }
 .mapping-status-pill,
-.mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--surface-raised); font-size: 11px; font-weight: 720; white-space: nowrap; }
+.mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 650; white-space: nowrap; }
 .mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: var(--mapping-status); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mapping-status) 12%, transparent); }
-.mapping-save-state { color: var(--success-text); background: var(--success-bg); border-color: color-mix(in srgb, var(--success) 18%, var(--border)); }
-.mapping-save-state.saving { color: var(--primary-dark); background: var(--info-bg); border-color: color-mix(in srgb, var(--primary) 19%, var(--border)); }
+.mapping-status-pill { color: var(--success-text); background: var(--success-bg); }
+.mapping-save-state { color: var(--success-text); background: var(--success-bg); }
+.mapping-save-state.saving { color: var(--primary-dark); background: var(--info-bg); }
 .mapping-save-state.saving > span { animation: mapping-saving-spin 1s linear infinite; }
 @keyframes mapping-saving-spin { to { transform: rotate(360deg); } }
 .mapping-layout { padding: 16px; border-radius: 14px; background: var(--card-bg); box-shadow: 0 12px 32px var(--shadow); }

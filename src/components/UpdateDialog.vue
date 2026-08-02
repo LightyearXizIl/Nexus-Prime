@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import { useUpdateStore } from "../stores/update";
+import { useI18n } from "vue-i18n";
 
 const update = useUpdateStore();
+const { t } = useI18n();
 const dialog = ref<HTMLElement | null>(null);
 
 watch(
@@ -53,41 +55,37 @@ function closeOnBackdrop() {
         </div>
 
         <template v-if="update.phase === 'downloading'">
-          <p class="update-kicker">UPDATE IN PROGRESS</p>
-          <h2 id="update-title">正在下载 {{ update.release.version }}</h2>
-          <p class="update-subtitle">请保持 Nexus Prime 打开，下载完成后即可安装。</p>
+          <h2 id="update-title">{{ t("update.downloading", { version: update.release.version }) }}</h2>
+          <p class="update-subtitle">{{ t("update.keepOpen") }}</p>
           <div class="progress-wrap" aria-live="polite">
-            <div class="progress-label"><span>下载进度</span><strong>{{ update.progress.percent }}%</strong></div>
-            <div class="progress-track" role="progressbar" aria-label="更新下载进度" :aria-valuenow="update.progress.percent" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-label"><span>{{ t("update.progress") }}</span><strong>{{ update.progress.percent }}%</strong></div>
+            <div class="progress-track" role="progressbar" :aria-label="t('update.progress')" :aria-valuenow="update.progress.percent" aria-valuemin="0" aria-valuemax="100">
               <span :style="{ width: `${update.progress.percent}%` }"></span>
             </div>
             <p>{{ formatBytes(update.progress.downloadedBytes) }} / {{ formatBytes(update.progress.totalBytes || update.release.assetSize) }}</p>
           </div>
-          <div class="update-actions single-action"><button type="button" class="update-btn update-btn-ghost" @click="update.cancelDownload">取消下载</button></div>
+          <div class="update-actions single-action"><button type="button" class="update-btn update-btn-ghost" @click="update.cancelDownload">{{ t("update.cancel") }}</button></div>
         </template>
 
         <template v-else-if="update.phase === 'ready'">
-          <p class="update-kicker">DOWNLOAD COMPLETE</p>
-          <h2 id="update-title">更新已准备就绪</h2>
-          <p class="update-subtitle">{{ update.release.version }} 已通过完整性校验。安装将关闭本应用并启动正常安装流程。</p>
+          <h2 id="update-title">{{ t("update.ready") }}</h2>
+          <p class="update-subtitle">{{ t("update.verified", { version: update.release.version }) }}</p>
           <div class="version-compare"><span>{{ update.currentVersion }}</span><b>→</b><strong>{{ update.release.version }}</strong></div>
-          <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">稍后安装</button><button type="button" class="update-btn update-btn-primary" @click="update.install">安装更新</button></div>
+          <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">{{ t("update.later") }}</button><button type="button" class="update-btn update-btn-primary" @click="update.install">{{ t("update.install") }}</button></div>
         </template>
 
         <template v-else-if="update.phase === 'installing'">
-          <p class="update-kicker">STARTING INSTALLER</p>
-          <h2 id="update-title">正在启动安装程序</h2>
-          <p class="update-subtitle">Nexus Prime 即将关闭，随后将进入正常安装流程。</p>
+          <h2 id="update-title">{{ t("update.installing") }}</h2>
+          <p class="update-subtitle">{{ t("update.closing") }}</p>
         </template>
 
         <template v-else>
-          <p class="update-kicker">NEW VERSION AVAILABLE</p>
-          <h2 id="update-title">发现新版本 {{ update.release.version }}</h2>
+          <h2 id="update-title">{{ t("update.found", { version: update.release.version }) }}</h2>
           <p class="update-subtitle">{{ update.release.title }}</p>
           <div class="version-compare"><span>{{ update.currentVersion }}</span><b>→</b><strong>{{ update.release.version }}</strong></div>
-          <div class="release-notes"><p>更新内容</p><pre>{{ update.release.notes }}</pre></div>
+          <div class="release-notes"><p>{{ t("update.notes") }}</p><pre>{{ update.release.notes }}</pre></div>
           <p v-if="update.error" class="update-error" role="alert">{{ update.error }}</p>
-          <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">稍后再说</button><button type="button" class="update-btn update-btn-primary" @click="update.download">{{ update.phase === 'error' ? '重试下载' : '更新' }}</button></div>
+          <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">{{ t("update.laterTalk") }}</button><button type="button" class="update-btn update-btn-primary" @click="update.download">{{ update.phase === 'error' ? t("update.retryDownload") : t("update.update") }}</button></div>
         </template>
       </section>
     </div>
@@ -102,7 +100,6 @@ function closeOnBackdrop() {
 .update-accent span { background: var(--success); box-shadow: 0 0 10px color-mix(in srgb, var(--success) 55%, transparent); }
 .update-icon { display: grid; width: 48px; height: 48px; margin: 0 auto 15px; place-items: center; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); border-radius: 15px; color: var(--primary); background: var(--surface-selected); box-shadow: 0 9px 20px color-mix(in srgb, var(--primary) 15%, transparent); }
 .update-icon svg { width: 24px; height: 24px; }
-.update-kicker { margin: 0 0 7px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 800; letter-spacing: .13em; text-align: center; }
 .update-dialog h2 { margin: 0; color: var(--text); font-size: 20px; letter-spacing: -.35px; text-align: center; }
 .update-subtitle { max-width: 340px; margin: 8px auto 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; text-align: center; }
 .version-compare { display: flex; align-items: center; justify-content: center; gap: 11px; margin: 18px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }

@@ -36,6 +36,8 @@ pub struct VoiceEnvActionResult {
     pub ready: bool,
     pub needs_choice: bool,
     pub needs_reboot: bool,
+    /// Stable UI outcome code; message remains the diagnostic/log payload.
+    pub result_code: String,
     pub message: String,
     pub report_path: Option<String>,
 }
@@ -267,6 +269,7 @@ fn run_configure_script(mode: &str, zip: &Path) -> Result<VoiceEnvActionResult, 
         ready,
         needs_choice: false,
         needs_reboot,
+        result_code: if ready { "voice_env.ready" } else if needs_reboot { "voice_env.reboot_required" } else { "voice_env.incomplete" }.into(),
         message,
         report_path: if report.is_file() {
             Some(report.display().to_string())
@@ -291,6 +294,7 @@ pub fn check_or_prompt() -> VoiceEnvActionResult {
                     ready: true,
                     needs_choice: false,
                     needs_reboot: false,
+                    result_code: "voice_env.repair_failed".into(),
                     message: format!("VB-CABLE 已在，但修复默认麦克风失败: {e}"),
                     report_path: None,
                 },
@@ -300,6 +304,7 @@ pub fn check_or_prompt() -> VoiceEnvActionResult {
                 ready: true,
                 needs_choice: false,
                 needs_reboot: false,
+                result_code: "voice_env.ready".into(),
                 message: "VB-CABLE 已就绪（无内嵌包，跳过默认麦克风修复脚本）。".into(),
                 report_path: None,
             },
@@ -310,6 +315,7 @@ pub fn check_or_prompt() -> VoiceEnvActionResult {
             ready: false,
             needs_choice: true,
             needs_reboot: false,
+            result_code: "voice_env.choice_required".into(),
             message: status.message,
             report_path: None,
         }
@@ -338,6 +344,7 @@ pub fn open_download_page() -> Result<VoiceEnvActionResult, String> {
         ready: false,
         needs_choice: false,
         needs_reboot: false,
+        result_code: "voice_env.download_page_opened".into(),
         message: "已打开 VB-Audio 官网。安装完成后请再点「虚拟声卡检测与修复」。".into(),
         report_path: None,
     })
@@ -360,6 +367,7 @@ pub fn open_download_zip() -> Result<VoiceEnvActionResult, String> {
         ready: false,
         needs_choice: false,
         needs_reboot: false,
+        result_code: "voice_env.download_started".into(),
         message: "已开始下载官方驱动包。安装完成后请再点「虚拟声卡检测与修复」。".into(),
         report_path: None,
     })

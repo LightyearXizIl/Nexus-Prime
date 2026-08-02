@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import remoteImage from "../assets/xiaomi-remote-cutout.png";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 defineProps<{
   selectedId?: string | null;
@@ -20,19 +23,19 @@ const rootRef = ref<HTMLElement | null>(null);
  * prevents a future asset crop from silently shifting the hit targets.
  */
 const HOTSPOTS = [
-  { id: "power", label: "电源键", x: 24.56, y: 6.54, w: 22.44, h: 4.79, shape: "circle" },
-  { id: "mic", label: "语音键", x: 75.19, y: 6.51, w: 22.44, h: 4.85, shape: "circle" },
-  { id: "up", label: "上键", x: 50, y: 13, w: 43.39, h: 4.06, shape: "dpad dpad-up" },
-  { id: "left", label: "左键", x: 18.7, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-left" },
-  { id: "right", label: "右键", x: 81.3, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-right" },
-  { id: "down", label: "下键", x: 50, y: 26.39, w: 43.39, h: 4.06, shape: "dpad dpad-down" },
-  { id: "ok", label: "确认键", x: 50, y: 19.67, w: 42.89, h: 9.07, shape: "circle dpad-ok" },
-  { id: "back", label: "返回键", x: 29.3, y: 32.78, w: 32.42, h: 7.03, shape: "circle" },
-  { id: "volume_up", label: "音量加键", x: 70.32, y: 32.78, w: 32.42, h: 7.03, shape: "pill" },
-  { id: "home", label: "主页键", x: 29.3, y: 40.78, w: 32.42, h: 6.98, shape: "circle" },
-  { id: "volume_down", label: "音量减键", x: 70.32, y: 40.78, w: 32.42, h: 6.98, shape: "pill" },
-  { id: "menu", label: "菜单键", x: 29.3, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
-  { id: "tv", label: "TV 键", x: 70.32, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
+  { id: "power", x: 24.56, y: 6.54, w: 22.44, h: 4.79, shape: "circle" },
+  { id: "mic", x: 75.19, y: 6.51, w: 22.44, h: 4.85, shape: "circle" },
+  { id: "up", x: 50, y: 13, w: 43.39, h: 4.06, shape: "dpad dpad-up" },
+  { id: "left", x: 18.7, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-left" },
+  { id: "right", x: 81.3, y: 19.67, w: 18.95, h: 9.07, shape: "dpad dpad-right" },
+  { id: "down", x: 50, y: 26.39, w: 43.39, h: 4.06, shape: "dpad dpad-down" },
+  { id: "ok", x: 50, y: 19.67, w: 42.89, h: 9.07, shape: "circle dpad-ok" },
+  { id: "back", x: 29.3, y: 32.78, w: 32.42, h: 7.03, shape: "circle" },
+  { id: "volume_up", x: 70.32, y: 32.78, w: 32.42, h: 7.03, shape: "pill" },
+  { id: "home", x: 29.3, y: 40.78, w: 32.42, h: 6.98, shape: "circle" },
+  { id: "volume_down", x: 70.32, y: 40.78, w: 32.42, h: 6.98, shape: "pill" },
+  { id: "menu", x: 29.3, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
+  { id: "tv", x: 70.32, y: 48.75, w: 32.42, h: 6.98, shape: "circle" },
 ] as const;
 
 function keyEl(id: string): HTMLElement | null {
@@ -43,7 +46,7 @@ defineExpose({ keyEl, rootRef });
 </script>
 
 <template>
-  <div ref="rootRef" class="remote-schematic" aria-label="小米遥控器示意图">
+  <div ref="rootRef" class="remote-schematic" :aria-label="t('mapping.remotePreview')">
     <img class="remote-product-image" :src="remoteImage" alt="" draggable="false" />
     <button
       v-for="key in HOTSPOTS"
@@ -55,7 +58,7 @@ defineExpose({ keyEl, rootRef });
         { active: selectedId === key.id, hover: hoverId === key.id },
       ]"
       :data-key-id="key.id"
-      :aria-label="key.label"
+      :aria-label="t(`keys.${key.id}`)"
       :aria-pressed="selectedId === key.id"
       :style="{
         left: `${key.x}%`,

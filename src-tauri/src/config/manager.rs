@@ -167,6 +167,10 @@ fn default_auto_check_updates() -> bool {
     true
 }
 
+fn is_supported_language(language: &str) -> bool {
+    matches!(language, "zh-CN" | "zh-TW" | "en")
+}
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
@@ -393,7 +397,11 @@ impl ConfigManager {
     pub fn save_global_settings(&self, settings: &GlobalSettings) -> Result<(), String> {
         let _guard = self.global_settings_lock.lock();
         let mut merged = settings.clone();
-        merged.theme = self.load_global_settings_unlocked()?.theme;
+        let current = self.load_global_settings_unlocked()?;
+        // Theme and language use dedicated immediate-save controls. Do not let a
+        // stale settings form overwrite either preference.
+        merged.theme = current.theme;
+        merged.language = current.language;
         self.save_global_settings_unlocked(&merged)
     }
 
@@ -402,6 +410,16 @@ impl ConfigManager {
         let _guard = self.global_settings_lock.lock();
         let mut settings = self.load_global_settings_unlocked()?;
         settings.theme = theme;
+        self.save_global_settings_unlocked(&settings)
+    }
+
+    pub fn set_language_preference(&self, language: String) -> Result<(), String> {
+        if !is_supported_language(&language) {
+            return Err(format!("Unsupported language preference: {language}"));
+        }
+        let _guard = self.global_settings_lock.lock();
+        let mut settings = self.load_global_settings_unlocked()?;
+        settings.language = language;
         self.save_global_settings_unlocked(&settings)
     }
 
@@ -581,6 +599,15 @@ mod tests {
         .unwrap();
         assert_eq!(settings.theme, ThemePreference::System);
         assert!(settings.auto_check_updates);
+    }
+
+    #[test]
+    fn test_supported_language_preferences() {
+        assert!(is_supported_language("zh-CN"));
+        assert!(is_supported_language("zh-TW"));
+        assert!(is_supported_language("en"));
+        assert!(!is_supported_language("en-US"));
+        assert!(!is_supported_language("zh"));
     }
 
     #[test]

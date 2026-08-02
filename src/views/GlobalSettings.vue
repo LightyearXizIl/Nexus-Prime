@@ -5,6 +5,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
+import { useLocaleStore } from "../stores/locale";
+import { useI18n } from "vue-i18n";
+import type { AppLocale } from "../i18n";
 import type { GlobalSettings, ThemePreference } from "../types";
 import lightYearAuthor from "../assets/light_year_author.jpg";
 
@@ -19,19 +22,21 @@ const settings = ref<GlobalSettings>({
 });
 const theme = useThemeStore();
 const update = useUpdateStore();
+const locale = useLocaleStore();
+const { t } = useI18n();
 const saved = ref(true);
 const saving = ref(false);
 const saveError = ref("");
-const appVersion = ref("v0.1.0");
+const appVersion = ref("v0.1.1");
 const activeSection = ref<SectionId>("general");
 const manualUpdateChecked = ref(false);
 const settingsReady = ref(false);
 
-const navigation: Array<{ id: SectionId; label: string; caption: string }> = [
-  { id: "general", label: "通用", caption: "启动与窗口" },
-  { id: "appearance", label: "外观与语言", caption: "显示偏好" },
-  { id: "about", label: "关于", caption: "版本与致谢" },
-];
+const navigation = computed<Array<{ id: SectionId; label: string; caption: string }>>(() => [
+  { id: "general", label: t("settings.general"), caption: t("settings.generalHint") },
+  { id: "appearance", label: t("settings.appearance"), caption: t("settings.appearanceHint") },
+  { id: "about", label: t("settings.about"), caption: t("settings.aboutHint") },
+]);
 
 onMounted(async () => {
   const [settingsResult, versionResult] = await Promise.allSettled([
@@ -85,7 +90,7 @@ async function saveSettings() {
   saving.value = true;
   saveError.value = "";
   try {
-    const settingsToSave = { ...settings.value, theme: theme.preference };
+    const settingsToSave = { ...settings.value, language: locale.preference, theme: theme.preference };
     await invoke("save_global_settings", { settings: settingsToSave });
     settings.value = settingsToSave;
     saved.value = true;
@@ -105,6 +110,10 @@ function onSettingChange() {
 
 async function setTheme(nextPreference: ThemePreference) {
   await theme.setPreference(nextPreference);
+}
+
+function setLanguage(event: Event) {
+  void locale.setPreference((event.target as HTMLSelectElement).value as AppLocale);
 }
 
 async function handleUpdateControl() {
@@ -134,23 +143,22 @@ async function openExternal(url: string) {
   <div class="settings-page">
     <header class="settings-header">
       <div>
-        <p class="settings-eyebrow">PREFERENCES</p>
-        <h1>全局设置</h1>
-        <p>管理应用启动、外观与工作环境偏好。</p>
+        <h1>{{ t("settings.title") }}</h1>
+        <p>{{ t("settings.subtitle") }}</p>
       </div>
       <div class="save-area">
         <p v-if="saveError" class="save-error" role="alert">{{ saveError }}</p>
-        <p v-else-if="saved" class="saved-state" role="status"><span aria-hidden="true">✓</span>所有更改已保存</p>
+        <p v-else-if="saved" class="saved-state" role="status"><span aria-hidden="true">✓</span>{{ t("common.saved") }}</p>
         <button class="save-button" :class="{ 'is-saving': saving }" :disabled="saved || saving" @click="saveSettings">
           <span aria-hidden="true">{{ saving ? '↻' : '↓' }}</span>
-          {{ saving ? "正在保存…" : "保存设置" }}
+          {{ saving ? t("common.saving") : t("common.save") }}
         </button>
       </div>
     </header>
 
     <div class="settings-layout">
-      <aside class="settings-nav" role="tablist" aria-label="设置分类">
-        <p>设置分类</p>
+      <aside class="settings-nav" role="tablist" :aria-label="t('settings.categories')">
+        <p>{{ t("settings.categories") }}</p>
         <button
           v-for="item in navigation"
           :key="item.id"
@@ -181,42 +189,41 @@ async function openExternal(url: string) {
         <section v-if="activeSection === 'general'" id="settings-panel-general" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-general">
           <div class="card-head">
             <div>
-              <p class="card-kicker">GENERAL</p>
-              <h2>通用</h2>
-              <p>应用启动方式与窗口行为。</p>
+              <h2>{{ t("settings.generalTitle") }}</h2>
+              <p>{{ t("settings.generalDesc") }}</p>
             </div>
           </div>
           <div class="settings-list">
             <div class="preference-row">
               <div class="preference-icon" aria-hidden="true">↗</div>
               <div class="preference-copy">
-                <strong>开机自启</strong>
-                <span>Windows 启动后自动运行 Nexus Prime</span>
+                <strong>{{ t("settings.autostart") }}</strong>
+                <span>{{ t("settings.autostartHint") }}</span>
               </div>
-              <label class="toggle" title="开机自启">
-                <input v-model="settings.autostart" type="checkbox" aria-label="开机自启" @change="onSettingChange" />
+              <label class="toggle" :title="t('settings.autostart')">
+                <input v-model="settings.autostart" type="checkbox" :aria-label="t('settings.autostart')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
             <div class="preference-row">
               <div class="preference-icon" aria-hidden="true">⊟</div>
               <div class="preference-copy">
-                <strong>最小化到托盘</strong>
-                <span>关闭窗口时隐藏到托盘，可从托盘重新打开</span>
+                <strong>{{ t("settings.tray") }}</strong>
+                <span>{{ t("settings.trayHint") }}</span>
               </div>
-              <label class="toggle" title="最小化到托盘">
-                <input v-model="settings.minimize_to_tray" type="checkbox" aria-label="最小化到托盘" @change="onSettingChange" />
+              <label class="toggle" :title="t('settings.tray')">
+                <input v-model="settings.minimize_to_tray" type="checkbox" :aria-label="t('settings.tray')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
             <div class="preference-row">
               <div class="preference-icon" aria-hidden="true">↑</div>
               <div class="preference-copy">
-                <strong>自动检查更新</strong>
-                <span>启动时静默检查 GitHub 的最新正式版本</span>
+                <strong>{{ t("settings.updates") }}</strong>
+                <span>{{ t("settings.updatesHint") }}</span>
               </div>
-              <label class="toggle" title="自动检查更新">
-                <input v-model="settings.auto_check_updates" type="checkbox" aria-label="自动检查更新" @change="onSettingChange" />
+              <label class="toggle" :title="t('settings.updates')">
+                <input v-model="settings.auto_check_updates" type="checkbox" :aria-label="t('settings.updates')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -226,19 +233,18 @@ async function openExternal(url: string) {
         <section v-else-if="activeSection === 'appearance'" id="settings-panel-appearance" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-appearance">
           <div class="card-head">
             <div>
-              <p class="card-kicker">APPEARANCE</p>
-              <h2>外观与语言</h2>
-              <p>主题即时生效，语言将在后续界面中逐步覆盖。</p>
+              <h2>{{ t("settings.appearanceTitle") }}</h2>
+              <p>{{ t("settings.appearanceDesc") }}</p>
             </div>
           </div>
           <div class="settings-list appearance-list">
             <div class="preference-row language-row">
               <div class="preference-icon" aria-hidden="true">文</div>
               <div class="preference-copy">
-                <strong>界面语言</strong>
-                <span>选择应用程序的显示语言</span>
+                <strong>{{ t("settings.language") }}</strong>
+                <span>{{ t("settings.languageHint") }}</span>
               </div>
-              <select v-model="settings.language" class="language-select" aria-label="界面语言" @change="onSettingChange">
+              <select :value="locale.preference" class="language-select" :disabled="locale.saving" :aria-label="t('settings.language')" @change="setLanguage">
                 <option value="zh-CN">简体中文</option>
                 <option value="zh-TW">繁體中文</option>
                 <option value="en">English</option>
@@ -248,16 +254,17 @@ async function openExternal(url: string) {
               <div class="theme-copy">
                 <div class="preference-icon" aria-hidden="true">◐</div>
                 <div class="preference-copy">
-                  <strong>外观主题</strong>
-                  <span>即时应用并保存你的主题偏好</span>
+                  <strong>{{ t("settings.theme") }}</strong>
+                  <span>{{ t("settings.themeHint") }}</span>
                 </div>
               </div>
-              <div class="theme-segmented" role="group" aria-label="外观主题">
-                <button v-for="option in ([['light', '浅色'], ['system', '跟随系统'], ['dark', '深色']] as const)" :key="option[0]" type="button" :disabled="theme.saving" :class="{ active: theme.preference === option[0] }" @click="setTheme(option[0])">
+              <div class="theme-segmented" role="group" :aria-label="t('settings.theme')">
+                <button v-for="option in ([['light', t('settings.light')], ['system', t('settings.system')], ['dark', t('settings.dark')]] as const)" :key="option[0]" type="button" :disabled="theme.saving" :class="{ active: theme.preference === option[0] }" @click="setTheme(option[0])">
                   {{ option[1] }}
                 </button>
               </div>
               <p v-if="theme.error" class="theme-error" role="alert">{{ theme.error }}</p>
+              <p v-if="locale.error" class="theme-error" role="alert">{{ t("settings.languageSaveFailed") }}</p>
             </div>
           </div>
         </section>
@@ -265,9 +272,8 @@ async function openExternal(url: string) {
         <section v-else id="settings-panel-about" class="settings-card about-card" role="tabpanel" aria-labelledby="settings-tab-about">
           <div class="card-head">
             <div>
-              <p class="card-kicker">ABOUT NEXUS PRIME</p>
-              <h2>关于</h2>
-              <p>Windows 桌面版遥控器语音桥接工具。</p>
+              <h2>{{ t("settings.aboutTitle") }}</h2>
+              <p>{{ t("settings.aboutDesc") }}</p>
             </div>
           </div>
           <div class="about-overview">
@@ -385,7 +391,7 @@ async function openExternal(url: string) {
 <style scoped>
 .settings-page { width: 100%; max-width: 1260px; margin: 0 auto; box-sizing: border-box; }
 .settings-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
-.settings-eyebrow, .card-kicker, .credit-kicker { margin: 0 0 7px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 800; letter-spacing: 0.13em; }
+.credit-kicker { margin: 0 0 7px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 800; letter-spacing: 0.13em; }
 .settings-header h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 780; letter-spacing: -0.65px; }
 .settings-header > div > p:last-child { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; }
 .save-area { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-height: 36px; }
@@ -409,9 +415,9 @@ async function openExternal(url: string) {
 .settings-nav button small { font-size: 10px; }
 .settings-content { display: grid; gap: 16px; min-width: 0; }
 .settings-card { padding: 22px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 10px 28px var(--shadow); }
-.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 17px; border-bottom: 1px solid var(--border); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .card-head h2 { margin: 0; color: var(--text); font-size: 17px; font-weight: 770; letter-spacing: -0.25px; }
-.card-head p:not(.card-kicker) { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; }
+.card-head p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; }
 .settings-list { display: grid; }
 .preference-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 74px; border-bottom: 1px solid var(--border); }
 .preference-row:last-child { border-bottom: 0; }

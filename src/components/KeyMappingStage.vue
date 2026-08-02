@@ -11,6 +11,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, KeyAction } from "../types";
 import RemoteHotspot from "./RemoteHotspot.vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   config: DeviceConfig;
@@ -53,21 +56,6 @@ const MAPPING_ORDER = [
   "tv",
 ] as const;
 
-const DEFAULT_LABELS: Record<string, string> = {
-  power: "电源",
-  mic: "语音",
-  up: "上",
-  left: "左",
-  ok: "确定",
-  right: "右",
-  down: "下",
-  back: "返回",
-  volume_up: "音量+",
-  home: "主页",
-  volume_down: "音量-",
-  menu: "菜单",
-  tv: "TV",
-};
 
 const selectedId = ref<string | null>(null);
 const hoverId = ref<string | null>(null);
@@ -78,13 +66,7 @@ const liveLabels = ref<string[]>([]);
 type ClickCount = 1 | 2 | 3 | 4;
 type MappingSlot = ClickCount | "long";
 const MAPPING_SLOTS: MappingSlot[] = [1, 2, 3, 4, "long"];
-const SLOT_LABELS: Record<MappingSlot, string> = {
-  1: "单击",
-  2: "双击",
-  3: "三击",
-  4: "四连击",
-  long: "长按",
-};
+const SLOT_LABELS = computed<Record<MappingSlot, string>>(() => ({ 1: t("mapping.single"), 2: t("mapping.double"), 3: t("mapping.triple"), 4: t("mapping.quadruple"), long: t("mapping.long") }));
 const VOLUME_DEFAULT_BINDINGS: Record<string, KeyAction> = {
   volume_up: { type: "SingleKey", value: 0xaf },
   volume_down: { type: "SingleKey", value: 0xae },
@@ -114,7 +96,8 @@ function setCardRef(id: string, el: unknown) {
 }
 
 function labelOf(id: string): string {
-  return props.config.button_aliases?.[id] || DEFAULT_LABELS[id] || id;
+  const known = ["power", "mic", "up", "left", "ok", "right", "down", "back", "volume_up", "home", "volume_down", "menu", "tv"];
+  return known.includes(id) ? t(`keys.${id}`) : props.config.button_aliases?.[id] || id;
 }
 
 function mappingGlyph(id: string): string {
@@ -241,14 +224,14 @@ function stepMultiClickInterval(delta: number) {
 }
 
 function actionLabel(action: KeyAction): string {
-  if (!action || action.type === "None") return "未绑定";
+  if (!action || action.type === "None") return t("mapping.unbound");
   if (action.type === "SingleKey") return vkName(Number(action.value));
   if (action.type === "ComboKey") {
     const arr = Array.isArray(action.value) ? action.value : [];
     return arr.map((v) => vkName(Number(v))).join(" + ");
   }
-  if (action.type === "TextInput") return `文字: ${action.value}`;
-  if (action.type === "LaunchApp") return `启动: ${action.value}`;
+  if (action.type === "TextInput") return t("mapping.text", { value: action.value });
+  if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
   return "—";
 }
 
@@ -370,7 +353,7 @@ const filteredMappingButtons = computed(() => {
   const query = searchQuery.value.trim().toLocaleLowerCase();
   if (!query) return mappingButtons.value;
   return mappingButtons.value.filter((button) => {
-    const gestures = button.multiCounts.map((slot) => SLOT_LABELS[slot]).join(" ");
+    const gestures = button.multiCounts.map((slot) => SLOT_LABELS.value[slot]).join(" ");
     const text = `${button.label} ${button.id} ${actionLabel(button.action)} ${actionLabel(button.selectedAction)} ${gestures}`;
     return text.toLocaleLowerCase().includes(query);
   });
@@ -813,8 +796,8 @@ onUnmounted(() => {
   <div class="mapping-stage-v2">
     <section class="mapping-remote-panel">
       <div class="mapping-panel-heading">
-        <h3>遥控器预览</h3>
-        <span>点击按键快速定位</span>
+        <h3>{{ t("mapping.remotePreview") }}</h3>
+        <span>{{ t("mapping.locate") }}</span>
       </div>
       <div class="mapping-remote-wrap">
         <RemoteHotspot
@@ -829,7 +812,7 @@ onUnmounted(() => {
       <div v-if="selectedMappingButton" class="mapping-selection-card">
         <span class="selection-key">{{ selectedMappingButton.label }}</span>
         <div class="selection-summary">
-          <span>当前选择</span>
+            <span>{{ t("mapping.selected") }}</span>
           <strong>{{ actionLabel(selectedMappingButton.selectedAction) }}</strong>
         </div>
         <span
@@ -848,7 +831,7 @@ onUnmounted(() => {
             :disabled="capturing && selectedId !== selectedMappingButton.id"
             @click.stop="startCapture(selectedMappingButton.id)"
           >
-            {{ capturing && selectedId === selectedMappingButton.id ? "取消录入" : "录入快捷键" }}
+            {{ capturing && selectedId === selectedMappingButton.id ? t("mapping.cancelCapture") : t("mapping.capture") }}
           </button>
           <div class="click-select-wrap">
             <button
@@ -901,13 +884,13 @@ onUnmounted(() => {
             class="selection-action"
             :disabled="capturing"
             @click.stop="resetVolumeBinding(selectedMappingButton.id)"
-          >重置</button>
+          >{{ t("mapping.reset") }}</button>
           <button
             type="button"
             class="selection-action danger"
             :disabled="capturing"
             @click.stop="clearBinding(selectedMappingButton.id)"
-          >清除</button>
+          >{{ t("mapping.clear") }}</button>
         </div>
         <p v-if="isVoiceButton(selectedMappingButton.id) && hasTruncatedCodexVoiceBinding" class="capture-err">
           当前语音快捷键缺少主键 D，无法触发 Codex 听写。
@@ -917,22 +900,22 @@ onUnmounted(() => {
           已启用语音五档手势；单击、双击、三击、四连击和长按优先于旧的点击/按住触发模式。
         </p>
         <p v-if="capturing && selectedId === selectedMappingButton.id" class="capture-live">
-          {{ liveLabels.length ? liveLabels.join(" + ") + " …" : "请按目标键或组合键" }}
+          {{ liveLabels.length ? liveLabels.join(" + ") + " …" : t("mapping.chooseKey") }}
         </p>
         <p v-if="captureError && selectedId === selectedMappingButton.id" class="capture-err">{{ captureError }}</p>
       </div>
-      <div v-else class="mapping-selection-empty">选择遥控器上的任意按键，即可查看和编辑映射。</div>
+      <div v-else class="mapping-selection-empty">{{ t("mapping.noSelection") }}</div>
     </section>
 
     <section class="mapping-list-panel">
       <div class="mapping-panel-heading mapping-list-heading">
         <div>
-          <h3>映射列表</h3>
-          <span>{{ filteredMappingButtons.length }} 个按键 · 即时保存</span>
+          <h3>{{ t("mapping.mappingList") }}</h3>
+          <span>{{ t("mapping.keysAndAutosave", { count: filteredMappingButtons.length }) }}</span>
         </div>
         <label class="mapping-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
-          <input v-model="searchQuery" type="search" placeholder="搜索按键或快捷键" aria-label="搜索按键或快捷键" />
+          <input v-model="searchQuery" type="search" :placeholder="t('mapping.search')" :aria-label="t('mapping.search')" />
         </label>
       </div>
 
@@ -949,13 +932,13 @@ onUnmounted(() => {
           <span class="mapping-row-icon">{{ mappingGlyph(button.id) }}</span>
           <span class="mapping-row-copy">
             <strong>{{ button.label }}键</strong>
-            <small>{{ SLOT_LABELS[button.selectedClick] }}触发<span v-if="button.multiCounts.length"> · 已设 {{ button.multiCounts.length }} 个扩展手势</span></small>
+            <small>{{ SLOT_LABELS[button.selectedClick] }} {{ t("mapping.trigger") }}<span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>
           </span>
           <span :class="['mapping-row-keycap', { unbound: button.selectedAction.type === 'None' }]">{{ actionLabel(button.selectedAction) }}</span>
         </button>
       </div>
-      <div v-else class="mapping-search-empty">未找到匹配的按键或快捷键。</div>
-      <p class="mapping-list-note"><span>i</span>选择任意按键即可录入或修改映射；修改后会立即保存，无需重启桥接服务。</p>
+      <div v-else class="mapping-search-empty">{{ t("mapping.noMatch") }}</div>
+      <p class="mapping-list-note"><span>i</span>{{ t("mapping.listHint") }}</p>
     </section>
   </div>
 

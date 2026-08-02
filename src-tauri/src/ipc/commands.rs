@@ -354,6 +354,15 @@ pub async fn set_theme_preference(
     config_manager.set_theme_preference(theme)
 }
 
+/// Save the UI language independently so it can take effect immediately.
+#[tauri::command]
+pub async fn set_language_preference(
+    language: String,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<(), String> {
+    config_manager.set_language_preference(language)
+}
+
 // ============================================================
 // 对齐 Python xiaomi_main 主窗口：状态 / 重启 / 日志 / 退出
 // ============================================================
@@ -680,6 +689,7 @@ pub struct AtvvRepairResult {
     pub message: String,
     pub atvv_ok: bool,
     pub had_conflicts: bool,
+    pub result_code: String,
 }
 
 /// R2+W：修复 ATVV。有占用则先弹冲突框；`force=true` 表示用户已清完，直接跑流水线。
@@ -709,6 +719,7 @@ pub async fn repair_xiaomi_atvv(
                 ),
                 atvv_ok: false,
                 had_conflicts: true,
+                result_code: "atvv.conflict_detected".into(),
             });
         }
     }
@@ -722,11 +733,13 @@ pub async fn repair_xiaomi_atvv(
     .await
     .map_err(|e| format!("ATVV repair task: {e}"))??;
 
+    let result_code = if ok { "atvv.repaired" } else { "atvv.repair_incomplete" };
     let _ = app.emit(
         "xiaomi-atvv-repair-result",
         serde_json::json!({
             "ok": ok,
             "message": &msg,
+            "resultCode": result_code,
         }),
     );
 
@@ -735,6 +748,7 @@ pub async fn repair_xiaomi_atvv(
         message: msg,
         atvv_ok: ok,
         had_conflicts: false,
+        result_code: result_code.into(),
     })
 }
 
