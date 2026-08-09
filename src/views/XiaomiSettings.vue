@@ -8,7 +8,9 @@ import { useConfigStore } from "../stores/config";
 import DeviceStatus from "../components/DeviceStatus.vue";
 import KeyMappingStage from "../components/KeyMappingStage.vue";
 import type { DeviceConfig, KeyAction } from "../types";
-import wechatImeHotkeysImg from "../assets/guides/wechat-ime-hotkeys.png";
+import InputMethodSettingsDialog, {
+  type ImeProvider,
+} from "../components/InputMethodSettingsDialog.vue";
 import remoteProductImage from "../assets/xiaomi-remote-cutout.png";
 import { useI18n } from "vue-i18n";
 
@@ -588,6 +590,12 @@ async function applyQianwenVoiceMapping() {
   }, 4000);
 }
 
+async function applyImePreset(provider: Exclude<ImeProvider, "doubao">) {
+  if (provider === "codex") await applyCodexVoiceMapping();
+  if (provider === "wechat") await applyWechatVoiceMapping();
+  if (provider === "qianwen") await applyQianwenVoiceMapping();
+}
+
 let hostPollTimer: ReturnType<typeof setInterval> | null = null;
 let devicePollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -1142,7 +1150,16 @@ watch(
           <div class="device-data">
             <div class="data-item">
               <span class="label">{{ t("dashboard.battery") }}</span>
-              <strong><span class="battery"><span :style="{ width: `${device.battery_level ?? 0}%` }" /></span>{{ batteryLabel }}</strong>
+              <strong>
+                <span class="battery" :class="{ 'is-charging': device.battery_charging === true }">
+                  <span class="battery-fill" :style="{ width: `${device.battery_level ?? 0}%` }" />
+                  <span class="battery-flow" aria-hidden="true" />
+                  <svg class="battery-bolt" viewBox="0 0 10 14" aria-hidden="true">
+                    <path d="M5.9.7 1.2 7h3L3.7 13.3 8.9 6.4H5.7L5.9.7Z" />
+                  </svg>
+                </span>
+                {{ batteryLabel }}
+              </strong>
             </div>
             <div
               class="data-item data-item-audio"
@@ -1437,121 +1454,14 @@ watch(
     </div>
 
     <div class="page-body">
-      <!-- 小米专用运行状态弹层等 -->
-      <div v-if="showSetupTips" class="voice-modal-backdrop" @click.self="showSetupTips = false">
-        <div class="voice-modal setup-tips-modal" role="dialog" aria-modal="true" aria-labelledby="setup-tips-title">
-          <div class="setup-tips-head">
-            <h3 id="setup-tips-title">输入法设置</h3>
-            <button class="btn btn-secondary" type="button" @click="showSetupTips = false">关闭</button>
-          </div>
-          <p class="setup-tips-lead">按输入法对照设置；本软件语音键映射需与输入法快捷键一致。</p>
-
-          <article class="setup-ime-card">
-            <header class="setup-ime-head">
-              <h4>Codex</h4>
-              <span class="setup-ime-tag">默认 · 按住遥控器说话，松开结束听写</span>
-            </header>
-            <div class="setup-ime-warn" role="note">
-              <p class="setup-ime-warn-title">
-                Codex 的语音快捷键必须与本软件完全一致。当前推荐组合为 <code>左 Ctrl + 左 Shift + D</code>。
-              </p>
-              <p class="setup-ime-warn-sub">在 Codex 设置中确认“按住进行听写或长按”显示为 Ctrl+Shift+D；若你改了 Codex 快捷键，请在本软件重新录入相同组合。</p>
-            </div>
-            <div class="setup-ime-apply">
-              <button
-                class="btn btn-primary"
-                type="button"
-                :disabled="!config"
-                @click="applyCodexVoiceMapping"
-              >
-                快速设置语音键映射为：左 Ctrl + 左 Shift + D
-              </button>
-              <span v-if="setupApplyHint" class="setup-apply-hint">{{ setupApplyHint }}</span>
-            </div>
-          </article>
-
-          <article class="setup-ime-card">
-            <header class="setup-ime-head">
-              <h4>微信输入法</h4>
-              <span class="setup-ime-tag">推荐 · 按住说话，松开输入文字</span>
-            </header>
-            <div class="setup-ime-warn" role="note">
-              <p class="setup-ime-warn-title">
-                必须先设置本软件快捷键，再设置微信输入法的快捷键；否则本软件无法录入微信输入法已设置的快捷键。
-              </p>
-              <p class="setup-ime-warn-sub">3种可行设置流程：</p>
-              <ol class="setup-ime-warn-ways">
-                <li>录入前先临时关掉或改掉微信语音快捷键（或先切到其它输入法），本软件录完后再改回。</li>
-                <li>不必现场录入：点下方「快速应用：左 Ctrl + 左 Win」，直接写好本软件映射。</li>
-                <li>先录一个微信暂未占用的组合键，录完后再把微信快捷键改成与本软件一致。</li>
-              </ol>
-            </div>
-            <ol class="setup-ime-steps">
-              <li>
-                本软件语音键先设为 <code>左 Ctrl + 左 Win</code>，触发模式选
-                <strong>按住</strong>（可用下方快速应用；遥控自带的 F5 会凑齐「按住说话」）
-              </li>
-              <li>再打开微信输入法 → 设置 → 快捷键 (参考下方图片设置)</li>
-              <!-- <li>
-                <strong>启动语音输入</strong>：左 Ctrl + 左 Win（点按开/关）
-              </li>
-              <li>
-                <strong>按住说话</strong>：左 Ctrl + 左 Win + F5（按住说、松手上屏）
-              </li> -->
-            </ol>
-            <div class="setup-ime-apply">
-              <button
-                class="btn btn-primary"
-                type="button"
-                :disabled="!config"
-                @click="applyWechatVoiceMapping"
-              >
-                快速设置语音键映射为：左 Ctrl + 左 Win
-              </button>
-              <span v-if="setupApplyHint" class="setup-apply-hint">{{ setupApplyHint }}</span>
-            </div>
-            <figure class="setup-ime-figure">
-              <figcaption>微信输入法 · 语音输入设置图</figcaption>
-              <img
-                :src="wechatImeHotkeysImg"
-                alt="微信输入法快捷键：启动语音输入为左Ctrl+左Win；按住说话为左Ctrl+左Win+F5"
-                class="setup-ime-img"
-              />
-
-            </figure>
-          </article>
-
-          <article class="setup-ime-card">
-            <header class="setup-ime-head">
-              <h4>千问输入法</h4>
-              <span class="setup-ime-tag">默认 · 按住右 Alt 说话，松开上屏</span>
-            </header>
-            <div class="setup-ime-warn" role="note">
-              <p class="setup-ime-warn-title">
-                千问输入法 Windows 端默认使用 <code>右 Alt</code> 唤醒语音输入；本软件需设为同一按住快捷键。
-              </p>
-              <p class="setup-ime-warn-sub">
-                若你在千问输入法中修改过唤醒快捷键，请在本软件的按键映射中录入相同组合；并确认千问已获得麦克风权限。
-              </p>
-            </div>
-            <ol class="setup-ime-steps">
-              <li>在千问输入法中确认语音输入可用，默认唤醒快捷键为 <code>右 Alt</code>。</li>
-              <li>点击下方快速应用；遥控器语音键按下时按住右 Alt，松开时结束输入。</li>
-            </ol>
-            <div class="setup-ime-apply">
-              <button
-                class="btn btn-primary"
-                type="button"
-                :disabled="!config"
-                @click="applyQianwenVoiceMapping"
-              >
-                快速设置语音键映射为：右 Alt
-              </button>
-              <span v-if="setupApplyHint" class="setup-apply-hint">{{ setupApplyHint }}</span>
-            </div>
-          </article>
-        </div>
-      </div>
+      <InputMethodSettingsDialog
+        :open="showSetupTips"
+        :config-ready="Boolean(config)"
+        :saving="configStore.saving"
+        :apply-hint="setupApplyHint"
+        @close="showSetupTips = false"
+        @apply="applyImePreset"
+      />
 
       <div v-if="showLogModal" class="voice-modal-backdrop" @click.self="showLogModal = false">
         <div class="voice-modal log-modal" role="dialog" aria-modal="true">
@@ -2353,165 +2263,6 @@ watch(
   flex-direction: column;
 }
 
-.setup-tips-modal {
-  width: min(560px, 100%);
-  max-height: min(86vh, 820px);
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 16px 18px 18px;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-.setup-tips-modal::-webkit-scrollbar {
-  width: 8px;
-}
-.setup-tips-modal::-webkit-scrollbar-track {
-  background: var(--surface-muted);
-  border-radius: 4px;
-}
-.setup-tips-modal::-webkit-scrollbar-thumb {
-  background: var(--text-muted);
-  border-radius: 4px;
-}
-.setup-tips-modal::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
-}
-.setup-tips-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-  position: sticky;
-  top: -16px;
-  z-index: 1;
-  margin-left: -2px;
-  margin-right: -2px;
-  padding: 2px;
-  background: var(--card-bg, #fff);
-}
-.setup-tips-head h3 {
-  margin: 0;
-}
-.setup-tips-head .btn {
-  padding: 4px 10px;
-  font-size: 12px;
-}
-.setup-tips-lead {
-  margin: 0 0 14px !important;
-  font-size: 12px !important;
-  color: var(--text-secondary) !important;
-}
-.setup-ime-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px 14px;
-  background: var(--surface-muted);
-}
-.setup-ime-card + .setup-ime-card {
-  margin-top: 12px;
-}
-.setup-ime-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.setup-ime-head h4 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.setup-ime-tag {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--info-text);
-  background: var(--info-bg);
-  border: 1px solid var(--info-border);
-  border-radius: 4px;
-  padding: 2px 6px;
-}
-.setup-ime-warn {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--danger-border);
-  border-radius: 6px;
-  background: var(--danger-bg);
-}
-.setup-ime-warn-title {
-  margin: 0 0 8px !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  color: var(--danger) !important;
-  line-height: 1.5 !important;
-}
-.setup-ime-warn-sub {
-  margin: 0 0 4px !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  color: var(--danger-text) !important;
-}
-.setup-ime-warn-ways {
-  margin: 0;
-  padding-left: 1.25em;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--danger-text);
-}
-.setup-ime-warn-ways li + li {
-  margin-top: 4px;
-}
-.setup-ime-steps {
-  margin: 0 0 12px;
-  padding-left: 1.25em;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text);
-}
-.setup-ime-steps li + li {
-  margin-top: 4px;
-}
-.setup-ime-steps code {
-  font-size: 12px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--surface-hover);
-  color: var(--text);
-}
-.setup-ime-apply {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.setup-ime-apply .btn {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-.setup-apply-hint {
-  font-size: 12px;
-  color: var(--success-text);
-}
-.setup-ime-figure {
-  margin: 0;
-}
-.setup-ime-img {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-}
-.setup-ime-figure figcaption {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-  text-align: center;
-}
 .log-path {
   margin: 0 0 8px !important;
   font-size: 11px !important;
@@ -2835,9 +2586,15 @@ watch(
 .data-item { min-width: 0; }
 .data-item .label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
 .data-item strong { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 740; text-overflow: ellipsis; white-space: nowrap; }
-.battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; border: 1.5px solid var(--text-secondary); border-radius: 3px; }
+.battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; isolation: isolate; border: 1.5px solid var(--text-secondary); border-radius: 3px; }
 .battery::after { position: absolute; top: 2px; right: -4px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: var(--text-secondary); content: ""; }
-.battery > span { display: block; height: 100%; border-radius: 1px; background: var(--success); }
+.battery-fill { position: relative; z-index: 0; display: block; height: 100%; border-radius: 1px; background: var(--success); }
+.battery-flow, .battery-bolt { display: none; }
+.battery.is-charging { border-color: var(--success); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 18%, transparent); }
+.battery.is-charging .battery-flow { position: absolute; z-index: 1; top: 1px; bottom: 1px; left: 0; display: block; width: 11px; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18) 28%, rgba(255, 255, 255, .88) 50%, rgba(255, 255, 255, .18) 72%, transparent); filter: blur(.25px); transform: translateX(-14px); animation: battery-charge-flow 1.15s cubic-bezier(.37, 0, .21, 1) infinite; }
+.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--success) 85%, #fff)); }
+@keyframes battery-charge-flow { from { transform: translateX(-14px); opacity: .2; } 18% { opacity: 1; } 82% { opacity: 1; } to { transform: translateX(23px); opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .battery.is-charging .battery-flow { animation: none; transform: translateX(5px); opacity: .42; } }
 .data-item-audio.is-atvv-error strong { color: var(--danger); }
 .data-item-audio .ble-wave { width: 62px; height: 11px; gap: 2px; margin-top: 7px; padding: 1px 0; border: 0; border-radius: 0; background: transparent; }
 .data-item-audio .ble-wave-bar { min-width: 2px; max-width: 4px; border-radius: 2px; background: var(--success); }

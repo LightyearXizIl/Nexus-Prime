@@ -11,6 +11,7 @@ export const useBridgeStore = defineStore("bridge", () => {
       device_name: null,
       device_address: null,
       battery_level: null,
+      battery_charging: null,
     },
   });
 

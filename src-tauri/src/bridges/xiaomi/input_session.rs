@@ -30,6 +30,35 @@ const ATVV_CONTROL: u128 = 0xab5e0004_5a21_4f05_bc7d_af01f617b664;
 /// 标准 BLE Battery Service / Battery Level
 const BATTERY_SERVICE: u128 = 0x0000180f_0000_1000_8000_00805f9b34fb;
 const BATTERY_LEVEL: u128 = 0x00002a19_0000_1000_8000_00805f9b34fb;
+/// BAS 1.1：可选的电量与充电状态汇总特征。
+const BATTERY_LEVEL_STATUS: u128 = 0x00002b05_0000_1000_8000_00805f9b34fb;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BatteryChargingState {
+    Unknown,
+    Charging,
+    DischargingActive,
+    DischargingInactive,
+}
+
+impl BatteryChargingState {
+    fn is_charging(self) -> Option<bool> {
+        match self {
+            Self::Charging => Some(true),
+            Self::DischargingActive | Self::DischargingInactive => Some(false),
+            Self::Unknown => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Charging => "charging",
+            Self::DischargingActive => "discharging_active",
+            Self::DischargingInactive => "discharging_inactive",
+        }
+    }
+}
 
 const GET_CAPS_V10: [u8; 6] = [0x0A, 0x01, 0x00, 0x00, 0x03, 0x03];
 
@@ -323,14 +352,27 @@ fn windows_run_input_session(
     // ---- Battery Level（0x180F / 0x2A19）----
     // 与 ATVV 解耦：语音通道失败时仍应能显示电量
     let mut battery_ch: Option<GattCharacteristic> = None;
+    let mut battery_status_ch: Option<GattCharacteristic> = None;
     let mut last_battery: Option<u8> = None;
+    let mut last_battery_charging: Option<BatteryChargingState> = None;
     if let Some(batt) = battery_service.as_ref() {
         match setup_battery_monitor(&app, batt, &mut tokens) {
-            Ok(ch) => {
-                if let Some(level) = read_battery_level(&ch) {
+            Ok((level_ch, status_ch)) => {
+                if let Some(level) = read_battery_level(&level_ch) {
                     publish_battery(&app, level, &mut last_battery, true);
                 }
-                battery_ch = Some(ch);
+                if let Some(status_ch) = status_ch.as_ref() {
+                    if let Some(charging) = read_battery_charging_status(status_ch) {
+                        publish_battery_charging(
+                            &app,
+                            charging,
+                            &mut last_battery_charging,
+                            true,
+                        );
+                    }
+                }
+                battery_ch = Some(level_ch);
+                battery_status_ch = status_ch;
             }
             Err(e) => {
                 log::warn!("XIAOMI BATTERY setup failed: {e}");
@@ -384,8 +426,9 @@ fn windows_run_input_session(
     };
     emit_message(&app, &format!("输入会话已启动 ({mode})"));
     log::info!(
-        "Input session running mode={mode} atvv={atvv_ok} battery={} subscriptions={}",
+        "Input session running mode={mode} atvv={atvv_ok} battery={} battery_status={} subscriptions={}",
         battery_ch.is_some(),
+        battery_status_ch.is_some(),
         tokens.len()
     );
     if atvv_ok {
@@ -406,6 +449,7 @@ fn windows_run_input_session(
     crate::bridges::xiaomi::key_mapping::set_input_session_active(true);
 
     let mut since_batt = Instant::now();
+    let mut since_battery_status = Instant::now();
     let mut since_pcm_warm = Instant::now();
     let mut since_atvv_retry = Instant::now();
     while runtime.session_active(session_id) {
@@ -460,6 +504,22 @@ fn windows_run_input_session(
                 }
             }
         }
+        if let Some(ch) = battery_status_ch.as_ref() {
+            let due = since_battery_status.elapsed() >= Duration::from_secs(45)
+                || (last_battery_charging.is_none()
+                    && since_battery_status.elapsed() >= Duration::from_secs(3));
+            if due {
+                since_battery_status = Instant::now();
+                if let Some(charging) = read_battery_charging_status(ch) {
+                    publish_battery_charging(
+                        &app,
+                        charging,
+                        &mut last_battery_charging,
+                        false,
+                    );
+                }
+            }
+        }
     }
 
     voice_pcm::stop();
@@ -501,7 +561,10 @@ fn setup_battery_monitor(
         windows::Foundation::EventRegistrationToken,
     )>,
 ) -> Result<
-    windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+    (
+        windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+        Option<windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic>,
+    ),
     String,
 > {
     use windows::core::GUID;
@@ -543,6 +606,29 @@ fn setup_battery_monitor(
     let ch = chars
         .GetAt(0)
         .map_err(|e| format!("Battery GetAt: {e}"))?;
+
+    let status_guid = GUID::from_u128(BATTERY_LEVEL_STATUS);
+    let status_ch = match service
+        .GetCharacteristicsForUuidWithCacheModeAsync(status_guid, BluetoothCacheMode::Uncached)
+        .and_then(|op| op.get())
+    {
+        Ok(result) if result.Status().ok() == Some(GattCommunicationStatus::Success) => result
+            .Characteristics()
+            .ok()
+            .and_then(|chars| (chars.Size().unwrap_or(0) > 0).then_some(chars))
+            .and_then(|chars| chars.GetAt(0).ok()),
+        Ok(result) => {
+            log::info!(
+                "XIAOMI BATTERY status characteristic unavailable status={:?}",
+                result.Status()
+            );
+            None
+        }
+        Err(e) => {
+            log::info!("XIAOMI BATTERY status characteristic unavailable: {e}");
+            None
+        }
+    };
 
     // 通知：电量变化时刷新 UI（可选，失败仍可轮询读）
     let app2 = app.clone();
@@ -595,7 +681,138 @@ fn setup_battery_monitor(
         }
     }
 
-    Ok(ch)
+    if let Some(status_ch) = status_ch.as_ref() {
+        subscribe_battery_status_notify(app, status_ch, tokens);
+    } else {
+        log::info!("XIAOMI BATTERY charge state not reported by device");
+    }
+
+    Ok((ch, status_ch))
+}
+
+#[cfg(target_os = "windows")]
+fn subscribe_battery_status_notify(
+    app: &AppHandle,
+    ch: &windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+    tokens: &mut Vec<(
+        windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+        windows::Foundation::EventRegistrationToken,
+    )>,
+) {
+    use windows::Devices::Bluetooth::GenericAttributeProfile::{
+        GattCharacteristic, GattClientCharacteristicConfigurationDescriptorValue,
+        GattCommunicationStatus, GattValueChangedEventArgs,
+    };
+    use windows::Foundation::TypedEventHandler;
+    use windows::Storage::Streams::DataReader;
+
+    let app2 = app.clone();
+    let handler = TypedEventHandler::new(
+        move |_sender: &Option<GattCharacteristic>, args: &Option<GattValueChangedEventArgs>| {
+            if let Some(args) = args {
+                if let Ok(buf) = args.CharacteristicValue() {
+                    if let Ok(reader) = DataReader::FromBuffer(&buf) {
+                        let len = reader.UnconsumedBufferLength().unwrap_or(0) as usize;
+                        let mut data = vec![0u8; len];
+                        if reader.ReadBytes(&mut data).is_ok() {
+                            if let Some(charging) = parse_battery_charging_state(&data) {
+                                if let Some(state) =
+                                    app2.try_state::<crate::bridges::BridgeState>()
+                                {
+                                    state.update_battery_charging(
+                                        crate::bridges::BridgeType::Xiaomi,
+                                        charging.is_charging(),
+                                    );
+                                }
+                                log::info!(
+                                    "XIAOMI BATTERY charge_state notify={}",
+                                    charging.label()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    if let Ok(token) = ch.ValueChanged(&handler) {
+        let cccd_ok = ch
+            .WriteClientCharacteristicConfigurationDescriptorAsync(
+                GattClientCharacteristicConfigurationDescriptorValue::Notify,
+            )
+            .and_then(|op| op.get())
+            .map(|s| s == GattCommunicationStatus::Success)
+            .unwrap_or(false);
+        if cccd_ok {
+            tokens.push((ch.clone(), token));
+            log::info!("XIAOMI BATTERY charge-state notify subscribed");
+        } else {
+            let _ = ch.RemoveValueChanged(token);
+            log::info!("XIAOMI BATTERY charge-state notify unsupported; will poll");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_battery_charging_status(
+    ch: &windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+) -> Option<BatteryChargingState> {
+    use windows::Devices::Bluetooth::BluetoothCacheMode;
+    use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
+    use windows::Storage::Streams::DataReader;
+
+    let result = ch
+        .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)
+        .ok()?
+        .get()
+        .ok()?;
+    if result.Status().ok() != Some(GattCommunicationStatus::Success) {
+        return None;
+    }
+    let buf = result.Value().ok()?;
+    let reader = DataReader::FromBuffer(&buf).ok()?;
+    let len = reader.UnconsumedBufferLength().ok()? as usize;
+    let mut data = vec![0u8; len];
+    reader.ReadBytes(&mut data).ok()?;
+    parse_battery_charging_state(&data)
+}
+
+/// Parses BAS 1.1 Battery Level Status (0x2B05). The second byte begins the
+/// little-endian 24-bit Power State field; bits 5..=6 are Battery Charge State.
+fn parse_battery_charging_state(payload: &[u8]) -> Option<BatteryChargingState> {
+    let power_state_low = *payload.get(1)?;
+    // A Battery Level Status value always contains Flags plus the three-byte Power State.
+    if payload.len() < 4 {
+        return None;
+    }
+    match (power_state_low >> 5) & 0b11 {
+        0 => Some(BatteryChargingState::Unknown),
+        1 => Some(BatteryChargingState::Charging),
+        2 => Some(BatteryChargingState::DischargingActive),
+        3 => Some(BatteryChargingState::DischargingInactive),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn publish_battery_charging(
+    app: &AppHandle,
+    charging: BatteryChargingState,
+    last: &mut Option<BatteryChargingState>,
+    force_log: bool,
+) {
+    let changed = last.map(|value| value != charging).unwrap_or(true);
+    *last = Some(charging);
+    if let Some(state) = app.try_state::<crate::bridges::BridgeState>() {
+        state.update_battery_charging(
+            crate::bridges::BridgeType::Xiaomi,
+            charging.is_charging(),
+        );
+    }
+    if force_log || changed {
+        log::info!("XIAOMI BATTERY charge_state={}", charging.label());
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1646,7 +1863,10 @@ fn handle_hid_payload(
 
 #[cfg(test)]
 mod tests {
-    use super::{atvv_codec_sample_rate, parse_hid_usages};
+    use super::{
+        atvv_codec_sample_rate, parse_battery_charging_state, parse_hid_usages,
+        BatteryChargingState,
+    };
 
     #[test]
     fn atvv_codec_selects_expected_sample_rate() {
@@ -1678,5 +1898,27 @@ mod tests {
         let data = [0x01u8, 0x00, 0x00, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
         let u = parse_hid_usages(&data);
         assert!(u.contains(&0x00F1));
+    }
+
+    #[test]
+    fn parses_battery_level_status_charge_state() {
+        // Flags + 24-bit little-endian Power State; bits 5..=6 encode charging state.
+        assert_eq!(
+            parse_battery_charging_state(&[0x00, 0b0010_0000, 0x00, 0x00]),
+            Some(BatteryChargingState::Charging)
+        );
+        assert_eq!(
+            parse_battery_charging_state(&[0x00, 0b0100_0000, 0x00, 0x00]),
+            Some(BatteryChargingState::DischargingActive)
+        );
+        assert_eq!(
+            parse_battery_charging_state(&[0x00, 0b0110_0000, 0x00, 0x00]),
+            Some(BatteryChargingState::DischargingInactive)
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_battery_level_status() {
+        assert_eq!(parse_battery_charging_state(&[0x00, 0x20]), None);
     }
 }

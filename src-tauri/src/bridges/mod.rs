@@ -73,6 +73,9 @@ pub struct DeviceInfo {
     pub device_name: Option<String>,
     pub device_address: Option<String>,
     pub battery_level: Option<u8>,
+    /// `Some(true)` only when the device explicitly reports that it is charging.
+    /// `None` means the BLE peripheral does not expose, or cannot determine, charge state.
+    pub battery_charging: Option<bool>,
 }
 
 /// Global bridge state shared across the application
@@ -89,6 +92,7 @@ impl BridgeState {
                 device_name: None,
                 device_address: None,
                 battery_level: None,
+                battery_charging: None,
             }),
         }
     }
@@ -104,6 +108,7 @@ impl BridgeState {
             guard.device_name = None;
             guard.device_address = None;
             guard.battery_level = None;
+            guard.battery_charging = None;
         }
     }
 
@@ -124,6 +129,15 @@ impl BridgeState {
         if let Some(n) = name { guard.device_name = Some(n); }
         if let Some(a) = address { guard.device_address = Some(a); }
         if let Some(b) = battery { guard.battery_level = Some(b); }
+    }
+
+    /// Updates only the charge state reported by the Battery Level Status characteristic.
+    pub fn update_battery_charging(&self, bridge_type: BridgeType, charging: Option<bool>) {
+        let info = match bridge_type {
+            BridgeType::Xiaomi => &self.xiaomi,
+        };
+        let mut guard = info.write();
+        guard.battery_charging = charging;
     }
 
     pub fn get_info(&self, bridge_type: BridgeType) -> DeviceInfo {

@@ -19,6 +19,8 @@ export interface DeviceInfo {
   device_name: string | null;
   device_address: string | null;
   battery_level: number | null;
+  /** true only when the connected BLE device explicitly reports active charging */
+  battery_charging: boolean | null;
 }
 
 export interface KeyAction {
