@@ -11,6 +11,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, KeyAction } from "../types";
 import RemoteHotspot from "./RemoteHotspot.vue";
+import VoiceShortcutComposer from "./VoiceShortcutComposer.vue";
+import {
+  isLegacyIncompleteCodexShortcut,
+  keyLabel,
+  vksToHotkeyNames,
+} from "../utils/shortcut";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -73,6 +79,11 @@ const VOLUME_DEFAULT_BINDINGS: Record<string, KeyAction> = {
 };
 const selectedClickById = ref<Record<string, MappingSlot>>({});
 const openClickMenuId = ref<string | null>(null);
+const manualEditor = ref<{
+  buttonId: string;
+  slot: MappingSlot;
+  initialKeys: number[];
+} | null>(null);
 
 const stageRef = ref<HTMLElement | null>(null);
 const remoteRef = ref<InstanceType<typeof RemoteHotspot> | null>(null);
@@ -193,6 +204,7 @@ function setClickCount(id: string, count: MappingSlot) {
 }
 
 function selectClickCount(id: string, count: MappingSlot) {
+  closeManualShortcutEditor();
   setClickCount(id, count);
   openClickMenuId.value = null;
 }
@@ -236,82 +248,7 @@ function actionLabel(action: KeyAction): string {
 }
 
 function vkName(vk: number): string {
-  const map: Record<number, string> = {
-    0x08: "Backspace",
-    0x09: "Tab",
-    0x0d: "Enter",
-    0x1b: "Esc",
-    0x20: "Space",
-    0x21: "PageUp",
-    0x22: "PageDown",
-    0x23: "End",
-    0x24: "Home",
-    0x25: "←",
-    0x26: "↑",
-    0x27: "→",
-    0x28: "↓",
-    0x2d: "Insert",
-    0x2e: "Delete",
-    0x10: "左 Shift",
-    0xa0: "左 Shift",
-    0xa1: "右 Shift",
-    0x11: "左 Ctrl",
-    0xa2: "左 Ctrl",
-    0xa3: "右 Ctrl",
-    0x12: "左 Alt",
-    0xa4: "左 Alt",
-    0xa5: "右 Alt",
-    0x5b: "左 Win",
-    0x5c: "右 Win",
-    0xaf: "Vol+",
-    0xae: "Vol-",
-    0xad: "Mute",
-    0xb0: "Next track",
-    0xb1: "Previous track",
-    0xb2: "Media stop",
-    0xb3: "Play/Pause",
-    0xa6: "Browser back",
-    0xa7: "Browser forward",
-    0xa8: "Browser refresh",
-    0xa9: "Browser stop",
-    0xaa: "Browser search",
-    0xab: "Browser favorites",
-    0xac: "Browser home",
-    0xb4: "Mail",
-    0xb5: "Media player",
-    0xb6: "App 1",
-    0xb7: "App 2",
-  };
-  if (map[vk]) return map[vk];
-  if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk);
-  if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30);
-  if (vk >= 0x70 && vk <= 0x7b) return `F${vk - 0x6f}`;
-  return `VK_0x${vk.toString(16).toUpperCase()}`;
-}
-
-function vksToHotkeyNames(vks: number[]): string[] {
-  const map: Record<number, string> = {
-    0xa2: "leftctrl",
-    0xa3: "rightctrl",
-    0x11: "ctrl",
-    0xa0: "leftshift",
-    0xa1: "rightshift",
-    0x10: "shift",
-    0xa4: "leftalt",
-    0xa5: "rightalt",
-    0x12: "alt",
-    0x5b: "leftwin",
-    0x5c: "rightwin",
-    0x20: "space",
-    0x0d: "enter",
-  };
-  return vks.map((vk) => {
-    if (map[vk]) return map[vk];
-    if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk).toLowerCase();
-    if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30);
-    if (vk >= 0x70 && vk <= 0x7b) return `f${vk - 0x6f}`;
-    return `vk_${vk.toString(16)}`;
-  });
+  return keyLabel(vk);
 }
 
 const leftButtons = computed(() =>
@@ -438,30 +375,46 @@ function updateLine() {
 }
 
 async function selectButton(id: string) {
+  closeManualShortcutEditor();
   selectedId.value = id;
   await nextTick();
   updateLine();
 }
 
-const hasTruncatedCodexVoiceBinding = computed(() => {
+function actionKeys(action: KeyAction): number[] {
+  if (action.type === "SingleKey") return [Number(action.value)];
+  if (action.type === "ComboKey" && Array.isArray(action.value)) return action.value.map(Number);
+  return [];
+}
+
+const voiceBindingNeedsManualCompletion = computed(() => {
   const action = actionOf("mic", 1);
   const keys = action.type === "ComboKey" && Array.isArray(action.value) ? action.value.map(Number) : [];
-  return keys.length === 2 && keys[0] === 0xa2 && keys[1] === 0xa0;
+  return isLegacyIncompleteCodexShortcut(keys);
 });
 
 const voiceUsesExtendedGestures = computed(() => configuredGestureSlots("mic").length > 0);
 
-function repairCodexVoiceBinding() {
-  setClickCount("mic", 1);
-  applyCapturedKeys("mic", [0xa2, 0xa0, 0x44]);
-  props.config.trigger_mode = "Hold";
-  emit("save", {
-    ...props.config,
-    trigger_mode: "Hold",
-    button_bindings: { ...props.config.button_bindings },
-    long_press_bindings: { ...(props.config.long_press_bindings || {}) },
-    multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
-  });
+function openManualShortcutEditor() {
+  const button = selectedMappingButton.value;
+  if (!button || !isVoiceButton(button.id)) return;
+  manualEditor.value = {
+    buttonId: button.id,
+    slot: button.selectedClick,
+    initialKeys: actionKeys(button.selectedAction),
+  };
+  openClickMenuId.value = null;
+}
+
+function closeManualShortcutEditor() {
+  manualEditor.value = null;
+}
+
+function applyManualShortcut(keys: number[]) {
+  const editor = manualEditor.value;
+  if (!editor) return;
+  manualEditor.value = null;
+  applyShortcutKeys(editor.buttonId, keys, editor.slot);
 }
 
 function onRemoteHover(id: string | null) {
@@ -629,6 +582,7 @@ async function onCaptured(keys: number[], labels: string[]) {
 
 async function startCapture(buttonId = selectedId.value) {
   if (!buttonId) return;
+  closeManualShortcutEditor();
   selectedId.value = buttonId;
   if (capturing.value) {
     await cancelCapture();
@@ -661,6 +615,10 @@ async function cancelCapture() {
 }
 
 function applyCapturedKeys(buttonId: string, vks: number[]) {
+  applyShortcutKeys(buttonId, vks, selectedClick(buttonId));
+}
+
+function applyShortcutKeys(buttonId: string, vks: number[], count: MappingSlot) {
   let action: KeyAction;
   if (!vks.length) {
     action = { type: "None", value: null };
@@ -669,7 +627,6 @@ function applyCapturedKeys(buttonId: string, vks: number[]) {
   } else {
     action = { type: "ComboKey", value: [...vks] };
   }
-  const count = selectedClick(buttonId);
   if (!props.config.button_bindings) {
     (props.config as DeviceConfig).button_bindings = {};
   }
@@ -810,10 +767,12 @@ onUnmounted(() => {
       </div>
 
       <div v-if="selectedMappingButton" class="mapping-selection-card">
-        <span class="selection-key">{{ selectedMappingButton.label }}</span>
-        <div class="selection-summary">
+        <div class="selection-heading">
+          <span class="selection-key" aria-hidden="true">{{ mappingGlyph(selectedMappingButton.id) }}</span>
+          <div class="selection-summary">
             <span>{{ t("mapping.selected") }}</span>
-          <strong>{{ actionLabel(selectedMappingButton.selectedAction) }}</strong>
+            <strong>{{ selectedMappingButton.label }}键 · {{ SLOT_LABELS[selectedMappingButton.selectedClick] }}</strong>
+          </div>
         </div>
         <span
           :class="[
@@ -833,6 +792,13 @@ onUnmounted(() => {
           >
             {{ capturing && selectedId === selectedMappingButton.id ? t("mapping.cancelCapture") : t("mapping.capture") }}
           </button>
+          <button
+            v-if="isVoiceButton(selectedMappingButton.id)"
+            type="button"
+            class="selection-action"
+            :disabled="capturing"
+            @click.stop="openManualShortcutEditor"
+          >手动组合</button>
           <div class="click-select-wrap">
             <button
               type="button"
@@ -892,9 +858,9 @@ onUnmounted(() => {
             @click.stop="clearBinding(selectedMappingButton.id)"
           >{{ t("mapping.clear") }}</button>
         </div>
-        <p v-if="isVoiceButton(selectedMappingButton.id) && hasTruncatedCodexVoiceBinding" class="capture-err">
-          当前语音快捷键缺少主键 D，无法触发 Codex 听写。
-          <button type="button" class="selection-action primary" @click.stop="repairCodexVoiceBinding">修复为 Ctrl+Shift+D（按住）</button>
+        <p v-if="isVoiceButton(selectedMappingButton.id) && voiceBindingNeedsManualCompletion" class="capture-err">
+          检测到旧版 Codex 映射可能缺少主键 D。
+          <button type="button" class="selection-action primary" @click.stop="openManualShortcutEditor">手动补全</button>
         </p>
         <p v-if="isVoiceButton(selectedMappingButton.id) && voiceUsesExtendedGestures" class="capture-hint">
           已启用语音五档手势；单击、双击、三击、四连击和长按优先于旧的点击/按住触发模式。
@@ -918,6 +884,15 @@ onUnmounted(() => {
           <input v-model="searchQuery" type="search" :placeholder="t('mapping.search')" :aria-label="t('mapping.search')" />
         </label>
       </div>
+
+      <VoiceShortcutComposer
+        v-if="manualEditor"
+        :initial-keys="manualEditor.initialKeys"
+        :button-label="labelOf(manualEditor.buttonId)"
+        :slot-label="SLOT_LABELS[manualEditor.slot]"
+        @apply="applyManualShortcut"
+        @cancel="closeManualShortcutEditor"
+      />
 
       <div v-if="filteredMappingButtons.length" class="mapping-row-grid">
         <button
@@ -1601,13 +1576,12 @@ onUnmounted(() => {
 }
 
 .mapping-selection-card {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 9px;
+  display: grid;
+  gap: 10px;
   padding: 12px;
 }
 
+.selection-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .selection-key,
 .mapping-row-icon {
   display: grid;
@@ -1624,7 +1598,7 @@ onUnmounted(() => {
 
 .selection-summary { min-width: 0; flex: 1; }
 .selection-summary span { display: block; margin-bottom: 2px; color: var(--text-secondary); font-size: 10px; }
-.selection-summary strong { display: block; overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.selection-summary strong { display: block; overflow-wrap: anywhere; color: var(--text); font-size: 12px; line-height: 1.4; }
 
 .mapping-keycap,
 .mapping-row-keycap {
@@ -1649,6 +1623,21 @@ onUnmounted(() => {
 
 .mapping-keycap.unbound,
 .mapping-row-keycap.unbound { color: var(--text-muted); }
+
+.mapping-selection-card .mapping-keycap {
+  width: 100%;
+  max-width: none;
+  min-height: 34px;
+  box-sizing: border-box;
+  justify-content: flex-start;
+  padding: 6px 10px;
+  overflow: visible;
+  text-align: left;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
 
 .selection-actions { display: flex; width: 100%; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px solid var(--info-border); }
 .selection-action { min-height: 29px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }

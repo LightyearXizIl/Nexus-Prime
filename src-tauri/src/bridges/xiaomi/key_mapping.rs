@@ -1189,6 +1189,16 @@ pub fn sync_voice_from_mic_binding(config: &mut DeviceConfig) {
 
 fn name_to_vk(name: &str) -> Option<u16> {
     let n = name.trim().to_ascii_lowercase().replace(' ', "");
+    if let Some(hex) = n.strip_prefix("vk_") {
+        return u16::from_str_radix(hex, 16).ok();
+    }
+    if let Some(number) = n.strip_prefix('f') {
+        if let Ok(number) = number.parse::<u16>() {
+            if (1..=12).contains(&number) {
+                return Some(0x6F + number);
+            }
+        }
+    }
     match n.as_str() {
         "backspace" => Some(0x08),
         "tab" => Some(0x09),
@@ -1736,6 +1746,17 @@ mod gesture_tests {
         assert_eq!(
             fallback_injection_route(&[0x11, 0x09]),
             FallbackInjectionRoute::SendInput
+        );
+    }
+
+    #[test]
+    fn serialized_voice_hotkey_names_round_trip() {
+        let vks = vec![0xA2, 0x08, 0x74, 0x25];
+        let names = vks_to_hotkey_names(&vks);
+        assert_eq!(names, vec!["leftctrl", "backspace", "f5", "vk_25"]);
+        assert_eq!(
+            names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
+            vks
         );
     }
 }

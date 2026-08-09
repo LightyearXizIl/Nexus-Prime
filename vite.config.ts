@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -17,5 +17,10 @@ export default defineConfig(async () => ({
       ? { protocol: "ws", host, port: 1431 }
       : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
+  },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.ts"],
+    clearMocks: true,
   },
 }));

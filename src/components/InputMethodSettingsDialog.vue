@@ -295,8 +295,12 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-dialog {
   width: min(920px, calc(100vw - 64px));
-  max-height: min(74vh, 640px);
-  overflow: auto;
+  height: min(560px, calc(100dvh - 64px));
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--card-bg);
@@ -419,7 +423,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   grid-template-columns: minmax(0, 1.05fr) minmax(280px, .95fr);
   gap: 24px;
   align-items: stretch;
+  min-height: 0;
   padding: 24px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .ime-panel-copy { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; min-width: 0; }
 .ime-eyebrow { color: var(--primary); font-size: 12px; font-weight: 700; }
@@ -449,7 +456,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 @media (max-width: 780px) {
   .ime-backdrop { padding: 18px; }
-  .ime-dialog { width: min(100%, calc(100vw - 36px)); }
+  .ime-dialog {
+    width: min(100%, calc(100vw - 36px));
+    height: min(560px, calc(100dvh - 36px));
+  }
   .ime-dialog-head { grid-template-columns: 1fr auto; }
   .ime-provider-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
   .ime-panel { grid-template-columns: 1fr; gap: 18px; padding: 20px; }

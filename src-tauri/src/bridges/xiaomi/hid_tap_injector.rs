@@ -223,6 +223,7 @@ fn enable_debug_privilege() -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn inject_library(pid: u32, dll_path: &Path) -> Result<(), String> {
+    use std::ffi::c_void;
     use windows::core::s;
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
@@ -291,12 +292,18 @@ fn inject_library(pid: u32, dll_path: &Path) -> Result<(), String> {
             .map_err(|e| format!("GetModuleHandleW: {e}"))?;
         let load_library = GetProcAddress(kernel, s!("LoadLibraryW"))
             .ok_or_else(|| "GetProcAddress(LoadLibraryW) failed".to_string())?;
+        // `CreateRemoteThread` requires LoadLibraryW's one-pointer ABI. GetProcAddress
+        // cannot express that signature, so make the ABI conversion explicit and local.
+        let start_routine = std::mem::transmute::<
+            unsafe extern "system" fn() -> isize,
+            unsafe extern "system" fn(*mut c_void) -> u32,
+        >(load_library);
 
         let thread = CreateRemoteThread(
             process,
             None,
             0,
-            Some(std::mem::transmute(load_library)),
+            Some(start_routine),
             Some(remote),
             0,
             None,
