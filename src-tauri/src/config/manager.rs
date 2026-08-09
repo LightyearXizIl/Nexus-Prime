@@ -578,7 +578,11 @@ mod tests {
             config.long_press_bindings.get("up"),
             Some(&KeyAction::SingleKey(0x26))
         );
-        assert_eq!(config.long_press_bindings.len(), 1);
+        assert_eq!(
+            config.long_press_bindings.get("mic"),
+            Some(&KeyAction::SingleKey(0x74))
+        );
+        assert_eq!(config.long_press_bindings.len(), 2);
     }
 
     #[test]

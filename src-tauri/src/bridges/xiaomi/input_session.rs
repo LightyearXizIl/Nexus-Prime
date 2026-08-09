@@ -31,7 +31,7 @@ const ATVV_CONTROL: u128 = 0xab5e0004_5a21_4f05_bc7d_af01f617b664;
 const BATTERY_SERVICE: u128 = 0x0000180f_0000_1000_8000_00805f9b34fb;
 const BATTERY_LEVEL: u128 = 0x00002a19_0000_1000_8000_00805f9b34fb;
 /// BAS 1.1：可选的电量与充电状态汇总特征。
-const BATTERY_LEVEL_STATUS: u128 = 0x00002b05_0000_1000_8000_00805f9b34fb;
+const BATTERY_LEVEL_STATUS: u128 = 0x00002bed_0000_1000_8000_00805f9b34fb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BatteryChargingState {
@@ -355,6 +355,10 @@ fn windows_run_input_session(
     let mut battery_status_ch: Option<GattCharacteristic> = None;
     let mut last_battery: Option<u8> = None;
     let mut last_battery_charging: Option<BatteryChargingState> = None;
+    if let Some(state) = app.try_state::<crate::bridges::BridgeState>() {
+        // A new session must not inherit a charge state reported by an older connection.
+        state.update_battery_charging(crate::bridges::BridgeType::Xiaomi, None);
+    }
     if let Some(batt) = battery_service.as_ref() {
         match setup_battery_monitor(&app, batt, &mut tokens) {
             Ok((level_ch, status_ch)) => {
@@ -684,7 +688,9 @@ fn setup_battery_monitor(
     if let Some(status_ch) = status_ch.as_ref() {
         subscribe_battery_status_notify(app, status_ch, tokens);
     } else {
-        log::info!("XIAOMI BATTERY charge state not reported by device");
+        log::info!(
+            "XIAOMI BATTERY status characteristic 0x2BED not found; using percentage-only fallback"
+        );
     }
 
     Ok((ch, status_ch))
@@ -778,15 +784,15 @@ fn read_battery_charging_status(
     parse_battery_charging_state(&data)
 }
 
-/// Parses BAS 1.1 Battery Level Status (0x2B05). The second byte begins the
-/// little-endian 24-bit Power State field; bits 5..=6 are Battery Charge State.
+/// Parses BAS 1.1 Battery Level Status (0x2BED). The first byte is Flags, followed
+/// by a little-endian 16-bit Power State whose bits 5..=6 are Battery Charge State.
 fn parse_battery_charging_state(payload: &[u8]) -> Option<BatteryChargingState> {
-    let power_state_low = *payload.get(1)?;
-    // A Battery Level Status value always contains Flags plus the three-byte Power State.
-    if payload.len() < 4 {
+    // A Battery Level Status value always contains one-byte Flags and two-byte Power State.
+    if payload.len() < 3 {
         return None;
     }
-    match (power_state_low >> 5) & 0b11 {
+    let power_state = u16::from_le_bytes([payload[1], payload[2]]);
+    match (power_state >> 5) & 0b11 {
         0 => Some(BatteryChargingState::Unknown),
         1 => Some(BatteryChargingState::Charging),
         2 => Some(BatteryChargingState::DischargingActive),
@@ -1902,18 +1908,26 @@ mod tests {
 
     #[test]
     fn parses_battery_level_status_charge_state() {
-        // Flags + 24-bit little-endian Power State; bits 5..=6 encode charging state.
+        // Flags + 16-bit little-endian Power State; bits 5..=6 encode charging state.
         assert_eq!(
-            parse_battery_charging_state(&[0x00, 0b0010_0000, 0x00, 0x00]),
+            parse_battery_charging_state(&[0x00, 0b0010_0000, 0x00]),
             Some(BatteryChargingState::Charging)
         );
         assert_eq!(
-            parse_battery_charging_state(&[0x00, 0b0100_0000, 0x00, 0x00]),
+            parse_battery_charging_state(&[0x00, 0b0100_0000, 0x00]),
             Some(BatteryChargingState::DischargingActive)
         );
         assert_eq!(
-            parse_battery_charging_state(&[0x00, 0b0110_0000, 0x00, 0x00]),
+            parse_battery_charging_state(&[0x00, 0b0110_0000, 0x00]),
             Some(BatteryChargingState::DischargingInactive)
+        );
+        assert_eq!(
+            parse_battery_charging_state(&[0x00, 0x00, 0x00]),
+            Some(BatteryChargingState::Unknown)
+        );
+        assert_eq!(
+            parse_battery_charging_state(&[0x06, 0b0010_0000, 0x00, 72, 0x00]),
+            Some(BatteryChargingState::Charging)
         );
     }
 

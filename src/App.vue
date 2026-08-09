@@ -272,6 +272,7 @@ onUnmounted(() => {
   --shadow-sm: 0 4px 14px rgba(28, 39, 60, 0.06);
   --dialog-shadow: 0 16px 42px rgba(28, 39, 60, 0.24);
   --focus-ring: rgba(26, 115, 232, 0.35);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --info-bg: #eff6ff;
   --info-border: #bfdbfe;
   --info-text: #1d4ed8;

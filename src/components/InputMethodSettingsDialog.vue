@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import wechatImeHotkeysImg from "../assets/guides/wechat-ime-hotkeys.png";
 
 export type ImeProvider = "codex" | "wechat" | "qianwen" | "doubao";
@@ -26,6 +26,8 @@ const providers: Array<{ id: ImeProvider; label: string }> = [
 
 const activeProvider = ref<ImeProvider>("codex");
 const lastAppliedProvider = ref<Exclude<ImeProvider, "doubao"> | null>(null);
+const dialogRef = ref<HTMLElement | null>(null);
+let lastFocusedElement: HTMLElement | null = null;
 const activeLabel = computed(
   () => providers.find((provider) => provider.id === activeProvider.value)?.label ?? "Codex"
 );
@@ -54,16 +56,63 @@ function apply(provider: Exclude<ImeProvider, "doubao">) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (props.open && event.key === "Escape") {
+  if (!props.open) return;
+
+  if (event.key === "Escape") {
     event.preventDefault();
     close();
+    return;
+  }
+
+  if (
+    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) &&
+    event.target instanceof HTMLElement &&
+    event.target.getAttribute("role") === "tab"
+  ) {
+    event.preventDefault();
+    const currentIndex = providers.findIndex((provider) => provider.id === activeProvider.value);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? providers.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + providers.length) % providers.length;
+    const nextProvider = providers[nextIndex];
+    selectProvider(nextProvider.id);
+    nextTick(() => document.getElementById(`ime-tab-${nextProvider.id}`)?.focus());
+    return;
+  }
+
+  if (event.key === "Tab" && dialogRef.value) {
+    const focusable = Array.from(
+      dialogRef.value.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((element) => element.tabIndex >= 0);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialogRef.value.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 }
 
 watch(
   () => props.open,
   (open) => {
-    if (open) restoreProvider();
+    if (open) {
+      lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      restoreProvider();
+      nextTick(() => document.getElementById(`ime-tab-${activeProvider.value}`)?.focus({ preventScroll: true }));
+    } else if (lastFocusedElement) {
+      lastFocusedElement.focus({ preventScroll: true });
+      lastFocusedElement = null;
+    }
   }
 );
 
@@ -72,13 +121,16 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
+  <Transition name="ime-dialog-motion">
   <div v-if="open" class="ime-backdrop" @click.self="close">
     <section
+      ref="dialogRef"
       class="ime-dialog"
       role="dialog"
       aria-modal="true"
       aria-labelledby="ime-settings-title"
       :aria-describedby="`ime-${activeProvider}-summary`"
+      :aria-busy="saving"
     >
       <header class="ime-dialog-head">
         <div class="ime-title-block">
@@ -103,7 +155,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           </button>
         </div>
 
-        <button class="btn btn-secondary ime-close" type="button" @click="close">关闭</button>
+        <button class="ime-button ime-button--secondary ime-close" type="button" aria-label="关闭输入法设置" @click="close">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 10 10M15 5 5 15" />
+          </svg>
+        </button>
       </header>
 
       <div
@@ -128,8 +184,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <span class="ime-status">推荐映射</span>
             <strong>左 Ctrl + 左 Shift + D</strong>
             <p>触发模式：按住</p>
-            <button class="btn btn-primary" type="button" :disabled="!configReady || saving" @click="apply('codex')">
-              快速应用此映射
+            <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('codex')">
+              <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
             </button>
             <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
@@ -152,8 +209,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <aside class="ime-panel-action ime-wechat-guide">
             <img :src="wechatImeHotkeysImg" alt="微信输入法语音输入快捷键设置示意图" />
             <div class="ime-action-row">
-              <button class="btn btn-primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
-                应用左 Ctrl + 左 Win
+              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
+                <span>{{ saving ? "正在应用…" : "应用左 Ctrl + 左 Win" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
               </button>
               <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </div>
@@ -175,8 +233,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <span class="ime-status">推荐映射</span>
             <strong>右 Alt</strong>
             <p>触发模式：按住</p>
-            <button class="btn btn-primary" type="button" :disabled="!configReady || saving" @click="apply('qianwen')">
-              快速应用此映射
+            <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('qianwen')">
+              <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
             </button>
             <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
@@ -192,15 +251,38 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <aside class="ime-panel-action ime-placeholder-action">
             <span class="ime-placeholder-mark" aria-hidden="true">豆</span>
             <strong>等待 Windows 版发布</strong>
-            <button class="btn btn-secondary" type="button" disabled>暂不可设置</button>
+            <button class="ime-button ime-button--secondary" type="button" disabled>等待 Windows 版发布</button>
           </aside>
         </template>
       </div>
     </section>
   </div>
+  </Transition>
 </template>
 
 <style scoped>
+.ime-dialog-motion-enter-active,
+.ime-dialog-motion-leave-active {
+  transition: opacity 200ms var(--ease-out);
+}
+.ime-dialog-motion-enter-active .ime-dialog,
+.ime-dialog-motion-leave-active .ime-dialog {
+  transform-origin: center;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+.ime-dialog-motion-enter-from,
+.ime-dialog-motion-leave-to,
+.ime-dialog-motion-enter-from .ime-dialog,
+.ime-dialog-motion-leave-to .ime-dialog {
+  opacity: 0;
+}
+.ime-dialog-motion-enter-from .ime-dialog,
+.ime-dialog-motion-leave-to .ime-dialog {
+  transform: scale(.96);
+}
+
 .ime-backdrop {
   position: fixed;
   inset: 0;
@@ -259,11 +341,78 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
-  transition: 0.18s ease;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
 }
 .ime-provider-tabs button:hover { color: var(--nav-ink); background: var(--nav-segment-hover); }
 .ime-provider-tabs button.active { color: var(--nav-segment-active-ink); background: var(--nav-segment-active); box-shadow: var(--nav-segment-shadow); }
-.ime-close { justify-self: end; padding: 5px 11px; font-size: 12px; }
+.ime-provider-tabs button:focus-visible,
+.ime-button:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ime-button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 120ms var(--ease-out),
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.ime-button svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.ime-button--primary {
+  color: #fff;
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.ime-button--secondary {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.ime-button:active:not(:disabled) { transform: scale(.97); }
+.ime-button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ime-button--primary:hover:not(:disabled) {
+    border-color: var(--primary-dark);
+    background: var(--primary-dark);
+    box-shadow: 0 7px 16px color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+  .ime-button--secondary:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    background: var(--surface-hover);
+  }
+}
+.ime-close {
+  width: 36px;
+  min-height: 36px;
+  justify-self: end;
+  padding: 0;
+  border-radius: 10px;
+}
+.ime-close svg { width: 17px; height: 17px; }
 
 .ime-panel {
   display: grid;
@@ -286,7 +435,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .ime-status { padding: 3px 7px; border: 1px solid var(--info-border); border-radius: 999px; color: var(--info-text); background: var(--info-bg); font-size: 11px; font-weight: 650; }
 .ime-callout strong, .ime-placeholder-action strong { color: var(--text); font-size: 17px; }
 .ime-callout p { color: var(--text-secondary); font-size: 12px; }
-.ime-callout .btn { margin-top: 6px; }
+.ime-callout .ime-button { margin-top: 6px; }
 .ime-apply-hint { color: var(--success-text); font-size: 12px; line-height: 1.45; }
 
 .ime-wechat-guide { gap: 14px; padding: 14px; }
@@ -296,7 +445,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .ime-placeholder-copy { opacity: .82; }
 .ime-placeholder-action { align-items: center; gap: 12px; text-align: center; }
 .ime-placeholder-mark { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 14px; color: var(--primary); background: var(--surface-selected); font-size: 22px; font-weight: 800; }
-.ime-placeholder-action .btn:disabled { cursor: not-allowed; opacity: .65; }
+.ime-placeholder-action .ime-button:disabled { opacity: .65; }
 
 @media (max-width: 780px) {
   .ime-backdrop { padding: 18px; }
@@ -310,5 +459,19 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   .ime-provider-tabs button { min-width: 0; padding: 0 10px; }
   .ime-title-block p { display: none; }
   .ime-panel-copy h4 { font-size: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ime-dialog-motion-enter-active,
+  .ime-dialog-motion-leave-active,
+  .ime-dialog-motion-enter-active .ime-dialog,
+  .ime-dialog-motion-leave-active .ime-dialog {
+    transition-duration: 120ms;
+  }
+  .ime-dialog-motion-enter-from .ime-dialog,
+  .ime-dialog-motion-leave-to .ime-dialog,
+  .ime-button:active:not(:disabled) {
+    transform: none;
+  }
 }
 </style>

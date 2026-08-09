@@ -925,6 +925,8 @@ onUnmounted(() => {
           :key="button.id"
           type="button"
           :class="['mapping-row', { active: selectedId === button.id, hover: hoverId === button.id && selectedId !== button.id }]"
+          :aria-pressed="selectedId === button.id"
+          :aria-label="`${button.label}键，${SLOT_LABELS[button.selectedClick]}，当前映射 ${actionLabel(button.selectedAction)}`"
           @mouseenter="onCardHover(button.id)"
           @mouseleave="onCardHover(null)"
           @click="selectButton(button.id)"
@@ -934,7 +936,10 @@ onUnmounted(() => {
             <strong>{{ button.label }}键</strong>
             <small>{{ SLOT_LABELS[button.selectedClick] }} {{ t("mapping.trigger") }}<span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>
           </span>
-          <span :class="['mapping-row-keycap', { unbound: button.selectedAction.type === 'None' }]">{{ actionLabel(button.selectedAction) }}</span>
+          <span class="mapping-row-tail">
+            <span :class="['mapping-row-keycap', { unbound: button.selectedAction.type === 'None' }]">{{ actionLabel(button.selectedAction) }}</span>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+          </span>
         </button>
       </div>
       <div v-else class="mapping-search-empty">{{ t("mapping.noMatch") }}</div>
@@ -1546,10 +1551,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 20px;
-  background: radial-gradient(circle at 50% 34%, rgba(52, 120, 246, 0.1), transparent 35%), var(--card-bg);
+  background: var(--card-bg);
 }
 
-.mapping-list-panel { padding: 20px; }
+.mapping-list-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
 
 .mapping-panel-heading {
   display: flex;
@@ -1662,33 +1671,79 @@ onUnmounted(() => {
 }
 .mapping-selection-empty { padding: 14px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 
-.mapping-list-heading { align-items: flex-start; }
-.mapping-search { width: min(190px, 42%); min-width: 150px; height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); background: var(--surface-muted); }
+.mapping-list-heading { align-items: center; margin-bottom: 16px; }
+.mapping-search { width: min(210px, 44%); min-width: 156px; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); background: var(--surface-muted); transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease; }
+.mapping-search:focus-within { border-color: var(--primary); background: var(--surface-raised); box-shadow: 0 0 0 3px var(--focus-ring); }
 .mapping-search svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .mapping-search input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 12px; }
 .mapping-search input::placeholder { color: var(--text-muted); }
 
-.mapping-row-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.mapping-row { min-width: 0; min-height: 63px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-soft); text-align: left; cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
-.mapping-row:hover,
-.mapping-row.hover { border-color: rgba(52, 120, 246, .45); background: var(--surface-selected); }
-.mapping-row.active { border-color: var(--primary); background: var(--surface-selected); box-shadow: inset 3px 0 0 var(--primary); }
-.mapping-row-icon { min-width: 34px; height: 34px; padding: 0 4px; color: var(--text-secondary); background: var(--surface-muted); font-size: 10px; }
+.mapping-row-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--border);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+.mapping-row {
+  position: relative;
+  min-width: 0;
+  min-height: 60px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  background: var(--card-bg);
+  text-align: left;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.mapping-row::before {
+  position: absolute;
+  inset: 10px auto 10px 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+  content: "";
+}
+.mapping-row.hover { background: var(--surface-hover); }
+.mapping-row.active { background: var(--surface-selected); }
+.mapping-row.active::before { background: var(--primary); }
+.mapping-row:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.mapping-row:focus-visible { z-index: 1; outline: 3px solid var(--focus-ring); outline-offset: -3px; }
+.mapping-row-icon { min-width: 34px; height: 34px; padding: 0 4px; border-radius: 9px; color: var(--text-secondary); background: var(--surface-muted); font-size: 10px; transition: color 120ms ease, background-color 120ms ease; }
+.mapping-row.active .mapping-row-icon { color: var(--primary-dark); background: var(--info-bg); }
 .mapping-row-copy { min-width: 0; }
 .mapping-row-copy strong,
 .mapping-row-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mapping-row-copy strong { margin-bottom: 3px; font-size: 12px; font-weight: 750; }
-.mapping-row-copy small { color: var(--text-secondary); font-size: 10px; }
-.mapping-row-keycap { min-width: 42px; max-width: 96px; min-height: 25px; font-size: 10px; }
+.mapping-row-copy strong { margin-bottom: 4px; font-size: 12px; font-weight: 760; }
+.mapping-row-copy small { color: var(--text-secondary); font-size: 10px; line-height: 1.35; }
+.mapping-row-tail { min-width: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; color: var(--text-muted); }
+.mapping-row-tail > svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.mapping-row-keycap { min-width: 44px; max-width: 104px; min-height: 27px; border-radius: 7px; font-size: 10px; box-shadow: inset 0 -1px 0 var(--border-strong), 0 1px 2px color-mix(in srgb, var(--text) 7%, transparent); }
+.mapping-row.active .mapping-row-keycap { border-color: color-mix(in srgb, var(--primary) 44%, var(--border)); }
 .mapping-search-empty { display: grid; min-height: 220px; place-items: center; color: var(--text-secondary); font-size: 13px; }
 .mapping-list-note { display: flex; align-items: flex-start; gap: 7px; margin: 14px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
 .mapping-list-note > span { display: grid; width: 14px; height: 14px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--primary-dark); background: var(--info-bg); font-size: 10px; font-weight: 800; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mapping-row:hover { background: var(--surface-hover); }
+  .mapping-row.active:hover { background: var(--surface-selected); }
+}
 
 @media (max-width: 1019px) {
   .mapping-stage-v2 { grid-template-columns: 250px minmax(0, 1fr); }
   .mapping-remote-panel,
   .mapping-list-panel { padding: 16px; }
   .mapping-row-grid { grid-template-columns: 1fr; }
+  .mapping-row:last-child:nth-child(odd) { grid-column: auto; }
   .mapping-remote-wrap { min-height: 360px; }
   .mapping-remote-wrap :deep(.remote-schematic) { width: 75px; }
 }

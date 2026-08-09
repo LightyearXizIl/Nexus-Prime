@@ -20,7 +20,7 @@ export type UpdatePhase =
   | "installing";
 
 export const useUpdateStore = defineStore("update", () => {
-  const currentVersion = ref("v0.1.2");
+  const currentVersion = ref("v0.1.4");
   const release = ref<UpdateRelease | null>(null);
   const phase = ref<UpdatePhase>("idle");
   const showDialog = ref(false);
