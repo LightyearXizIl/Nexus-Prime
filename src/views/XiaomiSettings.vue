@@ -502,6 +502,8 @@ async function persistVoiceSettings() {
 
 /** 微信输入法「启动语音输入」常用组合：左 Ctrl + 左 Win */
 const WECHAT_VOICE_VKS = [0xa2, 0x5b];
+/** 千问输入法 Windows 默认：按住右 Alt 语音输入 */
+const QIANWEN_VOICE_VKS = [0xa5];
 /** Codex「按住进行听写」快捷键：左 Ctrl + 左 Shift + D */
 const CODEX_VOICE_VKS = [0xa2, 0xa0, 0x44];
 
@@ -554,6 +556,33 @@ async function applyWechatVoiceMapping() {
   await configStore.saveConfig(type, next);
   setupApplyHint.value = "已应用：语音键 = 左 Ctrl + 左 Win，触发模式 = 按住";
   prependLog("设置建议：已快速应用微信按住说话映射（左 Ctrl + 左 Win）");
+  window.setTimeout(() => {
+    if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
+  }, 4000);
+}
+
+async function applyQianwenVoiceMapping() {
+  if (!config.value) return;
+  const action: KeyAction = { type: "SingleKey", value: QIANWEN_VOICE_VKS[0] };
+  const bindings = {
+    ...config.value.button_bindings,
+    mic: action,
+    voice: action,
+  };
+  const next: DeviceConfig = {
+    ...config.value,
+    button_bindings: bindings,
+    voice_hotkey: ["rightalt"],
+    voice_shortcut_enabled: true,
+    trigger_mode: "Hold",
+  };
+  config.value.button_bindings = bindings;
+  config.value.voice_hotkey = next.voice_hotkey;
+  config.value.voice_shortcut_enabled = true;
+  config.value.trigger_mode = "Hold";
+  await configStore.saveConfig(type, next);
+  setupApplyHint.value = "已应用：语音键 = 右 Alt，触发模式 = 按住";
+  prependLog("设置建议：已快速应用千问按住说话映射（右 Alt）");
   window.setTimeout(() => {
     if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
   }, 4000);
@@ -1492,7 +1521,35 @@ watch(
             </figure>
           </article>
 
-          <!-- 预留：其他输入法卡片可按 setup-ime-card 同样结构追加 -->
+          <article class="setup-ime-card">
+            <header class="setup-ime-head">
+              <h4>千问输入法</h4>
+              <span class="setup-ime-tag">默认 · 按住右 Alt 说话，松开上屏</span>
+            </header>
+            <div class="setup-ime-warn" role="note">
+              <p class="setup-ime-warn-title">
+                千问输入法 Windows 端默认使用 <code>右 Alt</code> 唤醒语音输入；本软件需设为同一按住快捷键。
+              </p>
+              <p class="setup-ime-warn-sub">
+                若你在千问输入法中修改过唤醒快捷键，请在本软件的按键映射中录入相同组合；并确认千问已获得麦克风权限。
+              </p>
+            </div>
+            <ol class="setup-ime-steps">
+              <li>在千问输入法中确认语音输入可用，默认唤醒快捷键为 <code>右 Alt</code>。</li>
+              <li>点击下方快速应用；遥控器语音键按下时按住右 Alt，松开时结束输入。</li>
+            </ol>
+            <div class="setup-ime-apply">
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="!config"
+                @click="applyQianwenVoiceMapping"
+              >
+                快速设置语音键映射为：右 Alt
+              </button>
+              <span v-if="setupApplyHint" class="setup-apply-hint">{{ setupApplyHint }}</span>
+            </div>
+          </article>
         </div>
       </div>
 

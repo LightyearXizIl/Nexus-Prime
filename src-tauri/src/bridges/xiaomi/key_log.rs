@@ -16,6 +16,41 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
+/// 一次 BLE 连接所创建的输入线程。重连前必须全部结束，不能遗留旧回调。
+pub struct KeyLoggerSession {
+    input: Option<std::thread::JoinHandle<()>>,
+    vk_poll: Option<std::thread::JoinHandle<()>>,
+    raw_mapping: Option<std::thread::JoinHandle<()>>,
+}
+
+impl KeyLoggerSession {
+    #[cfg(not(target_os = "windows"))]
+    fn empty() -> Self {
+        Self {
+            input: None,
+            vk_poll: None,
+            raw_mapping: None,
+        }
+    }
+
+    pub fn stop_and_join(
+        mut self,
+        runtime: &XiaomiRuntime,
+        session_id: u64,
+        reason: &str,
+    ) {
+        runtime.end_session(session_id, reason);
+        crate::bridges::xiaomi::key_mapping::reset_voice_input_state(reason);
+        for handle in [self.input.take(), self.vk_poll.take(), self.raw_mapping.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = handle.join();
+        }
+        log::info!("XIAOMI SESSION workers joined id={session_id} reason={reason}");
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct XiaomiKeyEvent {
@@ -117,9 +152,10 @@ pub fn button_label(id: &str) -> &'static str {
 pub fn start_key_logger(
     app: AppHandle,
     runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
     address_u64: u64,
     atvv_interface_id: String,
-) {
+) -> KeyLoggerSession {
     #[cfg(target_os = "windows")]
     {
         use crate::bridges::xiaomi::connect::reset_atvv_subscribed;
@@ -140,11 +176,48 @@ pub fn start_key_logger(
             crate::bridges::xiaomi::special_keys::start_special_key_hook();
         }
 
-        // 对齐 v1.3.3：先 HID Tap，再 ATVV 输入会话（连接阶段已 FromId 打开 ATVV）
+        // 先完成 ATVV 首次订阅，再附着 HID Tap，避免两者并发抢占 WUDFHost。
         reset_atvv_subscribed();
 
+        let input = {
+            let app2 = app.clone();
+            let runtime2 = Arc::clone(&runtime);
+            let gate2 = Arc::clone(&gate);
+            let iface = atvv_interface_id.clone();
+            std::thread::Builder::new()
+                .name(format!("xiaomi-gatt-input-{session_id}"))
+                .spawn(move || {
+                    let result = run_input_session(
+                        app2.clone(),
+                        address_u64,
+                        iface,
+                        runtime2.clone(),
+                        session_id,
+                        gate2,
+                    );
+                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                        "input_session_end",
+                    );
+                    runtime2.end_session(session_id, "input_session_end");
+                    if let Err(e) = result {
+                        log::warn!("ATVV input session unavailable session={session_id}: {e}");
+                        emit_message(&app2, &format!("ATVV 语音通道不可用: {e}"));
+                    }
+                })
+                .ok()
+        };
+
+        // 初始八轮订阅约需四秒；留出六秒窗口后才让 Tap 附着。
+        let wait_start = Instant::now();
+        while runtime.session_active(session_id)
+            && !crate::bridges::xiaomi::connect::atvv_subscribed()
+            && wait_start.elapsed() < Duration::from_secs(6)
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
         let mut tap_started = false;
-        if tap_enabled {
+        if runtime.session_active(session_id) && tap_enabled {
             let app2 = app.clone();
             let gate2 = Arc::clone(&gate);
             tap_started = ensure_started(app2, gate2);
@@ -154,66 +227,56 @@ pub fn start_key_logger(
                     "HID Tap 未启动：返回/音量键不可用（请确认 Frida Gadget 资源）",
                 );
             }
-        } else {
+        } else if !tap_enabled {
             stop_and_join();
             emit_message(&app, "HID Tap 已按配置禁用");
         }
 
-        crate::bridges::xiaomi::raw_mapping::maybe_start_raw_mapping(
+        let raw_mapping = crate::bridges::xiaomi::raw_mapping::maybe_start_raw_mapping(
             app.clone(),
             Arc::clone(&runtime),
+            session_id,
             Arc::clone(&gate),
             tap_started,
         );
 
-        {
-            let app2 = app.clone();
-            let runtime2 = Arc::clone(&runtime);
-            let gate2 = Arc::clone(&gate);
-            let iface = atvv_interface_id.clone();
-            std::thread::Builder::new()
-                .name("xiaomi-gatt-input".into())
-                .spawn(move || {
-                    let result =
-                        run_input_session(app2.clone(), address_u64, iface, runtime2.clone(), gate2);
-                    runtime2.running.store(false, std::sync::atomic::Ordering::SeqCst);
-                    match result {
-                        Ok(()) => {}
-                        Err(e) => {
-                            log::warn!("ATVV input session unavailable: {e}");
-                            emit_message(&app2, &format!("ATVV 语音通道不可用: {e}"));
-                        }
-                    }
-                })
-                .ok();
-        }
-
-        {
+        let vk_poll = {
             let app2 = app.clone();
             let runtime2 = Arc::clone(&runtime);
             let gate2 = Arc::clone(&gate);
             std::thread::Builder::new()
-                .name("xiaomi-vk-poll".into())
+                .name(format!("xiaomi-vk-poll-{session_id}"))
                 .spawn(move || {
-                    windows_vk_poll_logger(app2, runtime2, gate2);
+                    windows_vk_poll_logger(app2, runtime2, session_id, gate2);
                 })
-                .ok();
-        }
+                .ok()
+        };
 
         emit_message(
             &app,
-            "按键监听已启动（HID-Tap 返回/音量 + ATVV 语音/音频）",
+            &format!("按键监听已启动 session={session_id}（HID-Tap 返回/音量 + ATVV 语音/音频）"),
         );
+        return KeyLoggerSession {
+            input,
+            vk_poll,
+            raw_mapping,
+        };
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, runtime, address_u64, atvv_interface_id);
+        let _ = (app, runtime, session_id, address_u64, atvv_interface_id);
+        KeyLoggerSession::empty()
     }
 }
 
 /// VK 轮询：仅作 UI/诊断兜底，不执行映射（避免与系统原生气 + HID 映射双触发）
 #[cfg(target_os = "windows")]
-fn windows_vk_poll_logger(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc<KeyEmitGate>) {
+fn windows_vk_poll_logger(
+    app: AppHandle,
+    runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
+    gate: Arc<KeyEmitGate>,
+) {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
     let keys: &[(i32, &str)] = &[
@@ -229,7 +292,7 @@ fn windows_vk_poll_logger(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc
     ];
 
     let mut prev: HashMap<i32, bool> = HashMap::new();
-    while !runtime.should_stop() {
+    while runtime.session_active(session_id) {
         for &(vk, id) in keys {
             let down = unsafe { GetAsyncKeyState(vk) as u16 } & 0x8000 != 0;
             let was = prev.get(&vk).copied().unwrap_or(false);

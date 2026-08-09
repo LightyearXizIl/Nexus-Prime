@@ -21,7 +21,9 @@ fn quit_app(app: &AppHandle) {
         app.try_state::<std::sync::Arc<crate::bridges::xiaomi::connect::XiaomiRuntime>>()
     {
         runtime.request_stop();
+        runtime.cancel_active_session("tray_quit");
     }
+    crate::bridges::xiaomi::key_mapping::reset_voice_input_state("tray_quit");
     crate::bridges::xiaomi::hid_report_tap::stop_and_join();
     crate::bridges::xiaomi::special_keys::stop_special_key_hook();
     crate::audio::pcm_router::stop_audio_router_process();
@@ -115,7 +117,9 @@ fn on_menu_event(app: &AppHandle, id: &str) {
                 app.try_state::<std::sync::Arc<crate::bridges::xiaomi::connect::XiaomiRuntime>>()
             {
                 runtime.request_stop();
+                runtime.cancel_active_session("tray_disconnect");
             }
+            crate::bridges::xiaomi::key_mapping::reset_voice_input_state("tray_disconnect");
             if let Some(state) = app.try_state::<crate::bridges::BridgeState>() {
                 state.update_status(
                     crate::bridges::BridgeType::Xiaomi,

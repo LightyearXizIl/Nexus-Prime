@@ -5,6 +5,7 @@
 use crate::bridges::xiaomi::connect;
 use crate::bridges::xiaomi::key_log::{button_label, emit_key_phase, emit_message};
 use crate::bridges::xiaomi::tv_gate;
+use crate::bridges::xiaomi::voice_chord_state::VoiceChordState;
 use crate::config::manager::{ConfigManager, DeviceConfig, KeyAction};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -15,7 +16,9 @@ use tauri::{AppHandle, Manager};
 /// 与 Python `EXTRA_INFO = 0x584D4952` ('XMIR') 一致，供 LL hook 放行虚拟键
 pub const EXTRA_INFO: usize = 0x584D_4952;
 
-static VOICE_HELD: AtomicBool = AtomicBool::new(false);
+/// 实际已通过 SendInput 按下的语音组合键。必须保留原始键位，不能在抬起时
+/// 重新读配置，否则配置变更/连接断开会导致 Ctrl、Win 等修饰键粘住。
+static VOICE_HELD_KEYS: Mutex<VoiceChordState> = Mutex::new(VoiceChordState::empty());
 static DIRECT_MARKS: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 static REPEAT_GEN: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
 static CLICK_GEN: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
@@ -61,8 +64,19 @@ pub fn set_input_session_active(active: bool) {
         // 新连接会话：允许再发一次 ATVV 失败 F5 提示
         reset_atvv_f5_toast_throttle();
     } else {
+        reset_voice_input_state("input_session_inactive");
         cancel_pending_gestures();
     }
+}
+
+/// 连接中断、重启或退出时统一清理语音输入状态。该函数可重复调用。
+pub fn reset_voice_input_state(reason: &str) {
+    force_release_voice_shortcut(reason);
+    FIRMWARE_VOICE_HELD.store(false, Ordering::Release);
+    disarm_voice_native_suppress();
+    VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
+    crate::bridges::xiaomi::voice_pcm::end_session();
+    crate::bridges::xiaomi::voice_meter::set_session(false);
 }
 
 /// 配置变化或连接结束时取消全部未结算手势，防止旧计时器继续触发。
@@ -712,10 +726,15 @@ fn start_hold_detector(
                                     .or_default();
                                 if state.gen != gen || !state.active {
                                     false
-                                } else {
-                                    key_chord(&keys, false);
+                                } else if key_chord(&keys, false) {
                                     state.held_keys = Some(keys);
                                     true
+                                } else {
+                                    let _ = key_chord(&keys, true);
+                                    log::warn!(
+                                        "XIAOMI MAPPING voice long-hold DOWN failed keys={keys:?}"
+                                    );
+                                    false
                                 }
                             } else {
                                 perform_action(action)
@@ -983,6 +1002,11 @@ fn click_count_label(count: u8) -> &'static str {
 }
 
 fn handle_voice(app: &AppHandle, pressed: bool) {
+    // 抬起必须优先释放已记录的原始组合键；此时配置可能已关闭、丢失或变更。
+    if !pressed {
+        force_release_voice_shortcut("remote_up");
+        return;
+    }
     let Some(config) = load_xiaomi_config(app) else {
         return;
     };
@@ -997,18 +1021,9 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     }
     // 点击 / 按住：快捷键都跟遥控按下/抬起走（短按≈点按，长按=按住）
     // 「点击模式」的短按点按由 input_session 在短于阈值抬起时改走 tap；此处处理按下/抬起和弦
-    if pressed {
-        if !VOICE_HELD.swap(true, Ordering::SeqCst) {
-            key_chord(&vks, false);
-            log::info!(
-                "XIAOMI VOICE SHORTCUT DOWN mode={:?} vks={vks:?}",
-                config.trigger_mode
-            );
-        }
-    } else if VOICE_HELD.swap(false, Ordering::SeqCst) {
-        key_chord(&vks, true);
+    if press_voice_shortcut(&vks, "remote_down") {
         log::info!(
-            "XIAOMI VOICE SHORTCUT UP mode={:?} vks={vks:?}",
+            "XIAOMI VOICE SHORTCUT DOWN mode={:?} vks={vks:?}",
             config.trigger_mode
         );
     }
@@ -1016,6 +1031,8 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
 
 /// 点击模式：短按判定为「点按一次」完整 tap（若尚未因长按而 DOWN）
 pub fn voice_shortcut_tap(app: &AppHandle) {
+    // 若已经按住 DOWN，先松开再读取当前配置，避免配置读取失败时粘键。
+    force_release_voice_shortcut("click_tap");
     let Some(config) = load_xiaomi_config(app) else {
         return;
     };
@@ -1025,10 +1042,6 @@ pub fn voice_shortcut_tap(app: &AppHandle) {
     let vks = resolve_voice_hotkey(&config);
     if vks.is_empty() {
         return;
-    }
-    // 若已经按住 DOWN，先松开再 tap，避免粘键
-    if VOICE_HELD.swap(false, Ordering::SeqCst) {
-        key_chord(&vks, true);
     }
     let hold = if vks.iter().any(|vk| matches!(vk, 0x5B | 0x5C)) {
         120
@@ -1051,10 +1064,36 @@ pub fn voice_shortcut_ensure_down(app: &AppHandle) {
     if vks.is_empty() {
         return;
     }
-    if !VOICE_HELD.swap(true, Ordering::SeqCst) {
-        key_chord(&vks, false);
+    if press_voice_shortcut(&vks, "hold_threshold") {
         log::info!("XIAOMI VOICE SHORTCUT DOWN (hold-after-click-threshold) vks={vks:?}");
     }
+}
+
+fn press_voice_shortcut(vks: &[u16], reason: &str) -> bool {
+    let mut state = VOICE_HELD_KEYS.lock();
+    if state.is_held() {
+        log::debug!("XIAOMI VOICE SHORTCUT DOWN ignored already_held reason={reason}");
+        return false;
+    }
+    let pressed = state.press_with(vks, key_chord);
+    if !pressed {
+        log::warn!("XIAOMI VOICE SHORTCUT DOWN failed reason={reason} vks={vks:?}");
+    }
+    pressed
+}
+
+/// 释放实际按下的组合键；对同一会话重复调用不产生额外键盘事件。
+pub fn force_release_voice_shortcut(reason: &str) -> bool {
+    let mut state = VOICE_HELD_KEYS.lock();
+    let Some((keys, released)) = state.release_with(key_chord) else {
+        return false;
+    };
+    if released {
+        log::info!("XIAOMI VOICE SHORTCUT UP reason={reason} vks={keys:?}");
+    } else {
+        log::error!("XIAOMI VOICE SHORTCUT UP failed reason={reason} vks={keys:?}");
+    }
+    released
 }
 
 /// ATVV opcode 路径调用（对齐 VoiceShortcut.press/release/tap）
@@ -1483,7 +1522,7 @@ fn tap_unicode_text(text: &str) {
     }
 }
 
-fn key_chord(vks: &[u16], key_up: bool) {
+fn key_chord(vks: &[u16], key_up: bool) -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -1521,15 +1560,23 @@ fn key_chord(vks: &[u16], key_up: bool) {
                 },
             });
         }
-        if !inputs.is_empty() {
-            unsafe {
-                let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-            }
+        if inputs.is_empty() {
+            return true;
         }
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
+        if sent != inputs.len() {
+            log::warn!(
+                "XIAOMI MAPPING SendInput incomplete sent={sent} expected={} key_up={key_up} vks={vks:?}",
+                inputs.len()
+            );
+            return false;
+        }
+        true
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (vks, key_up);
+        true
     }
 }
 

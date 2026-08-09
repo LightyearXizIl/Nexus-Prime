@@ -50,8 +50,11 @@ const XIAOMI_2_PRO_NAMES: &[&str] = &["mi rc", "xiaomi bluetooth remote 2 pro"];
 /// 运行时停止标志（点击「断开」时置位）
 #[derive(Default)]
 pub struct XiaomiRuntime {
+    /// 整个重连 worker 是否存活。它不能再被单个 GATT 会话的断线回调改写，
+    /// 否则会在旧会话尚未清理时启动第二个 worker。
     pub stop: AtomicBool,
     pub running: AtomicBool,
+    sessions: crate::bridges::xiaomi::session_state::SessionState,
 }
 
 impl XiaomiRuntime {
@@ -69,6 +72,34 @@ impl XiaomiRuntime {
 
     pub fn should_stop(&self) -> bool {
         self.stop.load(Ordering::SeqCst)
+    }
+
+    /// 为一次实际设备连接分配唯一会话号。所有输入子线程都必须持有该号。
+    pub fn begin_session(&self) -> u64 {
+        let id = self.sessions.begin();
+        log::info!("XIAOMI SESSION start id={id}");
+        id
+    }
+
+    pub fn session_active(&self, id: u64) -> bool {
+        !self.should_stop() && self.sessions.is_active(id)
+    }
+
+    /// 仅允许当前会话把自己标为结束，避免旧回调误杀新连接。
+    pub fn end_session(&self, id: u64, reason: &str) -> bool {
+        if self.sessions.end(id) {
+            log::info!("XIAOMI SESSION stop id={id} reason={reason}");
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn cancel_active_session(&self, reason: &str) {
+        let id = self.sessions.cancel();
+        if id != 0 {
+            log::info!("XIAOMI SESSION stop id={id} reason={reason}");
+        }
     }
 }
 
@@ -238,21 +269,28 @@ pub fn monitor_connection(
     stop: Arc<XiaomiRuntime>,
     app: Option<tauri::AppHandle>,
 ) -> Result<(), String> {
+    let session_id = stop.begin_session();
+    let mut key_session = None;
     if let Some(app) = app.clone() {
-        crate::bridges::xiaomi::key_log::start_key_logger(
+        key_session = Some(crate::bridges::xiaomi::key_log::start_key_logger(
             app,
             Arc::clone(&stop),
+            session_id,
             conn.address_u64,
             conn.atvv_interface_id.clone(),
-        );
+        ));
     }
     #[cfg(target_os = "windows")]
     {
-        return windows_monitor_connection(conn.address_u64, stop);
+        let result = windows_monitor_connection(conn.address_u64, Arc::clone(&stop), session_id);
+        if let Some(session) = key_session {
+            session.stop_and_join(&stop, session_id, "monitor_end");
+        }
+        return result;
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (conn, stop, app);
+        let _ = (conn, stop, app, session_id, key_session);
         Err("小米遥控器连接仅支持 Windows".into())
     }
 }
@@ -547,24 +585,41 @@ fn windows_open_via_address(candidate: &XiaomiCandidate) -> Result<XiaomiConnect
 fn windows_monitor_connection(
     _address_u64: u64,
     runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
 ) -> Result<(), String> {
     // 断连由 input_session 在同一 BLE 句柄上监听；此处不再打开第三个句柄。
-    let wait_start = std::time::Instant::now();
-    while !runtime.running.load(Ordering::SeqCst)
-        && !runtime.should_stop()
-        && wait_start.elapsed() < Duration::from_secs(30)
-    {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-
-    while !runtime.should_stop() && runtime.running.load(Ordering::SeqCst) {
+    while runtime.session_active(session_id) {
         std::thread::sleep(Duration::from_millis(200));
     }
-    runtime.running.store(false, Ordering::SeqCst);
     if runtime.should_stop() {
         Ok(())
     } else {
         log::warn!("Xiaomi remote disconnected");
         Err("遥控器已断开连接".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_session_cannot_end_new_session() {
+        let runtime = XiaomiRuntime::new();
+        let first = runtime.begin_session();
+        let second = runtime.begin_session();
+        assert_ne!(first, second);
+        assert!(!runtime.end_session(first, "stale_callback"));
+        assert!(runtime.session_active(second));
+        assert!(runtime.end_session(second, "current_callback"));
+        assert!(!runtime.session_active(second));
+    }
+
+    #[test]
+    fn cancel_active_session_invalidates_all_session_workers() {
+        let runtime = XiaomiRuntime::new();
+        let session = runtime.begin_session();
+        runtime.cancel_active_session("restart");
+        assert!(!runtime.session_active(session));
     }
 }

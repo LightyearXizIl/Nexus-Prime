@@ -33,9 +33,13 @@ fn vk_to_button(vk: u16) -> Option<&'static str> {
 pub fn maybe_start_raw_mapping(
     app: AppHandle,
     runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
     gate: Arc<KeyEmitGate>,
     hid_tap_started: bool,
-) {
+) -> Option<std::thread::JoinHandle<()>> {
+    if !runtime.session_active(session_id) {
+        return None;
+    }
     let config = app
         .try_state::<ConfigManager>()
         .and_then(|m| m.get_device_config("xiaomi").ok());
@@ -52,19 +56,24 @@ pub fn maybe_start_raw_mapping(
         log::info!(
             "XIAOMI RAW MAPPING skipped tap_started={hid_tap_started} fallback={fallback_required}"
         );
-        return;
+        return None;
     }
 
     emit_message(&app, "Raw Input 旁路已启动（HID Tap 未附着时的按键兜底）");
     std::thread::Builder::new()
-        .name("xiaomi-raw-mapping".into())
+        .name(format!("xiaomi-raw-mapping-{session_id}"))
         .spawn(move || {
-            run_raw_mapping(app, runtime, gate);
+            run_raw_mapping(app, runtime, session_id, gate);
         })
-        .ok();
+        .ok()
 }
 
-fn run_raw_mapping(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc<KeyEmitGate>) {
+fn run_raw_mapping(
+    app: AppHandle,
+    runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
+    gate: Arc<KeyEmitGate>,
+) {
     let mut bridge = RawInputBridge::new();
     let app2 = app.clone();
     let gate2 = Arc::clone(&gate);
@@ -78,7 +87,11 @@ fn run_raw_mapping(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc<KeyEmi
 
     let mut last_down: HashMap<u16, bool> = HashMap::new();
 
+    let runtime_for_callback = Arc::clone(&runtime);
     if let Err(e) = bridge.start(move |ev: RawInputEvent| {
+        if !runtime_for_callback.session_active(session_id) {
+            return;
+        }
         if ev.device_type != RawInputDeviceType::Keyboard {
             return;
         }
@@ -112,7 +125,7 @@ fn run_raw_mapping(app: AppHandle, runtime: Arc<XiaomiRuntime>, gate: Arc<KeyEmi
     }
 
     log::info!("XIAOMI RAW MAPPING READY");
-    while !runtime.should_stop() {
+    while runtime.session_active(session_id) {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     bridge.stop();

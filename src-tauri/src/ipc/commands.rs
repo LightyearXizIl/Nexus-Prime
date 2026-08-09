@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// 连接、重连和手动重启必须串行化，避免两个 UI 入口同时创建 xiaomi-worker。
+static XIAOMI_LIFECYCLE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 // ============================================================
 // 前端请求/响应类型
 // ============================================================
@@ -57,6 +60,7 @@ async fn start_xiaomi_bridge(
     state: &BridgeState,
     config_manager: &ConfigManager,
 ) -> Result<(), String> {
+    let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     let runtime = app.state::<Arc<XiaomiRuntime>>();
     if runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("小米桥接已在运行".into());
@@ -205,7 +209,9 @@ pub async fn stop_bridge(
     if bt == BridgeType::Xiaomi {
         if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
             runtime.request_stop();
+            runtime.cancel_active_session("stop_bridge");
         }
+        crate::bridges::xiaomi::key_mapping::reset_voice_input_state("stop_bridge");
     }
     state.update_status(bt, BridgeStatus::Disconnected);
     Ok(())
@@ -523,12 +529,15 @@ pub fn restart_xiaomi_bridge_inner(
     state: &BridgeState,
     config_manager: &ConfigManager,
 ) -> Result<(), String> {
+    let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     log::info!("XIAOMI host: restart bridge requested");
     append_host_log(config_manager, "bridge restart requested");
 
     // 仅停 BLE worker；HID Tap 为进程级单例，重启不解绑 30684（避免自占用）
     if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
         runtime.request_stop();
+        runtime.cancel_active_session("restart_bridge");
+        crate::bridges::xiaomi::key_mapping::reset_voice_input_state("restart_bridge");
         // 等旧 worker 退出
         for _ in 0..50 {
             if !runtime.running.load(std::sync::atomic::Ordering::SeqCst) {

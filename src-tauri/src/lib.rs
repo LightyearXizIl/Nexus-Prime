@@ -5,6 +5,14 @@ pub mod audio;
 pub mod logging;
 pub mod update;
 
+// Tauri's dialog dependencies import TaskDialogIndirect from Common Controls
+// v6. tauri-build embeds that activation manifest into application binaries,
+// but not into Rust's unit-test executable. Force the same generated resource
+// into Windows test harnesses so they do not fall back to Common Controls v5.
+#[cfg(all(test, target_os = "windows"))]
+#[link(name = "resource", kind = "static")]
+unsafe extern "C" {}
+
 use tauri::{Manager, RunEvent};
 
 /// 退出前统一清理：停桥接 + HID Tap + 卸键盘钩子，避免进程残留
@@ -13,7 +21,9 @@ fn cleanup_on_exit(app: &tauri::AppHandle) {
         app.try_state::<std::sync::Arc<bridges::xiaomi::connect::XiaomiRuntime>>()
     {
         runtime.request_stop();
+        runtime.cancel_active_session("app_exit");
     }
+    bridges::xiaomi::key_mapping::reset_voice_input_state("app_exit");
     bridges::xiaomi::hid_report_tap::stop_and_join();
     bridges::xiaomi::special_keys::stop_special_key_hook();
     audio::pcm_router::stop_audio_router_process();

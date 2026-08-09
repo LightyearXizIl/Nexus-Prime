@@ -12,7 +12,6 @@ use crate::bridges::xiaomi::key_log::{
 use crate::bridges::xiaomi::key_mapping;
 use crate::config::manager::{ConfigManager, TriggerMode};
 use std::collections::HashSet;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -70,15 +69,16 @@ pub fn run_input_session(
     address_u64: u64,
     atvv_interface_id: String,
     runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
     gate: Arc<KeyEmitGate>,
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        windows_run_input_session(app, address_u64, atvv_interface_id, runtime, gate)
+        windows_run_input_session(app, address_u64, atvv_interface_id, runtime, session_id, gate)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, address_u64, atvv_interface_id, runtime, gate);
+        let _ = (app, address_u64, atvv_interface_id, runtime, session_id, gate);
         Err("仅支持 Windows".into())
     }
 }
@@ -89,6 +89,7 @@ fn windows_run_input_session(
     address_u64: u64,
     atvv_interface_id: String,
     runtime: Arc<XiaomiRuntime>,
+    session_id: u64,
     gate: Arc<KeyEmitGate>,
 ) -> Result<(), String> {
     use windows::core::GUID;
@@ -101,6 +102,8 @@ fn windows_run_input_session(
     use crate::bridges::xiaomi::voice_pcm;
     use crate::config::manager::ConfigManager;
     use tauri::Manager;
+
+    log::info!("XIAOMI INPUT SESSION start id={session_id}");
 
     tv_gate::mark_connecting();
     reset_atvv_subscribed();
@@ -141,8 +144,11 @@ fn windows_run_input_session(
                 if let Some(dev) = sender {
                     if let Ok(status) = dev.ConnectionStatus() {
                         if status == BluetoothConnectionStatus::Disconnected {
-                            log::warn!("Xiaomi remote disconnected (input session)");
-                            runtime_conn.running.store(false, Ordering::SeqCst);
+                            log::warn!("Xiaomi remote disconnected (input session={session_id})");
+                            crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                                "remote_disconnected",
+                            );
+                            runtime_conn.end_session(session_id, "remote_disconnected");
                         }
                     }
                 }
@@ -150,8 +156,6 @@ fn windows_run_input_session(
             },
         ))
         .map_err(|e| format!("ConnectionStatusChanged: {e}"))?;
-
-    runtime.running.store(true, Ordering::SeqCst);
 
     let services = device
         .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
@@ -233,6 +237,9 @@ fn windows_run_input_session(
     // ---- ATVV Control：语音键（对齐 v1.3.3：FromId 优先，再地址路径）----
     let mut last_atvv_fail: Option<AtvvFailReason> = None;
     for attempt in 0..8 {
+        if !runtime.session_active(session_id) {
+            break;
+        }
         if atvv_ok {
             break;
         }
@@ -276,7 +283,15 @@ fn windows_run_input_session(
         // 2) 回退：设备枚举到的 ATVV 服务（地址路径）
         if !atvv_ok {
             if let Some(atvv) = atvv_service.as_ref() {
-                match subscribe_atvv_service(&app, atvv, &gate, &mut tokens, gain_db) {
+                match subscribe_atvv_periodic_retry(
+                    &app,
+                    atvv,
+                    &gate,
+                    &mut tokens,
+                    gain_db,
+                    &runtime,
+                    session_id,
+                ) {
                     Ok(true) => {
                         atvv_ok = true;
                         emit_message(&app, "ATVV 语音键/音频已订阅");
@@ -393,7 +408,7 @@ fn windows_run_input_session(
     let mut since_batt = Instant::now();
     let mut since_pcm_warm = Instant::now();
     let mut since_atvv_retry = Instant::now();
-    while !runtime.should_stop() {
+    while runtime.session_active(session_id) {
         std::thread::sleep(Duration::from_millis(200));
         if !atvv_ok && since_atvv_retry.elapsed() >= Duration::from_secs(3) {
             since_atvv_retry = Instant::now();
@@ -448,11 +463,13 @@ fn windows_run_input_session(
     }
 
     voice_pcm::stop();
+    crate::bridges::xiaomi::key_mapping::reset_voice_input_state("input_session_cleanup");
     crate::bridges::xiaomi::key_mapping::set_input_session_active(false);
     tv_gate::reset();
     mark_atvv_subscribed(false);
     let _ = device.RemoveConnectionStatusChanged(conn_token);
-    runtime.running.store(false, Ordering::SeqCst);
+    runtime.end_session(session_id, "input_session_cleanup");
+    log::info!("XIAOMI INPUT SESSION cleanup id={session_id}");
     for (ch, token) in tokens {
         let _ = ch.RemoveValueChanged(token);
     }
@@ -879,6 +896,52 @@ fn log_atvv_fail(path: &str, reason: &AtvvFailReason, attempt: u32) {
         reason.label,
         reason.hint
     );
+}
+
+/// 后台恢复时若 Windows 报 AccessDenied，暂停 HID Tap 后只重试一次。
+/// 这比多个会话各自无限重订阅更安全，也保留失败时的返回/音量通道。
+#[cfg(target_os = "windows")]
+fn subscribe_atvv_periodic_retry(
+    app: &AppHandle,
+    atvv: &windows::Devices::Bluetooth::GenericAttributeProfile::GattDeviceService,
+    gate: &Arc<KeyEmitGate>,
+    tokens: &mut Vec<(
+        windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
+        windows::Foundation::EventRegistrationToken,
+    )>,
+    gain_db: f32,
+    runtime: &Arc<XiaomiRuntime>,
+    session_id: u64,
+) -> Result<bool, String> {
+    let first = subscribe_atvv_service(app, atvv, gate, tokens, gain_db);
+    let access_denied = first
+        .as_ref()
+        .err()
+        .map(|e| AtvvFailReason::from_error(e).code == "access_denied")
+        .unwrap_or(false);
+    if !access_denied || !crate::bridges::xiaomi::hid_report_tap::is_running() {
+        return first;
+    }
+
+    log::warn!("ATVV periodic retry pausing HID Tap session={session_id} after AccessDenied");
+    crate::bridges::xiaomi::hid_report_tap::stop_and_join();
+    std::thread::sleep(Duration::from_millis(150));
+    let retry = subscribe_atvv_service(app, atvv, gate, tokens, gain_db);
+
+    if runtime.session_active(session_id) {
+        let tap_enabled = app
+            .try_state::<ConfigManager>()
+            .and_then(|m| m.get_device_config("xiaomi").ok())
+            .map(|c| c.hid_report_tap_enabled)
+            .unwrap_or(true);
+        if tap_enabled {
+            let _ = crate::bridges::xiaomi::hid_report_tap::ensure_started(
+                app.clone(),
+                Arc::clone(gate),
+            );
+        }
+    }
+    retry
 }
 
 #[cfg(target_os = "windows")]

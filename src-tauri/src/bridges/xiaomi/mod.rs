@@ -12,6 +12,8 @@ pub mod special_keys;
 pub mod tv_gate;
 pub mod voice_pcm;
 pub mod voice_meter;
+pub(crate) mod voice_chord_state;
+pub(crate) mod session_state;
 pub mod raw_mapping;
 pub mod autostart;
 pub mod config;
