@@ -57,11 +57,16 @@ describe("KeyMappingStage voice mapping", () => {
     wrapper.unmount();
   });
 
-  it("does not flag valid right-Alt and saves a manual shortcut to the selected long-press slot", async () => {
+  it("keeps voice dedicated and clears legacy gesture mappings", async () => {
     const config = createConfig();
     config.button_bindings.mic = { type: "SingleKey", value: 0xa5 };
     config.button_bindings.voice = { type: "SingleKey", value: 0xa5 };
     config.voice_hotkey = ["rightalt"];
+    config.long_press_bindings = { mic: { type: "SingleKey", value: 0xa5 } };
+    config.multi_click_bindings = {
+      mic: { 2: { type: "SingleKey", value: 0xa5 } },
+      menu: { 2: { type: "SingleKey", value: 0x41 } },
+    };
     const wrapper = mount(KeyMappingStage, {
       props: { config },
       global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
@@ -69,17 +74,25 @@ describe("KeyMappingStage voice mapping", () => {
     const voiceRow = wrapper.findAll("button.mapping-row").find((row) => row.text().includes("语音键"));
     await voiceRow!.trigger("click");
     expect(wrapper.text()).not.toContain("可能缺少主键 D");
+    expect(wrapper.text()).toContain("语音快捷键");
+    expect(wrapper.text()).not.toContain("连击间隔");
+    expect(wrapper.findAll('[role="menuitemradio"]')).toHaveLength(0);
 
-    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("手动组合"))!.trigger("click");
-    const slotButton = wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"));
-    await slotButton!.trigger("click");
-    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("长按"))!.trigger("click");
     await wrapper.findAll("button.selection-action").find((button) => button.text().includes("手动组合"))!.trigger("click");
     wrapper.findComponent(VoiceShortcutComposer).vm.$emit("apply", [0xa5]);
     await nextTick();
 
-    expect(latestSave(wrapper).long_press_bindings?.mic).toEqual({ type: "SingleKey", value: 0xa5 });
-    expect(latestSave(wrapper).voice_hotkey).toEqual(["rightalt"]);
+    expect(latestSave(wrapper)).toMatchObject({
+      button_bindings: {
+        mic: { type: "SingleKey", value: 0xa5 },
+        voice: { type: "SingleKey", value: 0xa5 },
+      },
+      voice_hotkey: ["rightalt"],
+      long_press_bindings: {},
+      multi_click_bindings: {
+        menu: { 2: { type: "SingleKey", value: 0x41 } },
+      },
+    });
     wrapper.unmount();
   });
 });

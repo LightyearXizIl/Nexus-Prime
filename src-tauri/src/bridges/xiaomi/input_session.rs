@@ -1335,7 +1335,6 @@ fn reset_pcm_session(state: &Arc<Mutex<AtvvVoiceState>>, clear_frames: bool) {
 /// 遥控语音键按下：传声 + 按模式注入快捷键
 fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     let toggle = voice_trigger_is_toggle(app);
-    let gesture_mode = key_mapping::voice_uses_extended_gestures(app);
     let gen = {
         let Ok(mut st) = state.lock() else {
             return;
@@ -1357,10 +1356,7 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
     }
     crate::bridges::xiaomi::voice_meter::set_session(true);
 
-    if gesture_mode {
-        key_mapping::on_remote_button(app, "mic", true);
-        log::info!("XIAOMI ATVV AUDIO_START extended gesture mode");
-    } else if toggle {
+    if toggle {
         // 点击模式：短按抬起再 TAP；长按阈值到再 DOWN
         let app2 = app.clone();
         let state2 = Arc::clone(state);
@@ -1391,7 +1387,6 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
 fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     use crate::bridges::xiaomi::voice_pcm;
     let toggle = voice_trigger_is_toggle(app);
-    let gesture_mode = key_mapping::voice_uses_extended_gestures(app);
     let (was_pressed, hold_armed, press_ms) = {
         let Ok(mut st) = state.lock() else {
             return;
@@ -1422,10 +1417,7 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
 
     notify_voice_phase(app, gate, false);
 
-    if gesture_mode {
-        key_mapping::on_remote_button(app, "mic", false);
-        log::info!("XIAOMI ATVV AUDIO_STOP extended gesture mode ms={press_ms}");
-    } else if toggle {
+    if toggle {
         if hold_armed || press_ms >= CLICK_HOLD_THRESHOLD_MS {
             key_mapping::on_remote_button(app, "mic", false);
             log::info!("XIAOMI ATVV AUDIO_STOP click-mode HOLD release ms={press_ms}");

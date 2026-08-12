@@ -8,6 +8,7 @@ import { useConfigStore } from "../stores/config";
 import DeviceStatus from "../components/DeviceStatus.vue";
 import KeyMappingStage from "../components/KeyMappingStage.vue";
 import type { DeviceConfig, KeyAction } from "../types";
+import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
 import InputMethodSettingsDialog, {
   type ImeProvider,
 } from "../components/InputMethodSettingsDialog.vue";
@@ -499,7 +500,7 @@ function clampGainOnBlur() {
 
 async function persistVoiceSettings() {
   if (!config.value) return;
-  await configStore.saveConfig(type, { ...config.value });
+  await configStore.saveConfig(type, normalizeVoiceShortcutConfig(config.value));
 }
 
 /** 微信输入法「启动语音输入」常用组合：左 Ctrl + 左 Win */
@@ -517,13 +518,13 @@ async function applyCodexVoiceMapping() {
     mic: action,
     voice: action,
   };
-  const next: DeviceConfig = {
+  const next: DeviceConfig = normalizeVoiceShortcutConfig({
     ...config.value,
     button_bindings: bindings,
     voice_hotkey: ["leftctrl", "leftshift", "d"],
     voice_shortcut_enabled: true,
     trigger_mode: "Hold",
-  };
+  });
   config.value.button_bindings = bindings;
   config.value.voice_hotkey = next.voice_hotkey;
   config.value.voice_shortcut_enabled = true;
@@ -544,13 +545,13 @@ async function applyWechatVoiceMapping() {
     mic: action,
     voice: action,
   };
-  const next: DeviceConfig = {
+  const next: DeviceConfig = normalizeVoiceShortcutConfig({
     ...config.value,
     button_bindings: bindings,
     voice_hotkey: ["leftctrl", "leftwin"],
     voice_shortcut_enabled: true,
     trigger_mode: "Hold",
-  };
+  });
   config.value.button_bindings = bindings;
   config.value.voice_hotkey = next.voice_hotkey;
   config.value.voice_shortcut_enabled = true;
@@ -571,13 +572,13 @@ async function applyQianwenVoiceMapping() {
     mic: action,
     voice: action,
   };
-  const next: DeviceConfig = {
+  const next: DeviceConfig = normalizeVoiceShortcutConfig({
     ...config.value,
     button_bindings: bindings,
     voice_hotkey: ["rightalt"],
     voice_shortcut_enabled: true,
     trigger_mode: "Hold",
-  };
+  });
   config.value.button_bindings = bindings;
   config.value.voice_hotkey = next.voice_hotkey;
   config.value.voice_shortcut_enabled = true;

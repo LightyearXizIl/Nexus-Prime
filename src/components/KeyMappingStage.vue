@@ -17,9 +17,10 @@ import {
   keyLabel,
   vksToHotkeyNames,
 } from "../utils/shortcut";
+import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
 import { useI18n } from "vue-i18n";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const props = defineProps<{
   config: DeviceConfig;
@@ -139,7 +140,18 @@ function isVolumeButton(id: string): id is "volume_up" | "volume_down" {
 }
 
 function selectedClick(id: string): MappingSlot {
+  if (isVoiceButton(id)) return 1;
   return selectedClickById.value[id] || 1;
+}
+
+const voiceShortcutLabel = computed(() => {
+  if (locale.value === "zh-TW") return "語音快捷鍵";
+  if (locale.value === "en") return "Voice shortcut";
+  return "语音快捷键";
+});
+
+function slotLabel(id: string, slot: MappingSlot): string {
+  return isVoiceButton(id) ? voiceShortcutLabel.value : SLOT_LABELS.value[slot];
 }
 
 function actionOf(id: string, count: MappingSlot = 1): KeyAction {
@@ -169,6 +181,7 @@ function configuredMultiCounts(id: string): ClickCount[] {
 }
 
 function configuredGestureSlots(id: string): MappingSlot[] {
+  if (isVoiceButton(id)) return [];
   const slots: MappingSlot[] = [...configuredMultiCounts(id)];
   if (actionOf(id, "long").type !== "None") {
     slots.push("long");
@@ -204,6 +217,7 @@ function setClickCount(id: string, count: MappingSlot) {
 }
 
 function selectClickCount(id: string, count: MappingSlot) {
+  if (isVoiceButton(id)) return;
   closeManualShortcutEditor();
   setClickCount(id, count);
   openClickMenuId.value = null;
@@ -290,7 +304,7 @@ const filteredMappingButtons = computed(() => {
   const query = searchQuery.value.trim().toLocaleLowerCase();
   if (!query) return mappingButtons.value;
   return mappingButtons.value.filter((button) => {
-    const gestures = button.multiCounts.map((slot) => SLOT_LABELS.value[slot]).join(" ");
+    const gestures = button.multiCounts.map((slot) => slotLabel(button.id, slot)).join(" ");
     const text = `${button.label} ${button.id} ${actionLabel(button.action)} ${actionLabel(button.selectedAction)} ${gestures}`;
     return text.toLocaleLowerCase().includes(query);
   });
@@ -393,14 +407,12 @@ const voiceBindingNeedsManualCompletion = computed(() => {
   return isLegacyIncompleteCodexShortcut(keys);
 });
 
-const voiceUsesExtendedGestures = computed(() => configuredGestureSlots("mic").length > 0);
-
 function openManualShortcutEditor() {
   const button = selectedMappingButton.value;
   if (!button || !isVoiceButton(button.id)) return;
   manualEditor.value = {
     buttonId: button.id,
-    slot: button.selectedClick,
+    slot: isVoiceButton(button.id) ? 1 : button.selectedClick,
     initialKeys: actionKeys(button.selectedAction),
   };
   openClickMenuId.value = null;
@@ -619,6 +631,7 @@ function applyCapturedKeys(buttonId: string, vks: number[]) {
 }
 
 function applyShortcutKeys(buttonId: string, vks: number[], count: MappingSlot) {
+  const effectiveCount = isVoiceButton(buttonId) ? 1 : count;
   let action: KeyAction;
   if (!vks.length) {
     action = { type: "None", value: null };
@@ -630,16 +643,16 @@ function applyShortcutKeys(buttonId: string, vks: number[], count: MappingSlot) 
   if (!props.config.button_bindings) {
     (props.config as DeviceConfig).button_bindings = {};
   }
-  if (count === "long") {
+  if (effectiveCount === "long") {
     ensureLongPressBindings();
     props.config.long_press_bindings![buttonId] = action;
-  } else if (count === 1) {
+  } else if (effectiveCount === 1) {
     props.config.button_bindings[buttonId] = action;
   } else {
     ensureMultiClickBindings();
     props.config.multi_click_bindings![buttonId] = {
       ...(props.config.multi_click_bindings![buttonId] || {}),
-      [count]: action,
+      [effectiveCount]: action,
     };
   }
   const next: DeviceConfig = {
@@ -648,16 +661,16 @@ function applyShortcutKeys(buttonId: string, vks: number[], count: MappingSlot) 
     long_press_bindings: { ...(props.config.long_press_bindings || {}) },
     multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
   };
-  if ((buttonId === "mic" || buttonId === "voice") && count === 1) {
+  if (isVoiceButton(buttonId)) {
     next.button_bindings.mic = action;
     next.button_bindings.voice = action;
     next.voice_hotkey = vksToHotkeyNames(vks);
   }
-  emit("save", next);
+  emit("save", isVoiceButton(buttonId) ? normalizeVoiceShortcutConfig(next) : next);
 }
 
 function clearBinding(buttonId: string) {
-  const count = selectedClick(buttonId);
+  const count = isVoiceButton(buttonId) ? 1 : selectedClick(buttonId);
   if (count === "long") {
     if (props.config.long_press_bindings) {
       const nextLong = { ...props.config.long_press_bindings };
@@ -677,12 +690,12 @@ function clearBinding(buttonId: string) {
     long_press_bindings: { ...(props.config.long_press_bindings || {}) },
     multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
   };
-  if ((buttonId === "mic" || buttonId === "voice") && count === 1) {
+  if (isVoiceButton(buttonId)) {
     next.button_bindings.mic = { type: "None", value: null };
     next.button_bindings.voice = { type: "None", value: null };
     next.voice_hotkey = [];
   }
-  emit("save", next);
+  emit("save", isVoiceButton(buttonId) ? normalizeVoiceShortcutConfig(next) : next);
 }
 
 function resetVolumeBinding(buttonId: "volume_up" | "volume_down") {
@@ -771,7 +784,7 @@ onUnmounted(() => {
           <span class="selection-key" aria-hidden="true">{{ mappingGlyph(selectedMappingButton.id) }}</span>
           <div class="selection-summary">
             <span>{{ t("mapping.selected") }}</span>
-            <strong>{{ selectedMappingButton.label }}键 · {{ SLOT_LABELS[selectedMappingButton.selectedClick] }}</strong>
+            <strong>{{ selectedMappingButton.label }}键 · {{ slotLabel(selectedMappingButton.id, selectedMappingButton.selectedClick) }}</strong>
           </div>
         </div>
         <span
@@ -799,7 +812,7 @@ onUnmounted(() => {
             :disabled="capturing"
             @click.stop="openManualShortcutEditor"
           >手动组合</button>
-          <div class="click-select-wrap">
+          <div v-if="!isVoiceButton(selectedMappingButton.id)" class="click-select-wrap">
             <button
               type="button"
               class="selection-action"
@@ -862,9 +875,6 @@ onUnmounted(() => {
           检测到旧版 Codex 映射可能缺少主键 D。
           <button type="button" class="selection-action primary" @click.stop="openManualShortcutEditor">手动补全</button>
         </p>
-        <p v-if="isVoiceButton(selectedMappingButton.id) && voiceUsesExtendedGestures" class="capture-hint">
-          已启用语音五档手势；单击、双击、三击、四连击和长按优先于旧的点击/按住触发模式。
-        </p>
         <p v-if="capturing && selectedId === selectedMappingButton.id" class="capture-live">
           {{ liveLabels.length ? liveLabels.join(" + ") + " …" : t("mapping.chooseKey") }}
         </p>
@@ -889,7 +899,7 @@ onUnmounted(() => {
         v-if="manualEditor"
         :initial-keys="manualEditor.initialKeys"
         :button-label="labelOf(manualEditor.buttonId)"
-        :slot-label="SLOT_LABELS[manualEditor.slot]"
+        :slot-label="slotLabel(manualEditor.buttonId, manualEditor.slot)"
         @apply="applyManualShortcut"
         @cancel="closeManualShortcutEditor"
       />
@@ -901,7 +911,7 @@ onUnmounted(() => {
           type="button"
           :class="['mapping-row', { active: selectedId === button.id, hover: hoverId === button.id && selectedId !== button.id }]"
           :aria-pressed="selectedId === button.id"
-          :aria-label="`${button.label}键，${SLOT_LABELS[button.selectedClick]}，当前映射 ${actionLabel(button.selectedAction)}`"
+          :aria-label="`${button.label}键，${slotLabel(button.id, button.selectedClick)}，当前映射 ${actionLabel(button.selectedAction)}`"
           @mouseenter="onCardHover(button.id)"
           @mouseleave="onCardHover(null)"
           @click="selectButton(button.id)"
@@ -909,7 +919,7 @@ onUnmounted(() => {
           <span class="mapping-row-icon">{{ mappingGlyph(button.id) }}</span>
           <span class="mapping-row-copy">
             <strong>{{ button.label }}键</strong>
-            <small>{{ SLOT_LABELS[button.selectedClick] }} {{ t("mapping.trigger") }}<span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>
+            <small>{{ slotLabel(button.id, button.selectedClick) }}<span v-if="!isVoiceButton(button.id)"> {{ t("mapping.trigger") }}</span><span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>
           </span>
           <span class="mapping-row-tail">
             <span :class="['mapping-row-keycap', { unbound: button.selectedAction.type === 'None' }]">{{ actionLabel(button.selectedAction) }}</span>

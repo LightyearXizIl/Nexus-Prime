@@ -236,7 +236,15 @@ impl ConfigManager {
             let mut config: DeviceConfig = serde_json::from_str(&content)
                 .map_err(|e| format!("解析配置失败: {}", e))?;
             if device == "xiaomi" {
-                Self::merge_xiaomi_defaults(&mut config);
+                let removed_voice_gestures = Self::merge_xiaomi_defaults(&mut config);
+                if removed_voice_gestures {
+                    log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
+                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                        "voice_gesture_config_removed",
+                    );
+                    crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                    self.write_device_config(device, &config)?;
+                }
             }
             Ok(config)
         } else {
@@ -262,7 +270,7 @@ impl ConfigManager {
     }
 
     /// 对齐 Python schema 升级：补齐缺失的默认绑定/别名，不覆盖用户已有项
-    fn merge_xiaomi_defaults(config: &mut DeviceConfig) {
+    fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> bool {
         let defaults = Self::default_config_for("xiaomi");
         for (k, v) in defaults.button_aliases {
             config.button_aliases.entry(k).or_insert(v);
@@ -273,16 +281,26 @@ impl ConfigManager {
         if config.voice_hotkey.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
             config.voice_hotkey = defaults.voice_hotkey;
         }
-        Self::sanitize_xiaomi_gesture_bindings(config);
+        Self::sanitize_xiaomi_gesture_bindings(config)
     }
 
-    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) {
+    /// Returns true when legacy voice gestures were removed. Voice is reserved
+    /// for its input-method shortcut and must not enter the general gesture path.
+    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) -> bool {
+        let mut removed_voice_gestures = false;
         let mut sanitized: HashMap<String, HashMap<u8, KeyAction>> = HashMap::new();
         for (button_id, slots) in std::mem::take(&mut config.multi_click_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
             if canonical == "unknown" {
                 if !slots.is_empty() {
                     log::warn!("XIAOMI CONFIG ignored multi-click binding for {button_id}");
+                }
+                continue;
+            }
+            if canonical == "mic" {
+                if !slots.is_empty() {
+                    removed_voice_gestures = true;
+                    log::info!("XIAOMI CONFIG removed multi-click binding for dedicated voice key");
                 }
                 continue;
             }
@@ -311,6 +329,13 @@ impl ConfigManager {
                 log::warn!("XIAOMI CONFIG ignored long-press binding for {button_id}");
                 continue;
             }
+            if canonical == "mic" {
+                if !matches!(action, KeyAction::None) {
+                    removed_voice_gestures = true;
+                    log::info!("XIAOMI CONFIG removed long-press binding for dedicated voice key");
+                }
+                continue;
+            }
             if matches!(action, KeyAction::None) {
                 continue;
             }
@@ -325,20 +350,14 @@ impl ConfigManager {
             );
             config.multi_click_interval_ms = config.multi_click_interval_ms.clamp(150, 800);
         }
+        removed_voice_gestures
     }
 
-    /// 保存设备配置（写临时文件 → sync → rename；并更新缓存）
-    pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
-        let mut config = config.clone();
-        if device == "xiaomi" {
-            Self::sanitize_xiaomi_gesture_bindings(&mut config);
-            crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
-            crate::bridges::xiaomi::key_mapping::sync_voice_from_mic_binding(&mut config);
-        }
+    fn write_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
         let path = self.device_config_path(device);
         let tmp_path = path.with_extension("json.tmp");
 
-        let content = serde_json::to_string_pretty(&config)
+        let content = serde_json::to_string_pretty(config)
             .map_err(|e| format!("序列化配置失败: {}", e))?;
 
         {
@@ -351,6 +370,23 @@ impl ConfigManager {
         }
 
         fs::rename(&tmp_path, &path).map_err(|e| format!("替换配置文件失败: {}", e))?;
+        Ok(())
+    }
+
+    /// 保存设备配置（写临时文件 → sync → rename；并更新缓存）
+    pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
+        let mut config = config.clone();
+        if device == "xiaomi" {
+            let removed_voice_gestures = Self::sanitize_xiaomi_gesture_bindings(&mut config);
+            if removed_voice_gestures {
+                crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                    "voice_gesture_config_removed",
+                );
+            }
+            crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+            crate::bridges::xiaomi::key_mapping::sync_voice_from_mic_binding(&mut config);
+        }
+        self.write_device_config(device, &config)?;
 
         self.device_cache
             .lock()
@@ -557,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn test_long_press_bindings_are_canonicalized_and_sanitized() {
+    fn test_voice_gestures_are_removed_while_other_gestures_are_preserved() {
         let mut config = DeviceConfig::new();
         config
             .long_press_bindings
@@ -571,18 +607,32 @@ mod tests {
         config
             .long_press_bindings
             .insert("menu".into(), KeyAction::None);
+        config
+            .multi_click_bindings
+            .entry("voice".into())
+            .or_default()
+            .insert(2, KeyAction::SingleKey(0xA5));
+        config
+            .multi_click_bindings
+            .entry("menu".into())
+            .or_default()
+            .insert(2, KeyAction::SingleKey(0x41));
 
-        ConfigManager::sanitize_xiaomi_gesture_bindings(&mut config);
+        assert!(ConfigManager::sanitize_xiaomi_gesture_bindings(&mut config));
 
         assert_eq!(
             config.long_press_bindings.get("up"),
             Some(&KeyAction::SingleKey(0x26))
         );
+        assert!(!config.long_press_bindings.contains_key("mic"));
+        assert!(!config.long_press_bindings.contains_key("voice"));
+        assert_eq!(config.long_press_bindings.len(), 1);
+        assert!(!config.multi_click_bindings.contains_key("mic"));
+        assert!(!config.multi_click_bindings.contains_key("voice"));
         assert_eq!(
-            config.long_press_bindings.get("mic"),
-            Some(&KeyAction::SingleKey(0x74))
+            config.multi_click_bindings.get("menu").and_then(|slots| slots.get(&2)),
+            Some(&KeyAction::SingleKey(0x41))
         );
-        assert_eq!(config.long_press_bindings.len(), 2);
     }
 
     #[test]

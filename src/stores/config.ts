@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { DeviceConfig, BridgeType, KeyAction } from "../types";
+import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
 
 export const useConfigStore = defineStore("config", () => {
   const configs = ref<Record<BridgeType, DeviceConfig | null>>({
@@ -23,9 +24,10 @@ export const useConfigStore = defineStore("config", () => {
 
   async function saveConfig(type: BridgeType, config: DeviceConfig) {
     saving.value = true;
+    const normalizedConfig = normalizeVoiceShortcutConfig(config);
     try {
-      await invoke("save_config", { bridgeType: type, config });
-      configs.value[type] = config;
+      await invoke("save_config", { bridgeType: type, config: normalizedConfig });
+      configs.value[type] = normalizedConfig;
     } catch (e) {
       console.error(`Failed to save ${type} config:`, e);
     } finally {

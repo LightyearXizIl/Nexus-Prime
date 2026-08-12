@@ -370,6 +370,10 @@ pub fn canonical_button_id(id: &str) -> &'static str {
     }
 }
 
+fn is_dedicated_voice_button(id: &str) -> bool {
+    matches!(canonical_button_id(id), "mic")
+}
+
 fn lookup_action<'a>(config: &'a DeviceConfig, button_id: &str) -> Option<&'a KeyAction> {
     if let Some(a) = config.button_bindings.get(button_id) {
         return Some(a);
@@ -450,13 +454,6 @@ fn has_long_press(config: &DeviceConfig, button_id: &str) -> bool {
     lookup_long_action(config, button_id).is_some()
 }
 
-/// 语音键仅在配置扩展槽位时进入五档手势模式；否则保留旧的点击/按住模式。
-pub fn voice_uses_extended_gestures(app: &AppHandle) -> bool {
-    load_xiaomi_config(app)
-        .map(|config| has_multi_click(&config, "mic") || has_long_press(&config, "mic"))
-        .unwrap_or(false)
-}
-
 fn has_single_binding(config: &DeviceConfig, button_id: &str) -> bool {
     lookup_action(config, button_id)
         .map(|action| !matches!(action, KeyAction::None))
@@ -497,8 +494,7 @@ fn load_xiaomi_config(app: &AppHandle) -> Option<DeviceConfig> {
 
 /// 按下遥控器物理键后的统一处理
 pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
-    let is_voice = button_id == "voice" || button_id == "mic";
-    if is_voice {
+    if is_dedicated_voice_button(button_id) {
         mark_direct_signal("voice");
         mark_direct_signal("mic");
     }
@@ -518,15 +514,14 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
         return;
     };
 
-    let multi_enabled = has_multi_click(&config, button_id);
-    let long_enabled = has_long_press(&config, button_id);
-
-    // 兼容旧的“点击/按住触发”模式；一旦语音配置了双击、三击、四击或长按，
-    // 则由与其它按键相同的五档手势引擎独占处理。
-    if is_voice && !multi_enabled && !long_enabled {
+    // Voice is always a dedicated input-method shortcut, never a gesture key.
+    if is_dedicated_voice_button(button_id) {
         handle_voice(app, pressed);
         return;
     }
+
+    let multi_enabled = has_multi_click(&config, button_id);
+    let long_enabled = has_long_press(&config, button_id);
 
     // 必须在等待连击/长按之前标记。菜单键原生 VK_APPS 会立即抵达 Windows；
     // 若等到抬起或连击结算，抖音等应用会先收到原生菜单键。
@@ -1758,5 +1753,12 @@ mod gesture_tests {
             names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
             vks
         );
+    }
+
+    #[test]
+    fn voice_aliases_are_always_dedicated_shortcut_buttons() {
+        assert!(is_dedicated_voice_button("mic"));
+        assert!(is_dedicated_voice_button("voice"));
+        assert!(!is_dedicated_voice_button("menu"));
     }
 }
