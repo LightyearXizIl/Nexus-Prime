@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import wechatImeHotkeysImg from "../assets/guides/wechat-ime-hotkeys.png";
+import type { ImePreset } from "../utils/imePreset";
+
+export type { ImePreset } from "../utils/imePreset";
 
 export type ImeProvider = "codex" | "wechat" | "qianwen" | "doubao";
 
@@ -13,7 +16,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  apply: [provider: Exclude<ImeProvider, "doubao">];
+  apply: [preset: ImePreset];
 }>();
 
 const STORAGE_KEY = "nexus-prime.input-method-settings.provider";
@@ -25,7 +28,7 @@ const providers: Array<{ id: ImeProvider; label: string }> = [
 ];
 
 const activeProvider = ref<ImeProvider>("codex");
-const lastAppliedProvider = ref<Exclude<ImeProvider, "doubao"> | null>(null);
+const lastAppliedPreset = ref<ImePreset | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 let lastFocusedElement: HTMLElement | null = null;
 const activeLabel = computed(
@@ -50,9 +53,9 @@ function close() {
   emit("close");
 }
 
-function apply(provider: Exclude<ImeProvider, "doubao">) {
-  lastAppliedProvider.value = provider;
-  emit("apply", provider);
+function apply(preset: ImePreset) {
+  lastAppliedPreset.value = preset;
+  emit("apply", preset);
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -188,7 +191,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
             </button>
-            <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            <span v-if="applyHint && lastAppliedPreset === 'codex'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
         </template>
 
@@ -213,7 +216,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
                 <span>{{ saving ? "正在应用…" : "应用左 Ctrl + 左 Win" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
               </button>
-              <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+              <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </div>
           </aside>
         </template>
@@ -237,21 +240,43 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
             </button>
-            <span v-if="applyHint && activeProvider === lastAppliedProvider" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            <span v-if="applyHint && lastAppliedPreset === 'qianwen'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
         </template>
 
         <template v-else>
-          <div class="ime-panel-copy ime-placeholder-copy">
-            <span class="ime-eyebrow">豆包输入法 · 预告</span>
-            <h4>Windows 版尚未完全发布</h4>
-            <p id="ime-doubao-summary">当前仅提供产品预告，暂时没有可核实的 Windows 语音快捷键。</p>
-            <p class="ime-detail">正式发布后，再根据实际快捷键补充一键映射；现在不会修改你的遥控器语音键配置。</p>
+          <div class="ime-panel-copy">
+            <span class="ime-eyebrow">豆包输入法 · 语音输入</span>
+            <h4>按你的豆包语音模式选择同一套快捷键</h4>
+            <p id="ime-doubao-summary">
+              豆包输入法的长按模式使用 <code>右 Alt</code>；免按模式使用
+              <code>右 Alt + 空格</code>。
+            </p>
+            <p class="ime-detail">
+              免按模式更适合电脑麦克风：小米遥控器松开语音键后会停止传送音频。使用遥控器麦克风时，请选择长按模式。
+            </p>
           </div>
-          <aside class="ime-panel-action ime-placeholder-action">
-            <span class="ime-placeholder-mark" aria-hidden="true">豆</span>
-            <strong>等待 Windows 版发布</strong>
-            <button class="ime-button ime-button--secondary" type="button" disabled>等待 Windows 版发布</button>
+          <aside class="ime-panel-action ime-doubao-actions">
+            <section class="ime-doubao-option">
+              <span class="ime-status">推荐 · 长按模式</span>
+              <strong>右 Alt</strong>
+              <p>触发模式：按住遥控器语音键说话，松开结束。</p>
+              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('doubao-hold')">
+                <span>{{ saving ? "正在应用…" : "应用右 Alt 长按" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              </button>
+              <span v-if="applyHint && lastAppliedPreset === 'doubao-hold'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            </section>
+            <section class="ime-doubao-option">
+              <span class="ime-status">免按模式</span>
+              <strong>右 Alt + 空格</strong>
+              <p>触发模式：短按启动，随后按任意键结束。</p>
+              <button class="ime-button ime-button--secondary" type="button" :disabled="!configReady || saving" @click="apply('doubao-hands-free')">
+                <span>{{ saving ? "正在应用…" : "应用右 Alt + 空格" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              </button>
+              <span v-if="applyHint && lastAppliedPreset === 'doubao-hands-free'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            </section>
           </aside>
         </template>
       </div>
@@ -449,10 +474,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .ime-wechat-guide img { width: 100%; max-height: 255px; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
 .ime-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 
-.ime-placeholder-copy { opacity: .82; }
-.ime-placeholder-action { align-items: center; gap: 12px; text-align: center; }
-.ime-placeholder-mark { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 14px; color: var(--primary); background: var(--surface-selected); font-size: 22px; font-weight: 800; }
-.ime-placeholder-action .ime-button:disabled { opacity: .65; }
+.ime-doubao-actions { gap: 12px; padding: 14px; }
+.ime-doubao-option { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
+.ime-doubao-option strong { color: var(--text); font-size: 16px; }
+.ime-doubao-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.ime-doubao-option .ime-button { width: 100%; margin-top: 2px; }
 
 @media (max-width: 780px) {
   .ime-backdrop { padding: 18px; }

@@ -6,6 +6,7 @@ import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
 import { useI18n } from "vue-i18n";
 import type { BridgeStatus } from "../types";
+import { connectedDeviceName, connectionStatusPresentation } from "../utils/connectionStatus";
 
 const route = useRoute();
 const router = useRouter();
@@ -22,13 +23,14 @@ const isMappingPage = computed(() => route.path === "/xiaomi/mapping");
 const themeToggleLabel = computed(() =>
   theme.effectiveTheme === "dark" ? t("nav.light") : t("nav.dark")
 );
-const deviceLabel = computed(() => device.value.device_name || t("dashboard.device"));
+const devicePresentation = computed(() => connectionStatusPresentation(device.value.status));
+const deviceLabel = computed(() => {
+  const name = connectedDeviceName(device.value.status, device.value.device_name);
+  return name ?? t(device.value.status === "Connecting" ? "status.connectingDevice" : "status.deviceNotConnected");
+});
 
 function statusClass(status: BridgeStatus): string {
-  if (status === "Connected") return "connected";
-  if (status === "Connecting") return "connecting";
-  if (status.startsWith("Error")) return "error";
-  return "disconnected";
+  return connectionStatusPresentation(status).tone;
 }
 
 function navigate(path: "/xiaomi" | "/xiaomi/mapping" | "/settings") {
@@ -59,7 +61,7 @@ function toggleTheme() {
       </div>
       <div
         :class="['device-chip', statusClass(device.status)]"
-        :title="bridge.statusLabel(device.status)"
+        :title="devicePresentation.detail || bridge.statusLabel(device.status)"
       >
         <span class="status-dot" aria-hidden="true" />
         <span>{{ deviceLabel }}</span>
@@ -208,7 +210,11 @@ function toggleTheme() {
 }
 .device-chip.connected .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.11); }
 .device-chip.connecting .status-dot { background: var(--warning); }
-.device-chip.error .status-dot { background: var(--danger); }
+.device-chip.connecting { color: var(--warning-text); }
+.device-chip.disconnected,
+.device-chip.error { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 35%, var(--nav-segment-border)); background: color-mix(in srgb, var(--danger) 13%, var(--nav-segment-bg)); }
+.device-chip.disconnected .status-dot,
+.device-chip.error .status-dot { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 13%, transparent); }
 
 .main-nav {
   gap: 3px;

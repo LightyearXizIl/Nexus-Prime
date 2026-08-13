@@ -12,7 +12,7 @@ function mountDialog() {
 describe("InputMethodSettingsDialog", () => {
   beforeEach(() => window.localStorage.clear());
 
-  it("applies each supported preset without offering an action for the placeholder", async () => {
+  it("applies every provider preset, including both Doubao voice modes", async () => {
     const wrapper = mountDialog();
     const tabs = wrapper.findAll('[role="tab"]');
     expect(tabs).toHaveLength(4);
@@ -26,8 +26,30 @@ describe("InputMethodSettingsDialog", () => {
     expect(wrapper.emitted("apply")).toEqual([["wechat"], ["qianwen"]]);
 
     await tabs[3].trigger("click");
-    expect(wrapper.get("button.ime-button--secondary[disabled]").text()).toContain("等待");
-    expect(wrapper.findAll("button.ime-button--primary")).toHaveLength(0);
+    expect(wrapper.text()).toContain("电脑麦克风");
+    const doubaoButtons = wrapper.findAll(".ime-doubao-option button");
+    expect(doubaoButtons).toHaveLength(2);
+    await doubaoButtons[0].trigger("click");
+    await doubaoButtons[1].trigger("click");
+    expect(wrapper.emitted("apply")).toEqual([
+      ["wechat"],
+      ["qianwen"],
+      ["doubao-hold"],
+      ["doubao-hands-free"],
+    ]);
+  });
+
+  it("disables both Doubao actions while saving and scopes the success hint to the selected mode", async () => {
+    const wrapper = mountDialog();
+    await wrapper.findAll('[role="tab"]')[3].trigger("click");
+    await wrapper.setProps({ saving: true });
+    expect(wrapper.findAll(".ime-doubao-option button:disabled")).toHaveLength(2);
+
+    await wrapper.setProps({ saving: false, applyHint: "已应用：豆包长按模式" });
+    await wrapper.findAll(".ime-doubao-option button")[0].trigger("click");
+    expect(wrapper.findAll(".ime-doubao-option .ime-apply-hint")).toHaveLength(1);
+    await wrapper.findAll(".ime-doubao-option button")[1].trigger("click");
+    expect(wrapper.findAll(".ime-doubao-option .ime-apply-hint")).toHaveLength(1);
   });
 
   it("cycles tab selection with the keyboard and restores focus after closing", async () => {

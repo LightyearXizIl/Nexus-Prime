@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { BridgeStatus } from "../types";
 import { useI18n } from "vue-i18n";
+import { connectionStatusPresentation } from "../utils/connectionStatus";
 
 const { t } = useI18n();
 
@@ -13,25 +15,9 @@ const emit = defineEmits<{
   toggle: [];
 }>();
 
-function statusText(status: BridgeStatus): string {
-  if (status.startsWith("Error|")) {
-    return status.slice("Error|".length) || t("status.error");
-  }
-  if (status.startsWith("Error")) return status;
-  const map: Record<string, string> = {
-    Disconnected: t("status.disconnected"),
-    Connecting: t("status.connecting"),
-    Connected: t("status.connected"),
-  };
-  return map[status] || status;
-}
-
-function statusClass(status: BridgeStatus): string {
-  if (status === "Connected") return "connected";
-  if (status === "Connecting") return "connecting";
-  if (status.startsWith("Error")) return "error";
-  return "disconnected";
-}
+const presentation = computed(() => connectionStatusPresentation(props.status));
+const statusText = computed(() => t(presentation.value.labelKey));
+const statusDetail = computed(() => presentation.value.detail);
 
 function buttonText(status: BridgeStatus): string {
   if (status === "Connected") return t("status.disconnect");
@@ -42,9 +28,13 @@ function buttonText(status: BridgeStatus): string {
 
 <template>
   <div class="status-capsule device-status">
-    <span :class="['status-indicator', statusClass(status)]">
+    <span
+      :class="['status-indicator', presentation.tone]"
+      :title="statusDetail || undefined"
+      :aria-label="statusDetail ? `${statusText}：${statusDetail}` : statusText"
+    >
       <span class="dot"></span>
-      {{ statusText(status) }}
+      {{ statusText }}
     </span>
     <button
       :class="['connection-action', status === 'Connected' ? 'disconnect' : 'connect']"
@@ -97,8 +87,8 @@ function buttonText(status: BridgeStatus): string {
   animation: pulse 1s ease-in-out infinite;
 }
 
-.status-indicator.disconnected { color: var(--text-secondary); }
-.status-indicator.disconnected .dot { background: var(--text-muted); }
+.status-indicator.disconnected { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
+.status-indicator.disconnected .dot { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
 
 .status-indicator.error { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
 .status-indicator.error .dot { background: var(--danger); }

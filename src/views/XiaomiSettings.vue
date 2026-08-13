@@ -7,11 +7,16 @@ import { useBridgeStore } from "../stores/bridge";
 import { useConfigStore } from "../stores/config";
 import DeviceStatus from "../components/DeviceStatus.vue";
 import KeyMappingStage from "../components/KeyMappingStage.vue";
-import type { DeviceConfig, KeyAction } from "../types";
+import type { DeviceConfig } from "../types";
 import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
+import {
+  connectedDeviceName,
+  connectionStatusPresentation,
+} from "../utils/connectionStatus";
 import InputMethodSettingsDialog, {
-  type ImeProvider,
+  type ImePreset,
 } from "../components/InputMethodSettingsDialog.vue";
+import { applyImePresetConfig, IME_PRESETS } from "../utils/imePreset";
 import remoteProductImage from "../assets/xiaomi-remote-cutout.png";
 import { useI18n } from "vue-i18n";
 
@@ -415,14 +420,22 @@ const host = ref<HostStatus>({
 
 /** C1：桥接在跑且 ATVV 未订阅 → 音频信号旁红字 */
 const showAtvvFailLabel = computed(
-  () => Boolean(host.value.bridge_alive) && !(voiceMeter.value.atvvOk || host.value.atvv_ok)
+  () => isDeviceConnected.value && Boolean(host.value.bridge_alive) && !(voiceMeter.value.atvvOk || host.value.atvv_ok)
 );
 
-const deviceDisplayName = computed(() => device.value.device_name || t("dashboard.device"));
+const connectionPresentation = computed(() => connectionStatusPresentation(device.value.status));
+const isDeviceConnected = computed(() => connectionPresentation.value.tone === "connected");
+const connectedName = computed(() => connectedDeviceName(device.value.status, device.value.device_name));
+const deviceDisplayName = computed(() => connectedName.value ?? t("status.noDeviceConnected"));
+const deviceModelLabel = computed(() => {
+  if (connectedName.value) return t("status.connected");
+  return t(connectionPresentation.value.labelKey);
+});
 const batteryLabel = computed(() =>
   device.value.battery_level != null ? `${device.value.battery_level}%` : "—"
 );
 const audioSignalLabel = computed(() => {
+  if (!isDeviceConnected.value) return "—";
   if (showAtvvFailLabel.value) return t("dashboard.atvvDisconnected");
   if (voiceMeter.value.bleState === "receiving") return t("dashboard.receiving");
   if (voiceMeter.value.bleState === "session") return t("dashboard.voiceSession");
@@ -445,12 +458,8 @@ function hostItemState(item: HostStatusItem) {
   return t(item.tone === "ok" ? "dashboard.listening" : "dashboard.notStarted");
 }
 
-function bridgeStatusLabel(status: string) {
-  if (status.startsWith("Error|")) return status.slice("Error|".length) || t("status.error");
-  if (status.startsWith("Error")) return status;
-  if (status === "Connected") return t("status.connected");
-  if (status === "Connecting") return t("status.connecting");
-  return t("status.disconnected");
+function bridgeStatusLabel() {
+  return t(connectionPresentation.value.labelKey);
 }
 
 function activityTone(text: string): string {
@@ -503,98 +512,17 @@ async function persistVoiceSettings() {
   await configStore.saveConfig(type, normalizeVoiceShortcutConfig(config.value));
 }
 
-/** 微信输入法「启动语音输入」常用组合：左 Ctrl + 左 Win */
-const WECHAT_VOICE_VKS = [0xa2, 0x5b];
-/** 千问输入法 Windows 默认：按住右 Alt 语音输入 */
-const QIANWEN_VOICE_VKS = [0xa5];
-/** Codex「按住进行听写」快捷键：左 Ctrl + 左 Shift + D */
-const CODEX_VOICE_VKS = [0xa2, 0xa0, 0x44];
-
-async function applyCodexVoiceMapping() {
+async function applyImePreset(preset: ImePreset) {
   if (!config.value) return;
-  const action: KeyAction = { type: "ComboKey", value: [...CODEX_VOICE_VKS] };
-  const bindings = {
-    ...config.value.button_bindings,
-    mic: action,
-    voice: action,
-  };
-  const next: DeviceConfig = normalizeVoiceShortcutConfig({
-    ...config.value,
-    button_bindings: bindings,
-    voice_hotkey: ["leftctrl", "leftshift", "d"],
-    voice_shortcut_enabled: true,
-    trigger_mode: "Hold",
-  });
-  config.value.button_bindings = bindings;
-  config.value.voice_hotkey = next.voice_hotkey;
-  config.value.voice_shortcut_enabled = true;
-  config.value.trigger_mode = "Hold";
+  const definition = IME_PRESETS[preset];
+  const next = applyImePresetConfig(config.value, preset);
+  Object.assign(config.value, next);
   await configStore.saveConfig(type, next);
-  setupApplyHint.value = "已应用：语音键 = 左 Ctrl + 左 Shift + D，触发模式 = 按住";
-  prependLog("设置建议：已快速应用 Codex 按住听写映射（左 Ctrl + 左 Shift + D）");
+  setupApplyHint.value = definition.applyHint;
+  prependLog(definition.logMessage);
   window.setTimeout(() => {
-    if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
+    if (setupApplyHint.value === definition.applyHint) setupApplyHint.value = "";
   }, 4000);
-}
-
-async function applyWechatVoiceMapping() {
-  if (!config.value) return;
-  const action: KeyAction = { type: "ComboKey", value: [...WECHAT_VOICE_VKS] };
-  const bindings = {
-    ...config.value.button_bindings,
-    mic: action,
-    voice: action,
-  };
-  const next: DeviceConfig = normalizeVoiceShortcutConfig({
-    ...config.value,
-    button_bindings: bindings,
-    voice_hotkey: ["leftctrl", "leftwin"],
-    voice_shortcut_enabled: true,
-    trigger_mode: "Hold",
-  });
-  config.value.button_bindings = bindings;
-  config.value.voice_hotkey = next.voice_hotkey;
-  config.value.voice_shortcut_enabled = true;
-  config.value.trigger_mode = "Hold";
-  await configStore.saveConfig(type, next);
-  setupApplyHint.value = "已应用：语音键 = 左 Ctrl + 左 Win，触发模式 = 按住";
-  prependLog("设置建议：已快速应用微信按住说话映射（左 Ctrl + 左 Win）");
-  window.setTimeout(() => {
-    if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
-  }, 4000);
-}
-
-async function applyQianwenVoiceMapping() {
-  if (!config.value) return;
-  const action: KeyAction = { type: "SingleKey", value: QIANWEN_VOICE_VKS[0] };
-  const bindings = {
-    ...config.value.button_bindings,
-    mic: action,
-    voice: action,
-  };
-  const next: DeviceConfig = normalizeVoiceShortcutConfig({
-    ...config.value,
-    button_bindings: bindings,
-    voice_hotkey: ["rightalt"],
-    voice_shortcut_enabled: true,
-    trigger_mode: "Hold",
-  });
-  config.value.button_bindings = bindings;
-  config.value.voice_hotkey = next.voice_hotkey;
-  config.value.voice_shortcut_enabled = true;
-  config.value.trigger_mode = "Hold";
-  await configStore.saveConfig(type, next);
-  setupApplyHint.value = "已应用：语音键 = 右 Alt，触发模式 = 按住";
-  prependLog("设置建议：已快速应用千问按住说话映射（右 Alt）");
-  window.setTimeout(() => {
-    if (setupApplyHint.value.startsWith("已应用")) setupApplyHint.value = "";
-  }, 4000);
-}
-
-async function applyImePreset(provider: Exclude<ImeProvider, "doubao">) {
-  if (provider === "codex") await applyCodexVoiceMapping();
-  if (provider === "wechat") await applyWechatVoiceMapping();
-  if (provider === "qianwen") await applyQianwenVoiceMapping();
 }
 
 let hostPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -1128,14 +1056,14 @@ watch(
 
     <div v-if="!isMappingPage" class="overview-row">
       <div class="overview-left">
-        <section class="card device-overview">
+        <section :class="['card', 'device-overview', `connection-${connectionPresentation.tone}`]">
           <div class="device-primary">
             <div class="remote-product-frame" aria-hidden="true">
               <img class="remote-product-image" :src="remoteProductImage" alt="" />
             </div>
             <div class="device-meta">
-              <div class="model"><span class="status-dot" />{{ deviceDisplayName }}</div>
-              <h2>{{ t("dashboard.device") }}</h2>
+              <div :class="['model', connectionPresentation.tone]"><span class="status-dot" />{{ deviceModelLabel }}</div>
+              <h2>{{ deviceDisplayName }}</h2>
               <div class="tag-row">
                 <span class="mini-tag">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -1159,7 +1087,7 @@ watch(
                     <path d="M5.9.7 1.2 7h3L3.7 13.3 8.9 6.4H5.7L5.9.7Z" />
                   </svg>
                 </span>
-                {{ batteryLabel }}
+                {{ isDeviceConnected ? batteryLabel : "—" }}
               </strong>
             </div>
             <div
@@ -1184,11 +1112,11 @@ watch(
             </div>
             <div class="data-item">
               <span class="label">{{ t("dashboard.address") }}</span>
-              <strong>{{ device.device_address || "—" }}</strong>
+              <strong>{{ isDeviceConnected ? (device.device_address || "—") : "—" }}</strong>
             </div>
             <div class="data-item">
               <span class="label">{{ t("dashboard.synced") }}</span>
-              <strong>{{ device.status === "Disconnected" ? "—" : t("dashboard.justNow") }}</strong>
+              <strong>{{ isDeviceConnected ? t("dashboard.justNow") : "—" }}</strong>
             </div>
           </div>
         </section>
@@ -1528,8 +1456,12 @@ watch(
             <p class="mapping-subtitle">{{ t("mapping.subtitle") }}</p>
           </div>
           <div class="status-capsule mapping-head-actions" :aria-label="t('mapping.title')">
-            <span class="mapping-status-pill" :style="{ '--mapping-status': bridge.statusColor(device.status) }">
-              <span aria-hidden="true"></span>{{ bridgeStatusLabel(device.status) }}
+            <span
+              :class="['mapping-status-pill', connectionPresentation.tone]"
+              :title="connectionPresentation.detail || undefined"
+              :aria-label="connectionPresentation.detail ? `${bridgeStatusLabel()}：${connectionPresentation.detail}` : bridgeStatusLabel()"
+            >
+              <span aria-hidden="true"></span>{{ bridgeStatusLabel() }}
             </span>
             <span class="mapping-save-state" :class="{ saving: configStore.saving }">
               <span aria-hidden="true">{{ configStore.saving ? '↻' : '✓' }}</span>
@@ -2570,7 +2502,13 @@ watch(
 
 .device-meta { min-width: 0; }
 .model { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
-.status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.1); }
+.model .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.model.connected { color: var(--success-text); }
+.model.connected .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.1); }
+.model.connecting { color: var(--warning-text); }
+.model.connecting .status-dot { background: var(--warning); }
+.model.error,
+.model.disconnected { color: var(--danger-text); }
 .device-meta h2 { margin: 8px 0 13px; color: var(--text); font-size: 20px; font-weight: 760; letter-spacing: -0.25px; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .mini-tag { display: inline-flex; align-items: center; gap: 5px; min-height: 25px; padding: 0 8px; border-radius: 6px; color: var(--text-secondary); background: var(--surface-muted); font-size: 11px; font-weight: 650; }
@@ -2643,7 +2581,7 @@ watch(
 .log-aside { position: static; min-height: 0; }
 .activity-card { display: flex; min-height: 100%; flex-direction: column; padding: 20px; overflow: hidden; }
 .live { display: inline-flex; align-items: center; gap: 6px; color: var(--success) !important; font-weight: 700; }
-.live .status-dot { width: 6px; height: 6px; box-shadow: 0 0 0 3px rgba(24, 185, 121, 0.08); }
+.live .status-dot { width: 6px; height: 6px; background: var(--success); box-shadow: 0 0 0 3px rgba(24, 185, 121, 0.08); }
 .timeline { position: relative; flex: 1; min-height: 0; padding: 1px 0 0 18px; }
 .timeline::before { position: absolute; top: 6px; bottom: 3px; left: 4px; width: 1px; background: var(--border); content: ""; }
 .activity-event { position: relative; min-height: 58px; padding: 0 0 13px; }
@@ -2677,14 +2615,18 @@ watch(
 
 /* 按键映射页：沿用首页的控制台层级，但让编辑区保持专注。 */
 .mapping-page { width: 100%; max-width: 1260px; margin: 0 auto; }
-.mapping-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin: 0 0 18px; }
+.mapping-page-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin: 0 0 18px; }
+.mapping-page-head > div:first-child { min-width: 0; }
 .mapping-page-head h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 780; letter-spacing: -0.65px; }
-.mapping-subtitle { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; }
-.mapping-head-actions { justify-content: flex-end; flex-wrap: nowrap; }
+.mapping-subtitle { max-width: 54ch; margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.mapping-head-actions { justify-self: end; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
 .mapping-status-pill,
 .mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 650; white-space: nowrap; }
-.mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: var(--mapping-status); box-shadow: 0 0 0 3px color-mix(in srgb, var(--mapping-status) 12%, transparent); }
-.mapping-status-pill { color: var(--success-text); background: var(--success-bg); }
+.mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
+.mapping-status-pill.connected { color: var(--success-text); background: var(--success-bg); }
+.mapping-status-pill.connecting { color: var(--warning-text); background: var(--warning-bg); }
+.mapping-status-pill.disconnected,
+.mapping-status-pill.error { color: var(--danger-text); background: var(--danger-bg); }
 .mapping-save-state { color: var(--success-text); background: var(--success-bg); }
 .mapping-save-state.saving { color: var(--primary-dark); background: var(--info-bg); }
 .mapping-save-state.saving > span { animation: mapping-saving-spin 1s linear infinite; }
@@ -2706,8 +2648,8 @@ watch(
 }
 
 @media (max-width: 760px) {
-  .mapping-page-head { align-items: flex-start; flex-direction: column; margin-bottom: 14px; }
-  .mapping-head-actions { justify-content: flex-start; }
+  .mapping-page-head { grid-template-columns: minmax(0, 1fr); align-items: start; margin-bottom: 14px; }
+  .mapping-head-actions { justify-self: start; justify-content: flex-start; }
   .mapping-page-head h1 { font-size: 24px; }
   .mapping-layout { padding: 11px; }
   .mapping-layout .voice-toolbar { grid-template-columns: 1fr; }

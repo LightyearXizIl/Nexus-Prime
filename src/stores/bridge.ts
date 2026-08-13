@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import type { DeviceInfo, BridgeType, BridgeStatus } from "../types";
+import { connectionStatusPresentation } from "../utils/connectionStatus";
 
 export const useBridgeStore = defineStore("bridge", () => {
   const devices = ref<Record<BridgeType, DeviceInfo>>({
@@ -76,10 +77,10 @@ export const useBridgeStore = defineStore("bridge", () => {
   }
 
   function statusColor(status: BridgeStatus): string {
-    if (status === "Connected") return "var(--success)";
-    if (status === "Connecting") return "var(--warning)";
-    if (status.startsWith("Error")) return "var(--danger)";
-    return "var(--text-secondary)";
+    const tone = connectionStatusPresentation(status).tone;
+    if (tone === "connected") return "var(--success)";
+    if (tone === "connecting") return "var(--warning)";
+    return "var(--danger)";
   }
 
   return {

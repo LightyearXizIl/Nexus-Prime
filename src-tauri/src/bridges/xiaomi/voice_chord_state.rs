@@ -85,4 +85,22 @@ mod tests {
         );
         assert_eq!(attempts, 2);
     }
+
+    #[test]
+    fn right_alt_space_releases_the_original_chord_once() {
+        let keys = vec![0xA5, 0x20];
+        let mut state = VoiceChordState::default();
+        let mut calls = Vec::new();
+
+        assert!(state.press_with(&keys, |injected, up| {
+            calls.push((injected.to_vec(), up));
+            true
+        }));
+        assert_eq!(state.release_with(|injected, up| {
+            calls.push((injected.to_vec(), up));
+            true
+        }), Some((keys.clone(), true)));
+        assert!(state.release_with(|_injected, _up| true).is_none());
+        assert_eq!(calls, vec![(keys.clone(), false), (keys, true)]);
+    }
 }

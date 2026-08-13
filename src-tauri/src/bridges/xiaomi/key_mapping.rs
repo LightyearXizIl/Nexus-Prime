@@ -1694,7 +1694,7 @@ mod gesture_tests {
 
         assert!(!is_system_alt_tab_chord(&[0x09]));
         assert!(!is_system_alt_tab_chord(&[0x11, 0x09]));
-        assert!(!is_system_alt_tab_chord(&[0xA4, 0x20]));
+        assert!(!is_system_alt_tab_chord(&[0xA5, 0x20]));
     }
 
     #[test]
@@ -1719,7 +1719,7 @@ mod gesture_tests {
         assert!(!should_try_virtual_hid(&[0xA4, 0x10, 0x09]));
         assert!(!should_try_virtual_hid(&[0x11, 0xA5, 0x09]));
 
-        assert!(!should_try_virtual_hid(&[0xA4, 0x20]));
+        assert!(!should_try_virtual_hid(&[0xA5, 0x20]));
         assert!(!should_try_virtual_hid(&[0xA5, 0x53]));
         assert!(should_try_virtual_hid(&[0x11, 0x09]));
     }
@@ -1727,7 +1727,7 @@ mod gesture_tests {
     #[test]
     fn non_tab_alt_chords_keep_window_message_route() {
         assert_eq!(
-            fallback_injection_route(&[0xA4, 0x20]),
+            fallback_injection_route(&[0xA5, 0x20]),
             FallbackInjectionRoute::AltWindowMessage
         );
         assert_eq!(

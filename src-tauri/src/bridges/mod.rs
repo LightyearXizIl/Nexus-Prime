@@ -102,9 +102,9 @@ impl BridgeState {
             BridgeType::Xiaomi => &self.xiaomi,
         };
         let mut guard = info.write();
-        let is_disconnected = status == BridgeStatus::Disconnected;
+        let should_clear_device = status != BridgeStatus::Connected;
         guard.status = status;
-        if is_disconnected {
+        if should_clear_device {
             guard.device_name = None;
             guard.device_address = None;
             guard.battery_level = None;
@@ -143,6 +143,36 @@ impl BridgeState {
     pub fn get_info(&self, bridge_type: BridgeType) -> DeviceInfo {
         match bridge_type {
             BridgeType::Xiaomi => self.xiaomi.read().clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_connected_statuses_clear_stale_device_metadata() {
+        for status in [
+            BridgeStatus::Connecting,
+            BridgeStatus::Disconnected,
+            BridgeStatus::Error("BLE open failed".into()),
+        ] {
+            let state = BridgeState::new();
+            state.update_device_info(
+                BridgeType::Xiaomi,
+                Some("小米蓝牙遥控器 2 Pro".into()),
+                Some("00:11:22:33:44:55".into()),
+                Some(80),
+            );
+            state.update_battery_charging(BridgeType::Xiaomi, Some(true));
+            state.update_status(BridgeType::Xiaomi, status);
+
+            let info = state.get_info(BridgeType::Xiaomi);
+            assert!(info.device_name.is_none());
+            assert!(info.device_address.is_none());
+            assert!(info.battery_level.is_none());
+            assert!(info.battery_charging.is_none());
         }
     }
 }
