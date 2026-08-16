@@ -45,6 +45,8 @@ export function keyLabel(vk: number): string {
     0x08: "Backspace",
     0x09: "Tab",
     0x0d: "Enter",
+    0x13: "Pause",
+    0x14: "CapsLock",
     0x1b: "Esc",
     0x20: "Space",
     0x21: "Page Up",
@@ -55,8 +57,28 @@ export function keyLabel(vk: number): string {
     0x26: "上方向键",
     0x27: "右方向键",
     0x28: "下方向键",
+    0x2c: "PrtSc",
     0x2d: "Insert",
     0x2e: "Delete",
+    0x5d: "Menu",
+    0x90: "NumLock",
+    0x91: "ScrLk",
+    0x6a: "Num *",
+    0x6b: "Num +",
+    0x6d: "Num -",
+    0x6e: "Num .",
+    0x6f: "Num /",
+    0xba: ";",
+    0xbb: "=",
+    0xbc: ",",
+    0xbd: "-",
+    0xbe: ".",
+    0xbf: "/",
+    0xc0: "`",
+    0xdb: "[",
+    0xdc: "\\",
+    0xdd: "]",
+    0xde: "'",
     0xad: "静音",
     0xae: "音量 -",
     0xaf: "音量 +",
@@ -80,9 +102,18 @@ export function keyLabel(vk: number): string {
   if (map[vk]) return map[vk];
   if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk);
   if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30);
-  if (vk >= 0x70 && vk <= 0x7b) return `F${vk - 0x6f}`;
+  if (vk >= 0x60 && vk <= 0x69) return `Num ${vk - 0x60}`;
+  if (vk >= 0x70 && vk <= 0x87) return `F${vk - 0x6f}`;
   return `VK_0x${vk.toString(16).toUpperCase()}`;
 }
+
+/** 录入 UI 常驻媒体/系统键兜底（对齐上游 MEDIA_PICK_KEYS，标签复用 keyLabel） */
+export const MEDIA_PICK_KEYS: { vk: number; label: string }[] = [
+  { vk: 0xaf, label: keyLabel(0xaf) },
+  { vk: 0xae, label: keyLabel(0xae) },
+  { vk: 0xad, label: keyLabel(0xad) },
+  { vk: 0xb7, label: keyLabel(0xb7) },
+];
 
 /**
  * Keep the user-visible shortcut semantically unique. A generic Ctrl/Shift/Alt
@@ -154,12 +185,20 @@ export function vksToHotkeyNames(vks: readonly number[]): string[] {
     0xa4: "leftalt", 0xa5: "rightalt", 0x12: "alt",
     0x5b: "leftwin", 0x5c: "rightwin",
     0x08: "backspace", 0x09: "tab", 0x0d: "enter", 0x1b: "esc", 0x20: "space",
+    0x13: "pause", 0x14: "capslock", 0x2c: "printscreen", 0x5d: "menu",
+    0x90: "numlock", 0x91: "scrolllock",
+    0x6a: "numpadmult", 0x6b: "numpadadd", 0x6d: "numpadsubtract",
+    0x6e: "numpaddecimal", 0x6f: "numpaddivide",
+    0xba: "semicolon", 0xbb: "equal", 0xbc: "comma", 0xbd: "minus",
+    0xbe: "period", 0xbf: "slash", 0xc0: "grave",
+    0xdb: "bracketleft", 0xdc: "backslash", 0xdd: "bracketright", 0xde: "apostrophe",
   };
   return normalizeShortcutVks(vks).map((vk) => {
     if (map[vk]) return map[vk];
     if (vk >= 0x41 && vk <= 0x5a) return String.fromCharCode(vk).toLowerCase();
     if (vk >= 0x30 && vk <= 0x39) return String(vk - 0x30);
-    if (vk >= 0x70 && vk <= 0x7b) return `f${vk - 0x6f}`;
+    if (vk >= 0x60 && vk <= 0x69) return `numpad${vk - 0x60}`;
+    if (vk >= 0x70 && vk <= 0x87) return `f${vk - 0x6f}`;
     return `vk_${vk.toString(16)}`;
   });
 }

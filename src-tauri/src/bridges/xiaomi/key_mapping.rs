@@ -1152,13 +1152,36 @@ fn vks_to_hotkey_names(vks: &[u16]) -> Vec<String> {
             0x0D => "enter".into(),
             0x08 => "backspace".into(),
             0x1B => "esc".into(),
+            0x13 => "pause".into(),
+            0x14 => "capslock".into(),
+            0x2C => "printscreen".into(),
+            0x5D => "menu".into(),
+            0x90 => "numlock".into(),
+            0x91 => "scrolllock".into(),
+            0x6A => "numpadmult".into(),
+            0x6B => "numpadadd".into(),
+            0x6D => "numpadsubtract".into(),
+            0x6E => "numpaddecimal".into(),
+            0x6F => "numpaddivide".into(),
+            0xBA => "semicolon".into(),
+            0xBB => "equal".into(),
+            0xBC => "comma".into(),
+            0xBD => "minus".into(),
+            0xBE => "period".into(),
+            0xBF => "slash".into(),
+            0xC0 => "grave".into(),
+            0xDB => "bracketleft".into(),
+            0xDC => "backslash".into(),
+            0xDD => "bracketright".into(),
+            0xDE => "apostrophe".into(),
+            other if (0x60..=0x69).contains(&other) => format!("numpad{}", other - 0x60),
             other if (0x41..=0x5A).contains(&other) => {
                 ((other as u8) as char).to_ascii_lowercase().to_string()
             }
             other if (0x30..=0x39).contains(&other) => {
                 char::from(b'0' + (other - 0x30) as u8).to_string()
             }
-            other if (0x70..=0x7B).contains(&other) => format!("f{}", other - 0x6F),
+            other if (0x70..=0x87).contains(&other) => format!("f{}", other - 0x6F),
             other => format!("vk_{other:02x}"),
         })
         .collect()
@@ -1187,9 +1210,24 @@ fn name_to_vk(name: &str) -> Option<u16> {
     if let Some(hex) = n.strip_prefix("vk_") {
         return u16::from_str_radix(hex, 16).ok();
     }
+    if let Some(digits) = n.strip_prefix("numpad") {
+        if let Ok(d) = digits.parse::<u16>() {
+            if d <= 9 {
+                return Some(0x60 + d);
+            }
+        }
+        return match n.as_str() {
+            "numpadmult" => Some(0x6A),
+            "numpadadd" => Some(0x6B),
+            "numpadsubtract" => Some(0x6D),
+            "numpaddecimal" => Some(0x6E),
+            "numpaddivide" => Some(0x6F),
+            _ => None,
+        };
+    }
     if let Some(number) = n.strip_prefix('f') {
         if let Ok(number) = number.parse::<u16>() {
-            if (1..=12).contains(&number) {
+            if (1..=24).contains(&number) {
                 return Some(0x6F + number);
             }
         }
@@ -1198,6 +1236,8 @@ fn name_to_vk(name: &str) -> Option<u16> {
         "backspace" => Some(0x08),
         "tab" => Some(0x09),
         "enter" | "return" => Some(0x0D),
+        "pause" => Some(0x13),
+        "capslock" => Some(0x14),
         "shift" => Some(0x10),
         "ctrl" | "control" => Some(0x11),
         "alt" => Some(0x12),
@@ -1208,6 +1248,10 @@ fn name_to_vk(name: &str) -> Option<u16> {
         "right" => Some(0x27),
         "down" => Some(0x28),
         "home" => Some(0x24),
+        "printscreen" | "prtsc" => Some(0x2C),
+        "menu" | "apps" => Some(0x5D),
+        "numlock" => Some(0x90),
+        "scrolllock" | "scrlk" => Some(0x91),
         "f10" => Some(0x79),
         "d" => Some(0x44),
         "win" | "leftwin" | "lwin" => Some(0x5B),
@@ -1221,6 +1265,17 @@ fn name_to_vk(name: &str) -> Option<u16> {
         "volume_mute" | "volumemute" => Some(0xAD),
         "volume_down" | "volumedown" => Some(0xAE),
         "volume_up" | "volumeup" => Some(0xAF),
+        "semicolon" => Some(0xBA),
+        "equal" => Some(0xBB),
+        "comma" => Some(0xBC),
+        "minus" => Some(0xBD),
+        "period" => Some(0xBE),
+        "slash" => Some(0xBF),
+        "grave" => Some(0xC0),
+        "bracketleft" => Some(0xDB),
+        "backslash" => Some(0xDC),
+        "bracketright" => Some(0xDD),
+        "apostrophe" => Some(0xDE),
         other if other.len() == 1 => {
             let c = other.chars().next()?.to_ascii_uppercase();
             if c.is_ascii_alphanumeric() {
@@ -1749,6 +1804,24 @@ mod gesture_tests {
         let vks = vec![0xA2, 0x08, 0x74, 0x25];
         let names = vks_to_hotkey_names(&vks);
         assert_eq!(names, vec!["leftctrl", "backspace", "f5", "vk_25"]);
+        assert_eq!(
+            names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
+            vks
+        );
+    }
+
+    #[test]
+    fn extended_keys_round_trip() {
+        let vks = vec![0x60, 0x69, 0x6A, 0x6B, 0x6D, 0x6E, 0x6F, 0x13, 0x14, 0x2C, 0x5D, 0x90, 0x91, 0x7C, 0x87, 0xBA, 0xDE];
+        let names = vks_to_hotkey_names(&vks);
+        assert_eq!(
+            names,
+            vec![
+                "numpad0", "numpad9", "numpadmult", "numpadadd", "numpadsubtract",
+                "numpaddecimal", "numpaddivide", "pause", "capslock", "printscreen",
+                "menu", "numlock", "scrolllock", "f13", "f24", "semicolon", "apostrophe",
+            ]
+        );
         assert_eq!(
             names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
             vks

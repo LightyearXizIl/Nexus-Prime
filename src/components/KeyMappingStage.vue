@@ -15,6 +15,7 @@ import VoiceShortcutComposer from "./VoiceShortcutComposer.vue";
 import {
   isLegacyIncompleteCodexShortcut,
   keyLabel,
+  MEDIA_PICK_KEYS,
   vksToHotkeyNames,
 } from "../utils/shortcut";
 import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
@@ -626,6 +627,14 @@ async function cancelCapture() {
   }
 }
 
+/** 媒体键兜底：直接设置单键（仅非语音键调用；先结束吞键会话再应用，走既有保存链路） */
+async function pickMediaKey(vk: number) {
+  const buttonId = selectedId.value;
+  if (!buttonId) return;
+  await cancelCapture();
+  applyCapturedKeys(buttonId, [vk]);
+}
+
 function applyCapturedKeys(buttonId: string, vks: number[]) {
   applyShortcutKeys(buttonId, vks, selectedClick(buttonId));
 }
@@ -878,6 +887,23 @@ onUnmounted(() => {
         <p v-if="capturing && selectedId === selectedMappingButton.id" class="capture-live">
           {{ liveLabels.length ? liveLabels.join(" + ") + " …" : t("mapping.chooseKey") }}
         </p>
+        <div
+          v-if="capturing && selectedId === selectedMappingButton.id && !isVoiceButton(selectedMappingButton.id)"
+          class="media-pick"
+          role="group"
+          aria-label="媒体键直接设置"
+        >
+          <span class="media-pick-label">媒体键录不上？直接设置为：</span>
+          <button
+            v-for="k in MEDIA_PICK_KEYS"
+            :key="k.vk"
+            type="button"
+            class="selection-action"
+            @click.stop="pickMediaKey(k.vk)"
+          >
+            {{ k.label }}
+          </button>
+        </div>
         <p v-if="captureError && selectedId === selectedMappingButton.id" class="capture-err">{{ captureError }}</p>
       </div>
       <div v-else class="mapping-selection-empty">{{ t("mapping.noSelection") }}</div>
@@ -1726,7 +1752,22 @@ onUnmounted(() => {
 .mapping-row-copy small { color: var(--text-secondary); font-size: 10px; line-height: 1.35; }
 .mapping-row-tail { min-width: 0; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; color: var(--text-muted); }
 .mapping-row-tail > svg { width: 14px; height: 14px; flex: 0 0 auto; }
-.mapping-row-keycap { min-width: 44px; max-width: 104px; min-height: 27px; border-radius: 7px; font-size: 10px; box-shadow: inset 0 -1px 0 var(--border-strong), 0 1px 2px color-mix(in srgb, var(--text) 7%, transparent); }
+.mapping-row-keycap {
+  min-width: 44px;
+  max-width: min(200px, 100%);
+  min-height: 27px;
+  border-radius: 7px;
+  font-size: 10px;
+  /* 组合键过长时自适应换行，避免截断/遮挡 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.45;
+  box-shadow: inset 0 -1px 0 var(--border-strong), 0 1px 2px color-mix(in srgb, var(--text) 7%, transparent);
+}
+.media-pick { display: flex; width: 100%; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 0; padding-top: 8px; border-top: 1px solid var(--info-border); }
+.media-pick-label { color: var(--text-secondary); font-size: 11px; }
 .mapping-row.active .mapping-row-keycap { border-color: color-mix(in srgb, var(--primary) 44%, var(--border)); }
 .mapping-search-empty { display: grid; min-height: 220px; place-items: center; color: var(--text-secondary); font-size: 13px; }
 .mapping-list-note { display: flex; align-items: flex-start; gap: 7px; margin: 14px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }

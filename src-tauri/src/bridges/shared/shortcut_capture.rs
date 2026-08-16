@@ -110,6 +110,8 @@ pub fn vk_to_label(vk: u32) -> String {
         0x08 => "Backspace".into(),
         0x09 => "Tab".into(),
         0x0D => "Enter".into(),
+        0x13 => "Pause".into(),
+        0x14 => "CapsLock".into(),
         0x1B => "Esc".into(),
         0x20 => "Space".into(),
         0x21 => "PageUp".into(),
@@ -120,7 +122,29 @@ pub fn vk_to_label(vk: u32) -> String {
         0x26 => "↑".into(),
         0x27 => "→".into(),
         0x28 => "↓".into(),
+        0x2C => "PrtSc".into(),
+        0x2D => "Insert".into(),
         0x2E => "Delete".into(),
+        0x5D => "Menu".into(),
+        0x90 => "NumLock".into(),
+        0x91 => "ScrLk".into(),
+        0x60..=0x69 => format!("Num{}", vk - 0x60),
+        0x6A => "Num*".into(),
+        0x6B => "Num+".into(),
+        0x6D => "Num-".into(),
+        0x6E => "Num.".into(),
+        0x6F => "Num/".into(),
+        0xBA => ";".into(),
+        0xBB => "=".into(),
+        0xBC => ",".into(),
+        0xBD => "-".into(),
+        0xBE => ".".into(),
+        0xBF => "/".into(),
+        0xC0 => "`".into(),
+        0xDB => "[".into(),
+        0xDC => "\\".into(),
+        0xDD => "]".into(),
+        0xDE => "'".into(),
         0xAD => "Mute".into(),
         0xAE => "Vol-".into(),
         0xAF => "Vol+".into(),
@@ -139,7 +163,7 @@ pub fn vk_to_label(vk: u32) -> String {
         0xB5 => "Media player".into(),
         0xB6 => "App 1".into(),
         0xB7 => "App 2".into(),
-        0x70..=0x7B => format!("F{}", vk - 0x6F),
+        0x70..=0x87 => format!("F{}", vk - 0x6F),
         0x30..=0x39 => format!("{}", vk - 0x30),
         0x41..=0x5A => ((vk as u8) as char).to_string(),
         _ => format!("VK_0x{vk:02X}"),
@@ -510,6 +534,32 @@ mod tests {
         );
         assert_eq!(vk_to_label(VK_LCONTROL), "左 Ctrl");
         assert_eq!(vk_to_label(VK_LWIN), "左 Win");
+    }
+
+    #[test]
+    fn test_extended_key_labels() {
+        assert_eq!(vk_to_label(0x13), "Pause");
+        assert_eq!(vk_to_label(0x14), "CapsLock");
+        assert_eq!(vk_to_label(0x2C), "PrtSc");
+        assert_eq!(vk_to_label(0x2D), "Insert");
+        assert_eq!(vk_to_label(0x5D), "Menu");
+        assert_eq!(vk_to_label(0x90), "NumLock");
+        assert_eq!(vk_to_label(0x91), "ScrLk");
+        assert_eq!(vk_to_label(0x60), "Num0");
+        assert_eq!(vk_to_label(0x69), "Num9");
+        assert_eq!(vk_to_label(0x6A), "Num*");
+        assert_eq!(vk_to_label(0x6B), "Num+");
+        assert_eq!(vk_to_label(0x6D), "Num-");
+        assert_eq!(vk_to_label(0x6E), "Num.");
+        assert_eq!(vk_to_label(0x6F), "Num/");
+        assert_eq!(vk_to_label(0x7C), "F13");
+        assert_eq!(vk_to_label(0x87), "F24");
+        assert_eq!(vk_to_label(0xBA), ";");
+        assert_eq!(vk_to_label(0xDE), "'");
+        // 本地既有标签不受影响
+        assert_eq!(vk_to_label(0xAD), "Mute");
+        assert_eq!(vk_to_label(0xA6), "Browser back");
+        assert_eq!(vk_to_label(0x7B), "F12");
     }
 
     #[test]
