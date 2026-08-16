@@ -1,112 +1,77 @@
 # 交接记录
 
-更新时间：2026-08-09
+更新时间：2026-08-16
 
 ## 本次范围
 
-修复小米遥控器语音键在断线、重连或重启桥接后偶发失效，以及异常情况下 Ctrl、Win 等修饰键可能残留的问题；并在“小米设置 → 输入法设置”中加入千问输入法语音预设。
-
-本次未修改版本号、未生成安装包、未发布 Release。
+对照上游原创仓库 [mwlt/Voice_VibeCoding](https://github.com/mwlt/Voice_VibeCoding)（v1.3.9 键盘适配）为按键录入补充特殊键与小键盘支持（纯增量，不改变本地既有行为）；修复映射列表快捷键胶囊长组合键截断遮挡问题；新增媒体键录入兜底按钮。已完成 **v0.1.8** 发布（GitHub Release + 安装包）。
 
 ## 已完成的实现
 
-### 语音输入会话与重连
+### 特殊键与小键盘键名适配（对照上游 v1.3.9）
 
-- 将“桥接 worker 正在运行”与“当前设备输入会话有效”分离；连接会话使用递增令牌，过期回调不能结束新会话。
-- 断线、停止桥接、手动重启、托盘断开、应用退出和订阅清理都会先取消当前会话，等待 GATT、VK 轮询和 Raw Input 工作线程退出后才允许建立下一会话。
-- 手动启动与重启通过同一生命周期锁串行化，避免连续点击产生多个连接循环或多组 ATVV 重试。
-- ATVV 改为每会话单路订阅；首次订阅完成后再启动 HID Tap。遇到 `AccessDenied` 时暂停 HID Tap，执行一次受控重订阅，成功后恢复。
-
-涉及文件：
-
-- `src-tauri/src/bridges/xiaomi/connect.rs`
-- `src-tauri/src/bridges/xiaomi/session_state.rs`
-- `src-tauri/src/bridges/xiaomi/key_log.rs`
-- `src-tauri/src/bridges/xiaomi/input_session.rs`
-- `src-tauri/src/bridges/xiaomi/raw_mapping.rs`
-- `src-tauri/src/ipc/commands.rs`
-- `src-tauri/src/ipc/tray.rs`
-- `src-tauri/src/lib.rs`
-
-### 语音快捷键安全释放
-
-- 用实际已按下的虚拟键列表取代单一的“语音键已按住”布尔状态；释放时使用按下当时保存的组合，不读取可能已变更的配置。
-- 所有清理路径均反向释放保存的组合、取消手势定时器、清除 F5 抑制状态、停止语音会话和电平状态。
-- `SendInput` 现在检查实际发送数量：按下部分失败立即补偿释放；抬键失败只进行一次有限重试并记录错误。
-- 新增平台无关的组合键状态机测试，覆盖正常按下/松开、断线强制松开、配置变化、部分注入失败和重复松开的幂等性。
+- 上游对比结论：上游的"键盘适配"核心是键名标签表扩展（`vkDisplay.ts` + `vk_to_label`）+ 录入规则变更。本地只按"纯增量"原则移植标签部分；**未移植**上游的行为改动：主键按下即提交的录入规则、`feed_capture_key` 非阻塞喂键、`ShortcutPollSnapshot` 轮询进度、媒体键 Consumer HID 直提。原因：本地"全部抬起提交"规则有测试覆盖且刻意为之，行为改动需单独评审。
+- Rust `vk_to_label` 新增：Pause、CapsLock、PrtSc、Insert、Menu、NumLock、ScrLk、Num0-9、Num\*、Num+、Num-、Num.、Num/、标点（`; = , - . / \` [ \ ] '`）、F13-F24。本地既有标签（媒体键英文、浏览器键、左右修饰键）全部保留，未照搬上游的删除。
+- 前端 `src/utils/shortcut.ts` 的 `keyLabel` / `vksToHotkeyNames` 同步扩展，与 Rust 名字完全一致。
+- `voice_hotkey` 配置：新键存盘使用可读名字（`numpad0`、`pause`、`capslock`、`printscreen`、`f13`、`semicolon` 等）；`name_to_vk` 保留 `vk_xx` 十六进制兼容（旧配置照常回读），f 解析从 f1-12 扩到 f1-24。
+- **未动**：`KeyBindingEditor.vue` 的独立 `vkName` 表（该组件未被任何文件引用，遗留组件，若重新启用需补同步）。
 
 涉及文件：
 
+- `src-tauri/src/bridges/shared/shortcut_capture.rs`
 - `src-tauri/src/bridges/xiaomi/key_mapping.rs`
-- `src-tauri/src/bridges/xiaomi/voice_chord_state.rs`
-- `src-tauri/examples/voice_chord_state_check.rs`
+- `src/utils/shortcut.ts`
 
-### 千问输入法预设
+### 映射列表快捷键自适应换行
 
-“小米设置 → 输入法设置”已新增“千问输入法”卡片和“快速设置语音键映射为：右 Alt”按钮。
+- `KeyMappingStage.vue` 的 `.mapping-row-keycap`（映射列表每行的快捷键胶囊）：由 `white-space: nowrap + text-overflow: ellipsis + max-width: 104px` 改为 `white-space: normal + overflow-wrap: anywhere + max-width: min(200px, 100%) + line-height: 1.45`，长组合键（如"左Ctrl + 左Alt + Shift + F13"）完整换行显示，不再截断遮挡。
+- 选中卡片 `.mapping-selection-card .mapping-keycap` 原本已支持换行（`overflow-wrap: anywhere`），未改。
 
-- 快速设置会同时写入 `mic`、`voice`、`voice_hotkey`，并启用“按住”触发模式。
-- 千问输入法 Windows 默认按住右 Alt 录音、松开上屏；若用户在千问中修改了快捷键，需要在 Nexus Prime 的按键映射中录入同一组合。
-- 右 Alt 为 `VK_RMENU (0xA5)`，现有 `SendInput` 路径已将其作为扩展键处理。
+### 媒体键录入兜底
 
-涉及文件：
-
-- `src/views/XiaomiSettings.vue`
-
-### 电池充电动效
-
-- 后端在原有电量百分比外，读取标准 BLE Battery Service 1.1 的可选 `Battery Level Status` 特征（`0x2B05`）。只有该特征明确报告“充电中”时，才将充电状态传给前端；不根据电量上升或下降推测充电状态。
-- 电池图标不增加文字。充电中时，图标内显示闪电，并以从左到右的流光表达正在充电；启用“减少动态效果”时保留静态闪电与柔和高光。
-- 若遥控器仅提供旧版 `Battery Level`（`0x2A19`）而未提供充电状态，则继续显示原有绿色电量图标。此前日志只确认了 `0x2A19` 电量百分比，尚未从真机确认 `0x2B05` 是否可用。
+- 背景：媒体键（音量、静音等）是 WM_APPCOMMAND 消息，系统键盘 LL 钩子收不到，无法"按真实键盘录入"；本地发送侧本就完整支持（`hid_injector.rs` consumer usage）。
+- 实现：录入中且**非语音键**时显示"媒体键录不上？直接设置为：音量+/音量-/静音/应用 2"按钮；点击后先 `cancelCapture()` 结束吞键会话，再走既有 `applyCapturedKeys` 保存链路（emit save）。
+- 对齐上游 `MEDIA_PICK_KEYS`，常量导出在 `src/utils/shortcut.ts`。
 
 涉及文件：
 
-- `src-tauri/src/bridges/mod.rs`
-- `src-tauri/src/bridges/xiaomi/input_session.rs`
-- `src/types/index.ts`
-- `src/stores/bridge.ts`
-- `src/views/XiaomiSettings.vue`
+- `src/components/KeyMappingStage.vue`
+- `src/utils/shortcut.ts`
+
+### 发布 v0.1.8
+
+- 版本 bump：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` → 0.1.8；`CHANGELOG.md` 新增 [0.1.8] 条目。
+- 提交 `50790c2`（feat: release v0.1.8），tag `v0.1.8` 已推送。
+- GitHub Release：https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.1.8 ，唯一资产 `Nexus.Prime_0.1.8_x64-setup.exe`（与 `update.rs` 的 `expected_asset_name` 完全匹配）。
+- **发布方式备忘**（gh CLI 未登录时）：用 git credential manager 中存储的 OAuth token（`gho_` 前缀，owner 的凭据）通过 `GH_TOKEN` 环境变量执行 `gh release create` / `gh release upload`。注意该 token 缺少 `read:org` scope，无法通过 `gh auth login --with-token` 登录 gh CLI，但直接以 `GH_TOKEN` 方式调用 Release API 可行。token 只走管道，勿打印进日志。
 
 ## 验证记录
 
 | 检查 | 结果 | 说明 |
 | --- | --- | --- |
-| `npm.cmd run build` | 通过 | 2026-08-09；包含 Vue 类型检查和 Vite 生产构建。 |
-| `git diff --check` | 通过 | 语音修复与千问预设改动提交前无空白错误。 |
-| `cargo check --workspace` | 通过 | 在语音生命周期改动完成后执行。 |
-| `cargo test --example voice_chord_state_check` | 曾通过（5/5） | 覆盖新的组合键状态机；同样早于后述 `build.rs` 变更。 |
-| `cargo test --lib bridges::xiaomi::input_session::tests` | 通过（6/6） | 2026-08-09；包括 Battery Level Status 充电位解析和截断数据拒绝测试。 |
-| `cargo test --workspace` | 65 通过、1 失败、1 忽略 | 2026-08-09；测试可正常启动，唯一失败项详见“当前阻塞”。 |
-| 遥控器实机验收 | 未执行 | 需要连接真实小米遥控器、VB-CABLE 与目标输入法后完成。 |
+| `cargo test` | 通过（73/73） | 2026-08-16；含新增 `test_extended_key_labels`、`extended_keys_round_trip`。 |
+| `npm.cmd test`（vitest） | 通过（22/22） | 9 个测试文件全部通过。 |
+| `vue-tsc --noEmit` | 通过 | 与 build 脚本一致的严格类型检查。 |
+| `npm.cmd run tauri:build` | 通过 | NSIS exe 12.8 MB + MSI 14.9 MB。 |
+| Release 资产匹配 | 通过 | `Nexus.Prime_0.1.8_x64-setup.exe` 与 `update.rs` 期望一致。 |
+| 遥控器实机验收 | 未执行 | 需要连接真实小米遥控器与目标输入法。 |
 
 ## 当前阻塞
 
-2026-08-09，`cargo test --workspace` 已能完整启动；此前的 `TaskDialogIndirect` 入口点缺失和重复资源链接错误没有复现。
+无已知阻塞。
 
-当前唯一失败项为 `config::manager::tests::test_long_press_bindings_are_canonicalized_and_sanitized`：`src-tauri/src/config/manager.rs:581` 断言期望 1，实际为 2。本次未修改该文件，需由后续处理人单独确认期望的长按映射去重规则；在此之前不能把完整 Rust 测试标记为通过。
-
-修复后依次运行：
-
-```powershell
-cd src-tauri
-cargo test --workspace
-cargo test --example voice_chord_state_check
-cd ..
-npm.cmd run build
-git diff --check
-```
+> 注：2026-08-09 交接记录中的唯一失败项 `config::manager::tests::test_long_press_bindings_are_canonicalized_and_sanitized` 在本次全量 `cargo test` 中已通过（73/73），说明该问题已随 v0.1.7 迭代修复。
 
 ## 待完成的实机验收
 
-1. 冷启动后分别短按、长按语音键各 20 次，确认每次松开后都能再次唤起。
-2. 按住语音键时关闭遥控器或制造断线，确认日志出现强制抬键，且 Ctrl、Win、Shift、Alt 没有残留。
-3. 连续完成至少 10 次休眠、断线和自动重连，确认日志没有并行会话或交错的多组 `attempt=0`。
-4. 连续点击“重启按键桥接”，确认只有一个重启流程。
-5. 首次制造 ATVV `AccessDenied` 后，确认单一恢复流程能够恢复，且不会无限重试。
-6. 在千问输入法中完成一次“快速设置右 Alt”，连续按住/松开遥控器语音键，确认文字能重复上屏；若千问快捷键已被自定义，改用相同的自定义映射测试。
+1. 真实键盘录入特殊键与小键盘（CapsLock、NumLock、ScrLk、小键盘 0-9、运算键、标点、F13-F24），确认捕获与显示正确、`voice_hotkey` 保存为可读名字。
+2. 媒体键兜底按钮：点击后绑定立即保存、录入状态退出、系统不再吞键。
+3. 长组合键（如 左Ctrl + 左Alt + Shift + F13）在映射列表完整换行显示，窄窗口下无遮挡。
+4. 语音键回归：语音快捷键绑定、触发模式（按住/点按）、输入法预设、断线重连后语音唤起——本次零改动，但建议按 2026-08-09 交接的清单回归一遍。
 
 ## 工作区注意事项
 
-- 当前基线提交为 `34dd71d feat: release v0.1.2`。本次未提交的文件仅为电池充电状态/动效相关的 5 个源码文件和本文档。
-- 语音键生命周期与千问输入法预设已包含在当前基线中；提交或回退本次电池改动时，仍需按功能审阅。
-- 不要使用 `git reset --hard`、`git checkout --` 等方式清理当前工作区，以免丢失本次语音修复内容。
+- 当前基线提交 `50790c2`（v0.1.8）；工作区已干净（HANDOFF 与 CHANGELOG 日期修正提交后）。
+- 上游 `mwlt/Voice_VibeCoding` 的完整对比结论（键名表、录入规则差异、Alt+Tab 机制本地独有、上游 hanvon/T1 设备桥等）见会话记录；后续若移植更多上游功能（录入提交规则、poll 进度、`feed_capture_key`、媒体键 Consumer 直提），需单独评审，勿直接覆盖本地行为。
+- `KeyBindingEditor.vue` 为未被引用的遗留组件，其 `vkName` 键名表未同步新键；若将来重新启用需补同步。
+- 语音键（mic/voice）绑定、`voice_hotkey` 同步、`voice_chord_state.rs`、`session_state.rs` 本次零改动；媒体键兜底按钮在模板层用 `!isVoiceButton()` 排除语音键。
