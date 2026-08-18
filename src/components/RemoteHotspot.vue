@@ -80,9 +80,7 @@ defineExpose({ keyEl, rootRef });
   position: relative;
   width: 84px;
   flex: 0 0 auto;
-  height: 0;
-  padding-top: 20.9%; /* aspect-ratio 兜底（Chromium <88）：401/1919 ≈ 20.9% */
-  aspect-ratio: 401 / 1919;
+  height: 402px; /* 84 × 1919/401（aspect-ratio 401/1919）；固定尺寸，全版本引擎一致 */
   user-select: none;
 }
 
