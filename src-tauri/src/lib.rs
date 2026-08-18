@@ -87,6 +87,34 @@ pub fn run() {
             bridges::xiaomi::conflict_guard::bind_app(app.handle().clone());
 
             if let Some(window) = app.get_webview_window("main") {
+                // WIN10 兼容：默认窗口 1080x814 可能超出小屏/高缩放的工作区
+                // （如 1366x768@125% 逻辑工作区约 1093x614），底部内容会被裁出屏幕。
+                // 启动时按主显示器工作区 clamp 窗口尺寸与最小尺寸，并重新居中。
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let scale = monitor.scale_factor();
+                    let size = monitor.size(); // 物理像素
+                    let work_w = size.width as f64 / scale;
+                    let work_h = size.height as f64 / scale;
+                    let cap_w = work_w * 0.96; // 留 4% 边距，避免贴边
+                    let cap_h = work_h * 0.96;
+                    let (default_w, default_h) = (1080.0f64, 814.0f64);
+                    let (min_w, min_h) = (880.0f64, 720.0f64);
+                    let clamp_w = default_w.min(cap_w);
+                    let clamp_h = default_h.min(cap_h);
+                    if default_w > cap_w || default_h > cap_h {
+                        let _ = window.set_size(tauri::LogicalSize::new(clamp_w, clamp_h));
+                        let _ = window.center();
+                        log::info!(
+                            "WINDOW size clamped to {clamp_w:.0}x{clamp_h:.0} (work {work_w:.0}x{work_h:.0} scale={scale})"
+                        );
+                    }
+                    // 最小尺寸同样不能超过工作区，否则用户缩小时仍会溢出
+                    let _ = window.set_min_size(Some(tauri::LogicalSize::new(
+                        min_w.min(cap_w),
+                        min_h.min(cap_h),
+                    )));
+                }
+
                 // 关闭窗口：minimize_to_tray=true 则隐藏；false 则真正退出
                 let app_handle = app.handle().clone();
                 let window_ = window.clone();

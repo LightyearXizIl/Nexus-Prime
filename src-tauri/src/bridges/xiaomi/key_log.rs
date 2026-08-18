@@ -51,6 +51,28 @@ impl KeyLoggerSession {
     }
 }
 
+/// HID Tap 附着等待决策：返回 true 表示可以附着。
+///
+/// - `atvv_ok`：ATVV 已订阅成功 → 立即附着（无 WUDFHost 竞争）
+/// - `diagnosed_failed`：ATVV 首轮诊断已失败（进入降级模式）→ 等 `fail_grace` 宽限窗口
+///   让后台重试，仍失败才附着（此时蓝牙栈已稳定，竞争风险低）
+/// - `hard_limit`：硬上限兜底，防止 ATVV 长时间无结论时返回/音量键永久不可用
+fn tap_attach_due(
+    atvv_ok: bool,
+    diagnosed_failed: bool,
+    elapsed: Duration,
+    fail_grace: Duration,
+    hard_limit: Duration,
+) -> bool {
+    if atvv_ok {
+        return true;
+    }
+    if elapsed >= hard_limit {
+        return true;
+    }
+    diagnosed_failed && elapsed >= fail_grace
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct XiaomiKeyEvent {
@@ -207,24 +229,48 @@ pub fn start_key_logger(
                 .ok()
         };
 
-        // 初始八轮订阅约需四秒；留出六秒窗口后才让 Tap 附着。
+        // HID Tap 附着时机以 ATVV 订阅结果为准（避免并发抢占 WUDFHost）：
+        // - ATVV 订阅成功 → 立即附着（无竞争）
+        // - ATVV 首轮诊断失败 → 给后台重试 15 秒窗口；仍失败才附着（此时蓝牙栈已稳定，
+        //   竞争风险低；返回/音量优先于语音的妥协，ATVV 后台仍继续重试）
+        // - 30 秒硬上限兜底；会话结束即放弃
         let wait_start = Instant::now();
+        let atvv_fail_grace = Duration::from_secs(15);
         while runtime.session_active(session_id)
-            && !crate::bridges::xiaomi::connect::atvv_subscribed()
-            && wait_start.elapsed() < Duration::from_secs(6)
+            && !tap_attach_due(
+                crate::bridges::xiaomi::connect::atvv_subscribed(),
+                crate::bridges::xiaomi::connect::atvv_diagnosed_failed(),
+                wait_start.elapsed(),
+                atvv_fail_grace,
+                Duration::from_secs(30),
+            )
         {
             std::thread::sleep(Duration::from_millis(50));
         }
+        if runtime.session_active(session_id)
+            && !crate::bridges::xiaomi::connect::atvv_subscribed()
+            && wait_start.elapsed() >= Duration::from_secs(30)
+        {
+            log::warn!("XIAOMI HID TAP attach wait timeout (ATVV not ready)");
+        }
 
+        let atvv_ok = crate::bridges::xiaomi::connect::atvv_subscribed();
         let mut tap_started = false;
         if runtime.session_active(session_id) && tap_enabled {
-            let app2 = app.clone();
-            let gate2 = Arc::clone(&gate);
-            tap_started = ensure_started(app2, gate2);
-            if !tap_started {
+            if atvv_ok {
+                let app2 = app.clone();
+                let gate2 = Arc::clone(&gate);
+                tap_started = ensure_started(app2, gate2);
+                if !tap_started {
+                    emit_message(
+                        &app,
+                        "HID Tap 未启动：返回/音量键不可用（请确认 Frida Gadget 资源）",
+                    );
+                }
+            } else {
                 emit_message(
                     &app,
-                    "HID Tap 未启动：返回/音量键不可用（请确认 Frida Gadget 资源）",
+                    "ATVV 语音通道未就绪，暂不附着 HID Tap（语音优先）；返回/音量走系统原生键",
                 );
             }
         } else if !tap_enabled {
@@ -252,9 +298,16 @@ pub fn start_key_logger(
                 .ok()
         };
 
+        let mode_desc = if tap_started {
+            "HID-Tap 返回/音量 + ATVV 语音/音频".to_string()
+        } else if atvv_ok {
+            "ATVV 语音/音频".to_string()
+        } else {
+            "Battery/ATVV 后台重试中（语音与返回/音量受限）".to_string()
+        };
         emit_message(
             &app,
-            &format!("按键监听已启动 session={session_id}（HID-Tap 返回/音量 + ATVV 语音/音频）"),
+            &format!("按键监听已启动 session={session_id}（{mode_desc}）"),
         );
         return KeyLoggerSession {
             input,
@@ -311,5 +364,39 @@ fn windows_vk_poll_logger(
             prev.insert(vk, down);
         }
         std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GRACE: Duration = Duration::from_secs(15);
+    const HARD: Duration = Duration::from_secs(30);
+
+    #[test]
+    fn tap_attach_due_attaches_immediately_when_atvv_ok() {
+        assert!(tap_attach_due(true, false, Duration::ZERO, GRACE, HARD));
+        assert!(tap_attach_due(true, true, Duration::ZERO, GRACE, HARD));
+    }
+
+    #[test]
+    fn tap_attach_due_waits_while_atvv_diagnosing() {
+        // 诊断中（未失败也未成功）：即使超过 hard_limit 之前的任意时刻都不附着
+        assert!(!tap_attach_due(false, false, Duration::from_secs(10), GRACE, HARD));
+    }
+
+    #[test]
+    fn tap_attach_due_grace_window_after_diagnosed_failure() {
+        // 诊断失败后 15 秒宽限窗口内不附着（给 ATVV 后台重试机会）
+        assert!(!tap_attach_due(false, true, Duration::from_secs(14), GRACE, HARD));
+        // 超过宽限窗口才附着（返回/音量优先于语音的妥协）
+        assert!(tap_attach_due(false, true, Duration::from_secs(15), GRACE, HARD));
+    }
+
+    #[test]
+    fn tap_attach_due_hard_limit_always_attaches() {
+        assert!(tap_attach_due(false, false, HARD, GRACE, HARD));
+        assert!(tap_attach_due(false, false, Duration::from_secs(31), GRACE, HARD));
     }
 }

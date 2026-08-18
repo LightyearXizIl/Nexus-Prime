@@ -93,12 +93,12 @@ function closeOnBackdrop() {
 </template>
 
 <style scoped>
-.update-backdrop { position: fixed; inset: 0; z-index: 4100; display: grid; place-items: center; padding: 22px; background: var(--overlay); }
+.update-backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 4100; display: grid; place-items: center; padding: 22px; background: var(--overlay); }
 .update-dialog { width: min(450px, 100%); padding: 23px 24px 20px; border: 1px solid var(--border); border-radius: 18px; color: var(--text); background: var(--card-bg); box-shadow: var(--dialog-shadow); outline: none; }
 .update-accent { display: flex; justify-content: center; gap: 6px; margin-bottom: 19px; }
 .update-accent span, .update-accent i { display: block; width: 26px; height: 3px; border-radius: 99px; background: var(--border-strong); }
-.update-accent span { background: var(--success); box-shadow: 0 0 10px color-mix(in srgb, var(--success) 55%, transparent); }
-.update-icon { display: grid; width: 48px; height: 48px; margin: 0 auto 15px; place-items: center; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); border-radius: 15px; color: var(--primary); background: var(--surface-selected); box-shadow: 0 9px 20px color-mix(in srgb, var(--primary) 15%, transparent); }
+.update-accent span { background: var(--success); box-shadow: 0 0 10px rgb(var(--success-rgb) / 55%); box-shadow: 0 0 10px color-mix(in srgb, var(--success) 55%, transparent); }
+.update-icon { display: grid; width: 48px; height: 48px; margin: 0 auto 15px; place-items: center; border: 1px solid var(--border); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); border-radius: 15px; color: var(--primary); background: var(--surface-selected); box-shadow: 0 9px 20px rgb(var(--primary-rgb) / 15%); box-shadow: 0 9px 20px color-mix(in srgb, var(--primary) 15%, transparent); }
 .update-icon svg { width: 24px; height: 24px; }
 .update-dialog h2 { margin: 0; color: var(--text); font-size: 20px; letter-spacing: -.35px; text-align: center; }
 .update-subtitle { max-width: 340px; margin: 8px auto 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; text-align: center; }
@@ -108,7 +108,7 @@ function closeOnBackdrop() {
 .version-compare strong { color: var(--primary-dark); background: var(--surface-selected); }
 .version-compare b { color: var(--text-muted); }
 .release-notes { margin: 0 0 16px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
-.release-notes > p { margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; font-weight: 760; }
+.release-notes > p { margin: 0; padding: 9px 12px; border-bottom: 1px solid var(--border); color: var(--text); font-size: 12px; font-weight: 700; }
 .release-notes pre { max-height: 185px; margin: 0; padding: 11px 12px; overflow: auto; color: var(--text-secondary); font: inherit; font-size: 11px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .progress-wrap { margin: 22px 0 20px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
 .progress-label { display: flex; justify-content: space-between; margin-bottom: 9px; font-size: 12px; }.progress-label span { color: var(--text-secondary); }.progress-label strong { color: var(--primary); }
@@ -116,7 +116,7 @@ function closeOnBackdrop() {
 .progress-wrap > p { margin: 8px 0 0; color: var(--text-muted); font-size: 11px; text-align: right; }
 .update-error { margin: -6px 0 13px; color: var(--danger); font-size: 11px; line-height: 1.45; }
 .update-actions { display: flex; justify-content: flex-end; gap: 8px; }.single-action { justify-content: center; }
-.update-btn { min-height: 34px; padding: 0 14px; border: 1px solid transparent; border-radius: 8px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; transition: transform .16s ease, background .16s ease; }.update-btn:hover { transform: translateY(-1px); }
-.update-btn-ghost { color: var(--text); border-color: var(--border); background: var(--card-bg); }.update-btn-ghost:hover { background: var(--surface-hover); }.update-btn-primary { color: #fff; background: var(--primary); box-shadow: 0 5px 13px color-mix(in srgb, var(--primary) 24%, transparent); }.update-btn-primary:hover { background: var(--primary-dark); }
+.update-btn { min-height: 34px; padding: 0 14px; border: 1px solid transparent; border-radius: 8px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: transform .16s ease, background .16s ease; }.update-btn:hover { transform: translateY(-1px); }
+.update-btn-ghost { color: var(--text); border-color: var(--border); background: var(--card-bg); }.update-btn-ghost:hover { background: var(--surface-hover); }.update-btn-primary { color: #fff; background: var(--primary); box-shadow: 0 5px 13px rgb(var(--primary-rgb) / 24%); box-shadow: 0 5px 13px color-mix(in srgb, var(--primary) 24%, transparent); }.update-btn-primary:hover { background: var(--primary-dark); }
 @media (max-width: 480px) { .update-dialog { padding: 20px 17px 16px; border-radius: 15px; }.release-notes pre { max-height: 155px; } }
 </style>

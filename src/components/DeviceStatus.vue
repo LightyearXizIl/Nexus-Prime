@@ -65,7 +65,7 @@ function buttonText(status: BridgeStatus): string {
   border-radius: 999px;
   background: transparent;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -88,7 +88,7 @@ function buttonText(status: BridgeStatus): string {
 }
 
 .status-indicator.disconnected { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
-.status-indicator.disconnected .dot { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.status-indicator.disconnected .dot { background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 12%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
 
 .status-indicator.error { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
 .status-indicator.error .dot { background: var(--danger); }
@@ -104,7 +104,7 @@ function buttonText(status: BridgeStatus): string {
   border: 0;
   border-radius: 999px;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
@@ -131,6 +131,7 @@ function buttonText(status: BridgeStatus): string {
 }
 
 .disconnect:hover:not(:disabled) {
+  background: var(--danger-bg);
   background: color-mix(in srgb, var(--danger) 18%, var(--danger-bg));
 }
 </style>

@@ -566,7 +566,7 @@ function vkName(vk: number): string {
 
 .capture-overlay {
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   background: var(--overlay);
   display: flex;
   align-items: center;

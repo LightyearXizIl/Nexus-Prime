@@ -179,7 +179,7 @@ function toggleTheme() {
 .brand-version { position: relative; margin-top: 5px; padding: 0; border: 0; color: var(--nav-muted); background: transparent; font-size: 10px; text-align: left; }
 .brand-version.is-update { color: var(--primary); cursor: pointer; }
 .brand-version.is-update:hover { color: var(--primary-dark); }
-.brand-version.is-update i { position: absolute; right: -8px; bottom: -3px; width: 6px; height: 6px; border: 1px solid var(--nav); border-radius: 50%; background: var(--danger); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 65%, transparent); }
+.brand-version.is-update i { position: absolute; right: -8px; bottom: -3px; width: 6px; height: 6px; border: 1px solid var(--nav); border-radius: 50%; background: var(--danger); box-shadow: 0 0 7px rgb(var(--danger-rgb) / 65%); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 65%, transparent); }
 
 .device-chip {
   min-width: 0;
@@ -191,7 +191,7 @@ function toggleTheme() {
   border-radius: 999px;
   color: var(--nav-device-ink);
   background: var(--nav-segment-bg);
-  font-weight: 650;
+  font-weight: 600;
   font-size: 13px;
 }
 
@@ -212,9 +212,9 @@ function toggleTheme() {
 .device-chip.connecting .status-dot { background: var(--warning); }
 .device-chip.connecting { color: var(--warning-text); }
 .device-chip.disconnected,
-.device-chip.error { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 35%, var(--nav-segment-border)); background: color-mix(in srgb, var(--danger) 13%, var(--nav-segment-bg)); }
+.device-chip.error { color: var(--danger-text); border-color: var(--nav-segment-border); border-color: color-mix(in srgb, var(--danger) 35%, var(--nav-segment-border)); background: var(--nav-segment-bg); background: color-mix(in srgb, var(--danger) 13%, var(--nav-segment-bg)); }
 .device-chip.disconnected .status-dot,
-.device-chip.error .status-dot { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 13%, transparent); }
+.device-chip.error .status-dot { background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 13%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 13%, transparent); }
 
 .main-nav {
   gap: 3px;
@@ -234,7 +234,7 @@ function toggleTheme() {
   background: transparent;
   font: inherit;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   transition: 0.18s ease;
 }

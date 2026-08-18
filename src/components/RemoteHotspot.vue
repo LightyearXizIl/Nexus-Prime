@@ -80,11 +80,18 @@ defineExpose({ keyEl, rootRef });
   position: relative;
   width: 84px;
   flex: 0 0 auto;
+  height: 0;
+  padding-top: 20.9%; /* aspect-ratio 兜底（Chromium <88）：401/1919 ≈ 20.9% */
   aspect-ratio: 401 / 1919;
   user-select: none;
 }
 
 .remote-product-image {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: block;
   width: 100%;
   height: 100%;

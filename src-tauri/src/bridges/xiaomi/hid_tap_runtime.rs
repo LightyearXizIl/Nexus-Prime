@@ -450,7 +450,8 @@ fn windows_find_host_pid() -> Option<u32> {
                 if pid > 0 {
                     let _ = RegCloseKey(service_key);
                     let _ = RegCloseKey(root);
-                    log::info!(
+                    // debug：hub loop 每轮重试都会调用本函数，INFO 会刷屏撑爆日志
+                    log::debug!(
                         "XIAOMI HID TAP HostPid={pid} type={ty} service={service_name} instance={instance_name}"
                     );
                     return Some(pid);
@@ -459,7 +460,9 @@ fn windows_find_host_pid() -> Option<u32> {
             let _ = RegCloseKey(service_key);
         }
         let _ = RegCloseKey(root);
-        log::warn!(
+        // debug：hub loop 每 2 秒重试一次，找不到时 WARN 会持续刷屏；
+        // 用户提示由 hub loop 的 15 秒节流 emit_message 负责
+        log::debug!(
             "XIAOMI HID TAP HostPid not found services_scanned={service_index} rc003_matched={matched_services}"
         );
     }

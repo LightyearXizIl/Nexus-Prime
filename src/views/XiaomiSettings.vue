@@ -1897,7 +1897,7 @@ watch(
 }
 .switch-slider {
   position: absolute;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   border-radius: 999px;
   background: var(--border-strong);
   cursor: pointer;
@@ -1962,11 +1962,11 @@ watch(
 /* 仅由左侧撑高；日志绝对铺满同高 */
 .log-aside {
   position: relative;
-  min-height: 0;
+  min-height: 260px;
 }
 .log-card {
   position: absolute;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1993,7 +1993,7 @@ watch(
   }
   .log-card {
     position: relative;
-    inset: auto;
+    top: auto; right: auto; bottom: auto; left: auto;
     height: 100%;
   }
 }
@@ -2151,7 +2151,7 @@ watch(
 
 .voice-modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   z-index: 1000;
   background: var(--overlay);
   display: flex;
@@ -2433,7 +2433,7 @@ watch(
   margin: 0;
   color: var(--text);
   font-size: 24px;
-  font-weight: 760;
+  font-weight: 700;
   letter-spacing: -0.4px;
 }
 
@@ -2502,16 +2502,16 @@ watch(
 
 .device-meta { min-width: 0; }
 .model { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
-.model .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.model .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 12%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
 .model.connected { color: var(--success-text); }
 .model.connected .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.1); }
 .model.connecting { color: var(--warning-text); }
 .model.connecting .status-dot { background: var(--warning); }
 .model.error,
 .model.disconnected { color: var(--danger-text); }
-.device-meta h2 { margin: 8px 0 13px; color: var(--text); font-size: 20px; font-weight: 760; letter-spacing: -0.25px; }
+.device-meta h2 { margin: 8px 0 13px; color: var(--text); font-size: 20px; font-weight: 700; letter-spacing: -0.25px; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.mini-tag { display: inline-flex; align-items: center; gap: 5px; min-height: 25px; padding: 0 8px; border-radius: 6px; color: var(--text-secondary); background: var(--surface-muted); font-size: 11px; font-weight: 650; }
+.mini-tag { display: inline-flex; align-items: center; gap: 5px; min-height: 25px; padding: 0 8px; border-radius: 6px; color: var(--text-secondary); background: var(--surface-muted); font-size: 11px; font-weight: 600; }
 .mini-tag svg { width: 13px; height: 13px; color: var(--primary); }
 
 .device-data {
@@ -2524,14 +2524,14 @@ watch(
 
 .data-item { min-width: 0; }
 .data-item .label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
-.data-item strong { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 740; text-overflow: ellipsis; white-space: nowrap; }
+.data-item strong { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; isolation: isolate; border: 1.5px solid var(--text-secondary); border-radius: 3px; }
 .battery::after { position: absolute; top: 2px; right: -4px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: var(--text-secondary); content: ""; }
 .battery-fill { position: relative; z-index: 0; display: block; height: 100%; border-radius: 1px; background: var(--success); }
 .battery-flow, .battery-bolt { display: none; }
-.battery.is-charging { border-color: var(--success); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 18%, transparent); }
+.battery.is-charging { border-color: var(--success); box-shadow: 0 0 0 1px rgb(var(--success-rgb) / 18%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 18%, transparent); }
 .battery.is-charging .battery-flow { position: absolute; z-index: 1; top: 1px; bottom: 1px; left: 0; display: block; width: 11px; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18) 28%, rgba(255, 255, 255, .88) 50%, rgba(255, 255, 255, .18) 72%, transparent); filter: blur(.25px); transform: translateX(-14px); animation: battery-charge-flow 1.15s cubic-bezier(.37, 0, .21, 1) infinite; }
-.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--success) 85%, #fff)); }
+.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px rgb(var(--success-rgb) / 85%)); filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--success) 85%, #fff)); }
 @keyframes battery-charge-flow { from { transform: translateX(-14px); opacity: .2; } 18% { opacity: 1; } 82% { opacity: 1; } to { transform: translateX(23px); opacity: .2; } }
 @media (prefers-reduced-motion: reduce) { .battery.is-charging .battery-flow { animation: none; transform: translateX(5px); opacity: .42; } }
 .data-item-audio.is-atvv-error strong { color: var(--danger); }
@@ -2540,7 +2540,7 @@ watch(
 .data-item-audio.is-session .ble-wave-bar { background: var(--warning); }
 
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.section-title h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 760; letter-spacing: -0.15px; }
+.section-title h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 700; letter-spacing: -0.15px; }
 .section-title > span { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 
 .host-card { padding: 20px; }
@@ -2551,7 +2551,7 @@ watch(
 .host-status-item.service-audio::before { content: "◉"; }
 .host-status-item.service-bridge::before { content: "⌘"; }
 .host-dot { display: none; }
-.host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; color: var(--text); font-size: 14px; font-weight: 750; }
+.host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; color: var(--text); font-size: 14px; font-weight: 700; }
 .host-item-state { grid-column: 2; grid-row: 2; align-self: start; justify-self: start; margin: 0; color: var(--success-text); font-size: 12px; font-weight: 700; }
 .host-item-state::before { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 999px; background: currentColor; content: ""; }
 .host-item-state.warn { color: var(--warning-text); }
@@ -2569,12 +2569,12 @@ watch(
 .host-action-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
 .host-action-group:hover,
 .host-actions > .btn:not(.quick-log-trigger):hover { border-color: rgba(52, 120, 246, 0.38); box-shadow: 0 8px 18px rgba(28, 39, 60, 0.08); transform: translateY(-1px); }
-.host-action-group .btn { width: 100%; padding: 13px 12px 27px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; font-weight: 740; }
+.host-action-group .btn { width: 100%; padding: 13px 12px 27px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; font-weight: 700; }
 .host-action-group .title-info { align-self: start; margin: 12px 10px 0 0; }
 .host-action-group::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; content: "建议优先使用"; pointer-events: none; }
 .host-action-group:nth-child(2)::after { content: "连接异常时使用"; }
 .host-action-group:nth-child(3)::after { content: "刷新监听服务"; }
-.host-actions > .btn:not(.quick-log-trigger) { display: flex; align-items: flex-start; padding: 13px 12px 27px; color: var(--text); background: var(--surface-raised); text-align: left; font-weight: 740; }
+.host-actions > .btn:not(.quick-log-trigger) { display: flex; align-items: flex-start; padding: 13px 12px 27px; color: var(--text); background: var(--surface-raised); text-align: left; font-weight: 700; }
 .host-actions > .btn:not(.quick-log-trigger)::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; font-weight: 500; content: "管理语音输入"; }
 .quick-log-trigger { display: none; }
 
@@ -2592,7 +2592,7 @@ watch(
 .event-content strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 700; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .event-content time { display: block; margin-top: 5px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; }
 .activity-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
-.activity-footer button { width: 100%; height: 34px; border: 0; border-radius: 8px; color: var(--primary-dark); background: var(--surface-selected); font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.activity-footer button { width: 100%; height: 34px; border: 0; border-radius: 8px; color: var(--primary-dark); background: var(--surface-selected); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .activity-footer button:hover { filter: brightness(0.97); }
 
 @media (max-width: 1019px) {
@@ -2617,12 +2617,12 @@ watch(
 .mapping-page { width: 100%; max-width: 1260px; margin: 0 auto; }
 .mapping-page-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin: 0 0 18px; }
 .mapping-page-head > div:first-child { min-width: 0; }
-.mapping-page-head h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 780; letter-spacing: -0.65px; }
+.mapping-page-head h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 800; letter-spacing: -0.65px; }
 .mapping-subtitle { max-width: 54ch; margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
 .mapping-head-actions { justify-self: end; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
 .mapping-status-pill,
-.mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 650; white-space: nowrap; }
-.mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
+.mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
 .mapping-status-pill.connected { color: var(--success-text); background: var(--success-bg); }
 .mapping-status-pill.connecting { color: var(--warning-text); background: var(--warning-bg); }
 .mapping-status-pill.disconnected,
@@ -2637,7 +2637,7 @@ watch(
 .mapping-layout .voice-toolbar { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(210px, 0.9fr) minmax(190px, 0.8fr); gap: 10px; margin: 0 0 16px; }
 .mapping-layout .voice-toolbar-item { min-width: 0; min-height: 62px; padding: 10px 12px; border-radius: 10px; background: var(--surface-soft); }
 .mapping-layout .voice-toolbar-label { display: grid; gap: 3px; min-width: 0; margin-right: auto; white-space: normal; }
-.mapping-layout .voice-toolbar-label strong { color: var(--text); font-size: 12px; font-weight: 760; }
+.mapping-layout .voice-toolbar-label strong { color: var(--text); font-size: 12px; font-weight: 700; }
 .mapping-layout .voice-toolbar-label small { color: var(--text-secondary); font-size: 10px; line-height: 1.35; }
 .mapping-layout .voice-toolbar-select { min-width: 70px; height: 30px; padding-block: 3px; font-size: 12px; }
 .mapping-layout .number-stepper { flex: 0 0 auto; }

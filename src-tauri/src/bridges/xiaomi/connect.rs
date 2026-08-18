@@ -11,14 +11,30 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 static ATVV_SUBSCRIBED: AtomicBool = AtomicBool::new(false);
+/// ATVV 首轮诊断失败（进入降级模式继续跑）后置位，供 key_logger
+/// 决定 HID Tap 附着时机：避免在 ATVV 未就绪时注入抢占 WUDFHost。
+static ATVV_DIAGNOSED_FAILED: AtomicBool = AtomicBool::new(false);
 
 pub fn reset_atvv_subscribed() {
     ATVV_SUBSCRIBED.store(false, Ordering::SeqCst);
+    ATVV_DIAGNOSED_FAILED.store(false, Ordering::SeqCst);
 }
 
 pub fn mark_atvv_subscribed(ok: bool) {
     ATVV_SUBSCRIBED.store(ok, Ordering::SeqCst);
+    if ok {
+        ATVV_DIAGNOSED_FAILED.store(false, Ordering::SeqCst);
+    }
     crate::bridges::xiaomi::voice_meter::force_emit_atvv_change();
+}
+
+/// ATVV 首轮诊断失败（将进入 battery-only 降级模式）时由 input_session 调用
+pub fn mark_atvv_diagnosed_failed() {
+    ATVV_DIAGNOSED_FAILED.store(true, Ordering::SeqCst);
+}
+
+pub fn atvv_diagnosed_failed() -> bool {
+    ATVV_DIAGNOSED_FAILED.load(Ordering::SeqCst)
 }
 
 pub fn wait_atvv_subscribed(timeout: Duration) -> bool {

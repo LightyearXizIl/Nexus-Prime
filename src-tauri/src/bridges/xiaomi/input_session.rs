@@ -388,6 +388,9 @@ fn windows_run_input_session(
     }
 
     if !atvv_ok {
+        // 通知 key_logger：ATVV 首轮诊断失败，HID Tap 附着需等待后台重试窗口，
+        // 避免在语音通道未就绪时注入 DLL 抢占 WUDFHost。
+        crate::bridges::xiaomi::connect::mark_atvv_diagnosed_failed();
         if battery_ch.is_none() {
             tv_gate::reset();
             return Err(

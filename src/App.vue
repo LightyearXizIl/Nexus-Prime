@@ -224,6 +224,7 @@ onUnmounted(() => {
 <style>
 :root {
   --primary: #3478f6;
+  --primary-rgb: 52 120 246;
   --primary-dark: #2463d4;
   --bg: #f5f7fb;
   --canvas: #f5f7fb;
@@ -254,11 +255,14 @@ onUnmounted(() => {
   --border: #e3e8f0;
   --border-strong: #cbd5e1;
   --text: #172033;
+  --text-rgb: 23 32 51;
   --text-secondary: #6f7b91;
   --text-muted: #94a3b8;
   --success: #18b979;
+  --success-rgb: 24 185 121;
   --warning: #ee9b34;
   --danger: #ef5b61;
+  --danger-rgb: 239 91 97;
   --radius: 12px;
   --surface-raised: #ffffff;
   --surface-muted: #f6f8fc;
@@ -266,6 +270,7 @@ onUnmounted(() => {
   --surface-selected: #edf4ff;
   --input-bg: #ffffff;
   --text-inverse: #ffffff;
+  --text-inverse-rgb: 255 255 255;
   --control-thumb: #ffffff;
   --overlay: rgba(15, 23, 42, 0.48);
   --shadow: 0 12px 32px rgba(28, 39, 60, 0.07);
@@ -289,6 +294,7 @@ onUnmounted(() => {
 
 :root[data-theme="dark"] {
   --primary: #60a5fa;
+  --primary-rgb: 96 165 250;
   --primary-dark: #3b82f6;
   --bg: #0d1523;
   --canvas: #0d1523;
@@ -319,12 +325,16 @@ onUnmounted(() => {
   --border: #2b3a50;
   --border-strong: #40516a;
   --text: #e8eef8;
+  --text-rgb: 232 238 248;
   --text-secondary: #aab8cc;
   --text-muted: #94a3b8;
   --text-inverse: #ffffff;
+  --text-inverse-rgb: 255 255 255;
   --success: #4ade80;
+  --success-rgb: 74 222 128;
   --warning: #fbbf24;
   --danger: #fb7185;
+  --danger-rgb: 251 113 133;
   --surface-raised: #1b2940;
   --surface-muted: #111c2e;
   --surface-hover: #26364d;
@@ -413,7 +423,7 @@ textarea:focus-visible {
 
 .conflict-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   z-index: 4000;
   display: flex;
   align-items: center;

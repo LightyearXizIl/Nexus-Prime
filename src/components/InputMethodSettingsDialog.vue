@@ -310,7 +310,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0; right: 0; bottom: 0; left: 0;
   z-index: 3200;
   display: grid;
   place-items: center;
@@ -320,6 +320,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-dialog {
   width: min(920px, calc(100vw - 64px));
+  height: min(560px, calc(100vh - 64px));
   height: min(560px, calc(100dvh - 64px));
   min-height: 0;
   display: grid;
@@ -368,7 +369,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   background: transparent;
   font: inherit;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
   transition:
     color 140ms ease,
@@ -394,7 +395,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   border-radius: 9px;
   font: inherit;
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   transition:
@@ -409,12 +410,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   color: #fff;
   border-color: var(--primary);
   background: var(--primary);
+  box-shadow: 0 5px 12px rgb(var(--primary-rgb) / 24%);
   box-shadow: 0 5px 12px color-mix(in srgb, var(--primary) 24%, transparent);
 }
 .ime-button--secondary {
   color: var(--text);
   border-color: var(--border);
   background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgb(var(--text-rgb) / 8%);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
 }
 .ime-button:active:not(:disabled) { transform: scale(.97); }
@@ -427,6 +430,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   .ime-button--primary:hover:not(:disabled) {
     border-color: var(--primary-dark);
     background: var(--primary-dark);
+    box-shadow: 0 7px 16px rgb(var(--primary-rgb) / 28%);
     box-shadow: 0 7px 16px color-mix(in srgb, var(--primary) 28%, transparent);
   }
   .ime-button--secondary:hover:not(:disabled) {
@@ -464,7 +468,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-panel-action { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
 .ime-callout { align-items: flex-start; gap: 10px; }
-.ime-status { padding: 3px 7px; border: 1px solid var(--info-border); border-radius: 999px; color: var(--info-text); background: var(--info-bg); font-size: 11px; font-weight: 650; }
+.ime-status { padding: 3px 7px; border: 1px solid var(--info-border); border-radius: 999px; color: var(--info-text); background: var(--info-bg); font-size: 11px; font-weight: 600; }
 .ime-callout strong, .ime-placeholder-action strong { color: var(--text); font-size: 17px; }
 .ime-callout p { color: var(--text-secondary); font-size: 12px; }
 .ime-callout .ime-button { margin-top: 6px; }
@@ -484,6 +488,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   .ime-backdrop { padding: 18px; }
   .ime-dialog {
     width: min(100%, calc(100vw - 36px));
+    height: min(560px, calc(100vh - 36px));
     height: min(560px, calc(100dvh - 36px));
   }
   .ime-dialog-head { grid-template-columns: 1fr auto; }
