@@ -80,22 +80,11 @@ defineExpose({ keyEl, rootRef });
   position: relative;
   width: 84px;
   flex: 0 0 auto;
-  height: 0;
-  /* 高度 = 宽度 × 1919/401,用 padding-top 百分比(相对宽度)实现:
-     KeyMappingStage 会 :deep 覆盖宽度(82/75/78px),高度必须跟随宽度联动,
-     否则与图片 401:1919 比例失配,object-fit:contain 产生留白导致热点错位。
-     aspect-ratio 保留给新引擎,height:0 显式时由 padding-top 撑起,两引擎一致。 */
-  padding-top: 478.55%;
   aspect-ratio: 401 / 1919;
   user-select: none;
 }
 
 .remote-product-image {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
   display: block;
   width: 100%;
   height: 100%;
