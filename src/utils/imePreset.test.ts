@@ -24,6 +24,22 @@ function configWithLegacyVoiceGestures(): DeviceConfig {
 }
 
 describe("applyImePresetConfig", () => {
+  it("configures the current WeChat hold-to-talk shortcut and removes legacy voice gestures", () => {
+    const next = applyImePresetConfig(configWithLegacyVoiceGestures(), "wechat");
+
+    expect(next).toMatchObject({
+      button_bindings: {
+        mic: { type: "ComboKey", value: [0xa2, 0xa0, 0x44] },
+        voice: { type: "ComboKey", value: [0xa2, 0xa0, 0x44] },
+      },
+      voice_hotkey: ["leftctrl", "leftshift", "d"],
+      voice_shortcut_enabled: true,
+      trigger_mode: "Hold",
+      long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },
+      multi_click_bindings: { menu: { 2: { type: "SingleKey", value: 0x41 } } },
+    });
+  });
+
   it("configures the Doubao hold shortcut and removes legacy voice gestures", () => {
     const next = applyImePresetConfig(configWithLegacyVoiceGestures(), "doubao-hold");
 

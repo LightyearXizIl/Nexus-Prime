@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import wechatImeHotkeysImg from "../assets/guides/wechat-ime-hotkeys.png";
 import type { ImePreset } from "../utils/imePreset";
 
 export type { ImePreset } from "../utils/imePreset";
@@ -200,24 +199,24 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <span class="ime-eyebrow">{{ activeLabel }} · 推荐</span>
             <h4>按住说话，松开输入文字</h4>
             <p id="ime-wechat-summary">
-              请先在本软件应用映射，再在微信输入法中将“启动语音输入”设为
-              <code>左 Ctrl + 左 Win</code>。
+              微信输入法当前“按住说话”快捷键为
+              <code>左 Ctrl + 左 Shift + D</code>；本软件会使用同一组合。
             </p>
             <ol>
-              <li>录入前先临时关闭、修改微信语音快捷键，或切换到其他输入法。</li>
-              <li>点击右侧快速应用，将遥控器语音键设为左 Ctrl + 左 Win。</li>
-              <li>回到微信输入法，确认语音快捷键与本软件一致。</li>
+              <li>在微信输入法“设置 → 语音输入”中确认已启用“按住说话”。</li>
+              <li>点击右侧快速应用，将遥控器语音键设为左 Ctrl + 左 Shift + D。</li>
+              <li>若你修改过微信输入法快捷键，请在按键映射中录入相同组合。</li>
             </ol>
           </div>
-          <aside class="ime-panel-action ime-wechat-guide">
-            <img :src="wechatImeHotkeysImg" alt="微信输入法语音输入快捷键设置示意图" />
-            <div class="ime-action-row">
-              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
-                <span>{{ saving ? "正在应用…" : "应用左 Ctrl + 左 Win" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </div>
+          <aside class="ime-panel-action ime-callout">
+            <span class="ime-status">推荐映射</span>
+            <strong>左 Ctrl + 左 Shift + D</strong>
+            <p>触发模式：按住</p>
+            <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
+              <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+            </button>
+            <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
         </template>
 

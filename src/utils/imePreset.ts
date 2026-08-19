@@ -25,11 +25,11 @@ export const IME_PRESETS: Record<ImePreset, ImePresetDefinition> = {
     logMessage: "设置建议：已快速应用 Codex 按住听写映射（左 Ctrl + 左 Shift + D）",
   },
   wechat: {
-    shortcutVks: [0xa2, 0x5b],
-    voiceHotkey: ["leftctrl", "leftwin"],
+    shortcutVks: [0xa2, 0xa0, 0x44],
+    voiceHotkey: ["leftctrl", "leftshift", "d"],
     triggerMode: "Hold",
-    applyHint: "已应用：语音键 = 左 Ctrl + 左 Win，触发模式 = 按住",
-    logMessage: "设置建议：已快速应用微信按住说话映射（左 Ctrl + 左 Win）",
+    applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D，触发模式 = 按住",
+    logMessage: "设置建议：已快速应用微信按住说话映射（左 Ctrl + 左 Shift + D）",
   },
   qianwen: {
     shortcutVks: [0xa5],
