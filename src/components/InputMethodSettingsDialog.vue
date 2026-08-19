@@ -196,27 +196,38 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
         <template v-else-if="activeProvider === 'wechat'">
           <div class="ime-panel-copy">
-            <span class="ime-eyebrow">{{ activeLabel }} · 推荐</span>
-            <h4>按住说话，松开输入文字</h4>
+            <span class="ime-eyebrow">{{ activeLabel }} · 版本选择</span>
+            <h4>按你的微信输入法版本选择</h4>
             <p id="ime-wechat-summary">
-              微信输入法当前“按住说话”快捷键为
-              <code>左 Ctrl + 左 Shift + D</code>；本软件会使用同一组合。
+              微信输入法不同版本的语音快捷键不同；两个预设都使用“按住”触发模式，且只会修改 Nexus Prime 的遥控器映射。
             </p>
             <ol>
-              <li>在微信输入法“设置 → 语音输入”中确认已启用“按住说话”。</li>
-              <li>点击右侧快速应用，将遥控器语音键设为左 Ctrl + 左 Shift + D。</li>
-              <li>若你修改过微信输入法快捷键，请在按键映射中录入相同组合。</li>
+              <li>在微信输入法“设置 → 语音输入”中查看实际的语音快捷键。</li>
+              <li>“按住说话”为 <code>左 Ctrl + 左 Shift + D</code> 时，选择新版预设。</li>
+              <li>“启动语音输入”为 <code>左 Ctrl + 左 Win</code> 时，选择旧版预设；自定义快捷键请在按键映射中录入相同组合。</li>
             </ol>
           </div>
-          <aside class="ime-panel-action ime-callout">
-            <span class="ime-status">推荐映射</span>
-            <strong>左 Ctrl + 左 Shift + D</strong>
-            <p>触发模式：按住</p>
-            <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
-              <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
-            </button>
-            <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+          <aside class="ime-panel-action ime-wechat-actions">
+            <section class="ime-wechat-option">
+              <span class="ime-status">新版（本机 2.1.2.12 已验证）</span>
+              <strong>左 Ctrl + 左 Shift + D</strong>
+              <p>匹配“按住说话”，触发模式：按住</p>
+              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat-current')">
+                <span>{{ saving ? "正在应用…" : "应用新版按住说话" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              </button>
+              <span v-if="applyHint && lastAppliedPreset === 'wechat-current'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            </section>
+            <section class="ime-wechat-option">
+              <span class="ime-status">旧版</span>
+              <strong>左 Ctrl + 左 Win</strong>
+              <p>匹配旧版“启动语音输入”，触发模式：按住</p>
+              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
+                <span>{{ saving ? "正在应用…" : "应用旧版映射" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              </button>
+              <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            </section>
           </aside>
         </template>
 
@@ -473,15 +484,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .ime-callout .ime-button { margin-top: 6px; }
 .ime-apply-hint { color: var(--success-text); font-size: 12px; line-height: 1.45; }
 
-.ime-wechat-guide { gap: 14px; padding: 14px; }
-.ime-wechat-guide img { width: 100%; max-height: 255px; object-fit: contain; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
-.ime-action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
-
-.ime-doubao-actions { gap: 12px; padding: 14px; }
-.ime-doubao-option { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
-.ime-doubao-option strong { color: var(--text); font-size: 16px; }
-.ime-doubao-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.ime-doubao-option .ime-button { width: 100%; margin-top: 2px; }
+.ime-wechat-actions, .ime-doubao-actions { gap: 12px; padding: 14px; }
+.ime-wechat-option, .ime-doubao-option { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
+.ime-wechat-option strong, .ime-doubao-option strong { color: var(--text); font-size: 16px; }
+.ime-wechat-option p, .ime-doubao-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
+.ime-wechat-option .ime-button, .ime-doubao-option .ime-button { width: 100%; margin-top: 2px; }
 
 @media (max-width: 780px) {
   .ime-backdrop { padding: 18px; }

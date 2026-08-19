@@ -12,18 +12,21 @@ function mountDialog() {
 describe("InputMethodSettingsDialog", () => {
   beforeEach(() => window.localStorage.clear());
 
-  it("applies every provider preset, including both Doubao voice modes", async () => {
+  it("applies both WeChat versions and both Doubao voice modes", async () => {
     const wrapper = mountDialog();
     const tabs = wrapper.findAll('[role="tab"]');
     expect(tabs).toHaveLength(4);
 
     await tabs[1].trigger("click");
-    await wrapper.get("button.ime-button--primary").trigger("click");
-    expect(wrapper.emitted("apply")).toEqual([["wechat"]]);
+    const wechatButtons = wrapper.findAll(".ime-wechat-option button");
+    expect(wechatButtons).toHaveLength(2);
+    await wechatButtons[0].trigger("click");
+    await wechatButtons[1].trigger("click");
+    expect(wrapper.emitted("apply")).toEqual([["wechat-current"], ["wechat"]]);
 
     await tabs[2].trigger("click");
     await wrapper.get("button.ime-button--primary").trigger("click");
-    expect(wrapper.emitted("apply")).toEqual([["wechat"], ["qianwen"]]);
+    expect(wrapper.emitted("apply")).toEqual([["wechat-current"], ["wechat"], ["qianwen"]]);
 
     await tabs[3].trigger("click");
     expect(wrapper.text()).toContain("电脑麦克风");
@@ -32,11 +35,25 @@ describe("InputMethodSettingsDialog", () => {
     await doubaoButtons[0].trigger("click");
     await doubaoButtons[1].trigger("click");
     expect(wrapper.emitted("apply")).toEqual([
+      ["wechat-current"],
       ["wechat"],
       ["qianwen"],
       ["doubao-hold"],
       ["doubao-hands-free"],
     ]);
+  });
+
+  it("disables both WeChat version actions while saving and scopes the success hint to the selected version", async () => {
+    const wrapper = mountDialog();
+    await wrapper.findAll('[role="tab"]')[1].trigger("click");
+    await wrapper.setProps({ saving: true });
+    expect(wrapper.findAll(".ime-wechat-option button:disabled")).toHaveLength(2);
+
+    await wrapper.setProps({ saving: false, applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D" });
+    await wrapper.findAll(".ime-wechat-option button")[0].trigger("click");
+    expect(wrapper.findAll(".ime-wechat-option .ime-apply-hint")).toHaveLength(1);
+    await wrapper.findAll(".ime-wechat-option button")[1].trigger("click");
+    expect(wrapper.findAll(".ime-wechat-option .ime-apply-hint")).toHaveLength(1);
   });
 
   it("disables both Doubao actions while saving and scopes the success hint to the selected mode", async () => {
