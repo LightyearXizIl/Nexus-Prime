@@ -414,9 +414,9 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         .try_state::<Arc<XiaomiRuntime>>()
         .map(|r| r.running.load(std::sync::atomic::Ordering::SeqCst))
         .unwrap_or(false);
-    let audio_alive = crate::audio::pcm_router::audio_router_ready()
+    let audio_alive = crate::audio::pcm_router::audio_router_ready_cached()
         || crate::audio::pcm_router::audio_router_process_alive();
-    let cable_ready = crate::audio::vb_cable::voice_env_status().ready;
+    let cable_ready = crate::audio::vb_cable::voice_env_status_cached().ready;
     let atvv_ok = crate::bridges::xiaomi::connect::atvv_subscribed();
 
     let items = vec![

@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_PCM_PORT: u16 = 31680;
 
@@ -442,4 +442,20 @@ pub fn audio_router_ready() -> bool {
         Ok((n, _)) => &buf[..n] == b"PONG",
         Err(_) => false,
     }
+}
+
+/// 带缓存的就绪探测：每次调用都新建 socket + PING 往返，前端状态页每秒问一次。
+/// 冲突检测/重启桥接等需要新鲜结果的路径请用无缓存的 `audio_router_ready()`。
+pub fn audio_router_ready_cached() -> bool {
+    // ponytail: TTL 5s；router 挂掉后状态页最多延迟 5s 变红
+    static CACHE: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, ok)) = *g {
+        if at.elapsed() < Duration::from_secs(5) {
+            return ok;
+        }
+    }
+    let ok = audio_router_ready();
+    *g = Some((Instant::now(), ok));
+    ok
 }

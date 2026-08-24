@@ -96,6 +96,12 @@ fn asset_candidates(file_name: &str) -> Vec<PathBuf> {
 }
 
 pub fn find_driver_zip() -> Option<PathBuf> {
+    // ponytail: 资产安装后不变，但每次哈希几十 MB 的 zip；只算一次
+    static ZIP: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ZIP.get_or_init(|| find_driver_zip_uncached()).clone()
+}
+
+fn find_driver_zip_uncached() -> Option<PathBuf> {
     for path in asset_candidates(DRIVER_ZIP_NAME) {
         if !path.is_file() {
             continue;
@@ -150,8 +156,7 @@ fn probe_cable_endpoints() -> (bool, bool) {
     (false, false)
 }
 
-pub fn voice_env_status() -> VoiceEnvStatus {
-    let (cable_input, cable_output) = probe_cable_endpoints();
+fn build_voice_env_status(cable_input: bool, cable_output: bool) -> VoiceEnvStatus {
     let ready = cable_input && cable_output;
     let zip = find_driver_zip();
     let embedded_available = zip.is_some() && find_configure_script().is_some();
@@ -172,6 +177,32 @@ pub fn voice_env_status() -> VoiceEnvStatus {
         download_zip_url: DOWNLOAD_ZIP_URL.into(),
         message,
     }
+}
+
+pub fn voice_env_status() -> VoiceEnvStatus {
+    let (cable_input, cable_output) = probe_cable_endpoints();
+    build_voice_env_status(cable_input, cable_output)
+}
+
+/// 带缓存的探测：cpal 全量枚举音频设备走 COM/RPC，前端状态页每秒轮询一次，
+/// 不缓存时实测占 ~3-4% 单核。修复/安装流程请用无缓存的 `voice_env_status()`。
+pub fn voice_env_status_cached() -> VoiceEnvStatus {
+    // ponytail: TTL 30s，声卡安装后状态页最多延迟 30s 变绿（修复按钮走无缓存路径）
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, (bool, bool))>> =
+        std::sync::Mutex::new(None);
+    fn probe_cached() -> (bool, bool) {
+        let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, r)) = *g {
+            if at.elapsed() < std::time::Duration::from_secs(30) {
+                return r;
+            }
+        }
+        let r = probe_cable_endpoints();
+        *g = Some((std::time::Instant::now(), r));
+        r
+    }
+    let (cable_input, cable_output) = probe_cached();
+    build_voice_env_status(cable_input, cable_output)
 }
 
 fn desktop_report_path() -> PathBuf {
