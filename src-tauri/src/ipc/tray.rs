@@ -13,6 +13,7 @@ fn restore_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+    crate::set_main_webview_visible(app, true);
 }
 
 fn quit_app(app: &AppHandle) {

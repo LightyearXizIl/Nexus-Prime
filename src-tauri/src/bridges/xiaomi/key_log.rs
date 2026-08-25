@@ -363,7 +363,12 @@ fn windows_vk_poll_logger(
             }
             prev.insert(vk, down);
         }
-        std::thread::sleep(Duration::from_millis(25));
+        // ponytail: 25ms 高频仅 Alt+Tab 长按期间需要；平时 150ms 省唤醒
+        std::thread::sleep(Duration::from_millis(if crate::bridges::xiaomi::key_mapping::alt_tab_hold_active() {
+            25
+        } else {
+            150
+        }));
     }
 }
 

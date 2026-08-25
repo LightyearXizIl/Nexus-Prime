@@ -35,6 +35,20 @@ fn focus_main_window(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+    set_main_webview_visible(app, true);
+}
+
+/// 托盘隐藏时挂起 WebView2 渲染：不调 SetIsVisible(false) 时 Chromium 会继续
+/// 全速合成动画并保持 1s 轮询定时器不节流（实测占 ~5.6% 单核）
+pub fn set_main_webview_visible(app: &tauri::AppHandle, visible: bool) {
+    #[cfg(target_os = "windows")]
+    if let Some(wv) = app.get_webview_window("main") {
+        let _ = wv.with_webview(move |platform| unsafe {
+            let _ = platform.controller().SetIsVisible(visible);
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (app, visible);
 }
 
 #[cfg_attr(mobile, mobile_entry_point)]
@@ -128,6 +142,7 @@ pub fn run() {
                         if minimize {
                             api.prevent_close();
                             let _ = window_.hide();
+                            set_main_webview_visible(&app_handle, false);
                         }
                         // else: 允许关闭 → 触发 Exit → cleanup_on_exit
                     }
