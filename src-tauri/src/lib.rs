@@ -33,21 +33,26 @@ fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
+        set_main_webview_visible(app, true);
         let _ = window.set_focus();
     }
-    set_main_webview_visible(app, true);
 }
 
-/// 托盘隐藏时挂起 WebView2 渲染：不调 SetIsVisible(false) 时 Chromium 会继续
+/// 托盘隐藏时停止 WebView2 渲染：不隐藏子 WebView 时 Chromium 会继续
 /// 全速合成动画并保持 1s 轮询定时器不节流（实测占 ~5.6% 单核）
 pub fn set_main_webview_visible(app: &tauri::AppHandle, visible: bool) {
-    #[cfg(target_os = "windows")]
+    #[cfg(desktop)]
     if let Some(wv) = app.get_webview_window("main") {
-        let _ = wv.with_webview(move |platform| unsafe {
-            let _ = platform.controller().SetIsVisible(visible);
-        });
+        let result = if visible {
+            wv.as_ref().show()
+        } else {
+            wv.as_ref().hide()
+        };
+        if let Err(error) = result {
+            log::warn!("failed to set main webview visible={visible}: {error}");
+        }
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(desktop))]
     let _ = (app, visible);
 }
 
@@ -141,8 +146,8 @@ pub fn run() {
                             .unwrap_or(true);
                         if minimize {
                             api.prevent_close();
-                            let _ = window_.hide();
                             set_main_webview_visible(&app_handle, false);
+                            let _ = window_.hide();
                         }
                         // else: 允许关闭 → 触发 Exit → cleanup_on_exit
                     }

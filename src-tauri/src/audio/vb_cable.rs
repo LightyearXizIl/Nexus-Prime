@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::copy;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const DRIVER_ZIP_NAME: &str = "VBCABLE_Driver_Pack45.zip";
 pub const DRIVER_ZIP_SHA256: &str =
@@ -15,6 +17,42 @@ pub const CONFIGURE_SCRIPT_NAME: &str = "configure-xiaomi-audio.ps1";
 pub const DOWNLOAD_PAGE_URL: &str = "https://vb-audio.com/Cable/";
 pub const DOWNLOAD_ZIP_URL: &str =
     "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
+
+type CableEndpoints = (bool, bool);
+const VOICE_ENV_STATUS_CACHE_TTL: Duration = Duration::from_secs(30);
+
+#[derive(Default)]
+struct VoiceEnvStatusCache {
+    entry: Option<(Instant, CableEndpoints)>,
+}
+
+impl VoiceEnvStatusCache {
+    const fn new() -> Self {
+        Self { entry: None }
+    }
+
+    fn get_fresh(&self, now: Instant, ttl: Duration) -> Option<CableEndpoints> {
+        self.entry.and_then(|(at, endpoints)| {
+            (now.saturating_duration_since(at) < ttl).then_some(endpoints)
+        })
+    }
+
+    fn latest(&self) -> Option<CableEndpoints> {
+        self.entry.map(|(_, endpoints)| endpoints)
+    }
+
+    fn store(&mut self, now: Instant, endpoints: CableEndpoints) {
+        self.entry = Some((now, endpoints));
+    }
+
+    fn invalidate(&mut self) {
+        self.entry = None;
+    }
+}
+
+static VOICE_ENV_STATUS_CACHE: Mutex<VoiceEnvStatusCache> =
+    Mutex::new(VoiceEnvStatusCache::new());
+static DRIVER_ZIP_CACHE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,9 +134,27 @@ fn asset_candidates(file_name: &str) -> Vec<PathBuf> {
 }
 
 pub fn find_driver_zip() -> Option<PathBuf> {
-    // ponytail: 资产安装后不变，但每次哈希几十 MB 的 zip；只算一次
-    static ZIP: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    ZIP.get_or_init(|| find_driver_zip_uncached()).clone()
+    // 内嵌资产通常不变：仅缓存验证成功的路径。首次缺失或瞬时不可读时
+    // 不缓存 None，这样文件恢复后无需重启应用即可重新发现。
+    cached_driver_zip_with(&DRIVER_ZIP_CACHE, find_driver_zip_uncached)
+}
+
+fn cached_driver_zip_with<F>(cache: &Mutex<Option<PathBuf>>, find: F) -> Option<PathBuf>
+where
+    F: FnOnce() -> Option<PathBuf>,
+{
+    let mut cached = cache.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(path) = cached.clone() {
+        if path.is_file() {
+            return Some(path);
+        }
+        log::warn!("cached VB-CABLE zip disappeared path={}", path.display());
+        *cached = None;
+    }
+
+    let path = find()?;
+    *cached = Some(path.clone());
+    Some(path)
 }
 
 fn find_driver_zip_uncached() -> Option<PathBuf> {
@@ -125,35 +181,105 @@ pub fn find_configure_script() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn probe_cable_endpoints() -> (bool, bool) {
+fn probe_cable_endpoints() -> Result<CableEndpoints, String> {
     use cpal::traits::{DeviceTrait, HostTrait};
     let host = cpal::default_host();
     let mut cable_input = false;
     let mut cable_output = false;
-    if let Ok(devices) = host.output_devices() {
-        for d in devices {
-            if let Ok(name) = d.name() {
-                if name.to_ascii_lowercase().contains("cable input") {
-                    cable_input = true;
-                }
+    let mut output_name_error = None;
+    let devices = host
+        .output_devices()
+        .map_err(|e| format!("枚举输出设备失败: {e}"))?;
+    for d in devices {
+        match d.name() {
+            Ok(name) if name.to_ascii_lowercase().contains("cable input") => {
+                cable_input = true;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                output_name_error.get_or_insert_with(|| e.to_string());
             }
         }
     }
-    if let Ok(devices) = host.input_devices() {
-        for d in devices {
-            if let Ok(name) = d.name() {
-                if name.to_ascii_lowercase().contains("cable output") {
-                    cable_output = true;
-                }
+    if !cable_input {
+        if let Some(error) = output_name_error {
+            return Err(format!("读取输出设备名称失败: {error}"));
+        }
+    }
+
+    let mut input_name_error = None;
+    let devices = host
+        .input_devices()
+        .map_err(|e| format!("枚举输入设备失败: {e}"))?;
+    for d in devices {
+        match d.name() {
+            Ok(name) if name.to_ascii_lowercase().contains("cable output") => {
+                cable_output = true;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                input_name_error.get_or_insert_with(|| e.to_string());
             }
         }
     }
-    (cable_input, cable_output)
+    if !cable_output {
+        if let Some(error) = input_name_error {
+            return Err(format!("读取输入设备名称失败: {error}"));
+        }
+    }
+
+    Ok((cable_input, cable_output))
 }
 
 #[cfg(not(target_os = "windows"))]
-fn probe_cable_endpoints() -> (bool, bool) {
-    (false, false)
+fn probe_cable_endpoints() -> Result<CableEndpoints, String> {
+    Ok((false, false))
+}
+
+fn lock_voice_env_status_cache() -> std::sync::MutexGuard<'static, VoiceEnvStatusCache> {
+    VOICE_ENV_STATUS_CACHE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn invalidate_voice_env_status_cache() {
+    lock_voice_env_status_cache().invalidate();
+}
+
+fn cached_probe_with<F>(
+    cache: &mut VoiceEnvStatusCache,
+    now: Instant,
+    ttl: Duration,
+    probe: F,
+) -> Result<CableEndpoints, String>
+where
+    F: FnOnce() -> Result<CableEndpoints, String>,
+{
+    if let Some(endpoints) = cache.get_fresh(now, ttl) {
+        return Ok(endpoints);
+    }
+    let endpoints = probe()?;
+    cache.store(Instant::now(), endpoints);
+    Ok(endpoints)
+}
+
+fn probe_and_store_with<F>(
+    cache: &Mutex<VoiceEnvStatusCache>,
+    probe: F,
+) -> Result<CableEndpoints, String>
+where
+    F: FnOnce() -> Result<CableEndpoints, String>,
+{
+    // 从探测开始到写入全程持锁，避免更早启动的慢探测在修复成功后
+    // 把旧结果反向覆盖回缓存。
+    let mut cached = cache.lock().unwrap_or_else(|error| error.into_inner());
+    let endpoints = probe()?;
+    cached.store(Instant::now(), endpoints);
+    Ok(endpoints)
+}
+
+fn probe_and_store_voice_env_status_cache() -> Result<CableEndpoints, String> {
+    probe_and_store_with(&VOICE_ENV_STATUS_CACHE, probe_cable_endpoints)
 }
 
 fn build_voice_env_status(cable_input: bool, cable_output: bool) -> VoiceEnvStatus {
@@ -180,28 +306,38 @@ fn build_voice_env_status(cable_input: bool, cable_output: bool) -> VoiceEnvStat
 }
 
 pub fn voice_env_status() -> VoiceEnvStatus {
-    let (cable_input, cable_output) = probe_cable_endpoints();
+    let endpoints = match probe_and_store_voice_env_status_cache() {
+        Ok(endpoints) => endpoints,
+        Err(error) => {
+            log::warn!("VB-CABLE endpoint probe failed: {error}");
+            lock_voice_env_status_cache().latest().unwrap_or_default()
+        }
+    };
+    let (cable_input, cable_output) = endpoints;
     build_voice_env_status(cable_input, cable_output)
 }
 
 /// 带缓存的探测：cpal 全量枚举音频设备走 COM/RPC，前端状态页每秒轮询一次，
 /// 不缓存时实测占 ~3-4% 单核。修复/安装流程请用无缓存的 `voice_env_status()`。
 pub fn voice_env_status_cached() -> VoiceEnvStatus {
-    // ponytail: TTL 30s，声卡安装后状态页最多延迟 30s 变绿（修复按钮走无缓存路径）
-    static CACHE: std::sync::Mutex<Option<(std::time::Instant, (bool, bool))>> =
-        std::sync::Mutex::new(None);
-    fn probe_cached() -> (bool, bool) {
-        let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((at, r)) = *g {
-            if at.elapsed() < std::time::Duration::from_secs(30) {
-                return r;
-            }
+    // 锁在探测期间保持，使并发的修复结果不会被更早启动的旧探测覆盖。
+    let mut cache = lock_voice_env_status_cache();
+    let endpoints = match cached_probe_with(
+        &mut cache,
+        Instant::now(),
+        VOICE_ENV_STATUS_CACHE_TTL,
+        probe_cable_endpoints,
+    ) {
+        Ok(endpoints) => endpoints,
+        Err(error) => {
+            // 瞬时 COM/RPC 枚举失败不写入 30s 缓存；保留上次成功状态并在
+            // 下一次轮询立即重试。
+            log::warn!("VB-CABLE cached endpoint probe failed: {error}");
+            cache.latest().unwrap_or_default()
         }
-        let r = probe_cable_endpoints();
-        *g = Some((std::time::Instant::now(), r));
-        r
-    }
-    let (cable_input, cable_output) = probe_cached();
+    };
+    drop(cache);
+    let (cable_input, cable_output) = endpoints;
     build_voice_env_status(cable_input, cable_output)
 }
 
@@ -221,6 +357,7 @@ fn app_path_for_script() -> PathBuf {
 }
 
 fn run_configure_script(mode: &str, zip: &Path) -> Result<VoiceEnvActionResult, String> {
+    invalidate_voice_env_status_cache();
     let script = find_configure_script().ok_or_else(|| "未找到 configure-xiaomi-audio.ps1".to_string())?;
     let app_path = app_path_for_script();
     log::info!(
@@ -268,13 +405,21 @@ fn run_configure_script(mode: &str, zip: &Path) -> Result<VoiceEnvActionResult, 
 
     // 稍等端点出现
     for _ in 0..15 {
-        let (i, o) = probe_cable_endpoints();
-        if i && o {
-            break;
+        match probe_cable_endpoints() {
+            Ok((i, o)) if i && o => break,
+            Ok(_) | Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    let (cable_input, cable_output) = probe_cable_endpoints();
+    let (cable_input, cable_output) = match probe_and_store_voice_env_status_cache() {
+        Ok(endpoints) => endpoints,
+        Err(error) => {
+            invalidate_voice_env_status_cache();
+            log::warn!("VB-CABLE final endpoint probe failed: {error}");
+            (false, false)
+        }
+    };
     let ready = cable_input && cable_output;
 
     let message = if let Some(w) = warning {
@@ -402,4 +547,180 @@ pub fn open_download_zip() -> Result<VoiceEnvActionResult, String> {
         message: "已开始下载官方驱动包。安装完成后请再点「虚拟声卡检测与修复」。".into(),
         report_path: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::sync::{mpsc, Arc};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn successful_fresh_probe_replaces_an_unexpired_cached_result() {
+        let started = Instant::now();
+        let mut cache = VoiceEnvStatusCache::new();
+        cache.store(started, (false, false));
+        assert_eq!(
+            cache.get_fresh(started + Duration::from_secs(1), VOICE_ENV_STATUS_CACHE_TTL),
+            Some((false, false))
+        );
+
+        cache.store(started + Duration::from_secs(2), (true, true));
+        assert_eq!(
+            cache.get_fresh(started + Duration::from_secs(3), VOICE_ENV_STATUS_CACHE_TTL),
+            Some((true, true))
+        );
+    }
+
+    #[test]
+    fn probe_errors_are_not_cached_as_missing_devices() {
+        let started = Instant::now();
+        let mut cache = VoiceEnvStatusCache::new();
+        let calls = Cell::new(0);
+
+        let first = cached_probe_with(
+            &mut cache,
+            started,
+            VOICE_ENV_STATUS_CACHE_TTL,
+            || {
+                calls.set(calls.get() + 1);
+                Err("temporary COM error".into())
+            },
+        );
+        assert!(first.is_err());
+        assert_eq!(cache.latest(), None);
+
+        let second = cached_probe_with(
+            &mut cache,
+            started + Duration::from_millis(1),
+            VOICE_ENV_STATUS_CACHE_TTL,
+            || {
+                calls.set(calls.get() + 1);
+                Ok((true, true))
+            },
+        );
+        assert_eq!(second.unwrap(), (true, true));
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn successful_missing_result_is_cached_until_ttl_expires() {
+        let started = Instant::now();
+        let mut cache = VoiceEnvStatusCache::new();
+        let calls = Cell::new(0);
+
+        let first = cached_probe_with(
+            &mut cache,
+            started,
+            VOICE_ENV_STATUS_CACHE_TTL,
+            || {
+                calls.set(calls.get() + 1);
+                Ok((false, false))
+            },
+        );
+        assert_eq!(first.unwrap(), (false, false));
+
+        let stored_at = cache.entry.unwrap().0;
+
+        let second = cached_probe_with(
+            &mut cache,
+            stored_at + Duration::from_secs(1),
+            VOICE_ENV_STATUS_CACHE_TTL,
+            || {
+                calls.set(calls.get() + 1);
+                Ok((true, true))
+            },
+        );
+        assert_eq!(second.unwrap(), (false, false));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn driver_zip_miss_is_not_cached_permanently() {
+        let cache = Mutex::new(None);
+        let calls = Cell::new(0);
+        assert!(cached_driver_zip_with(&cache, || {
+            calls.set(calls.get() + 1);
+            None
+        })
+        .is_none());
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nexus-prime-driver-cache-{}-{unique}.zip",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"verified by injected test finder").unwrap();
+
+        let found = cached_driver_zip_with(&cache, || {
+            calls.set(calls.get() + 1);
+            Some(path.clone())
+        });
+        assert_eq!(found.as_deref(), Some(path.as_path()));
+        assert_eq!(
+            cached_driver_zip_with(&cache, || panic!("cached path should be reused"))
+                .as_deref(),
+            Some(path.as_path())
+        );
+        assert_eq!(calls.get(), 2);
+
+        std::fs::remove_file(&path).unwrap();
+
+        // 缓存文件消失后，一次 finder miss 必须清掉旧路径。即使同一
+        // 路径随后被坏内容重建，也必须再走 finder/哈希验证，不能直接信任。
+        assert!(cached_driver_zip_with(&cache, || None).is_none());
+        std::fs::write(&path, b"damaged replacement").unwrap();
+        let recheck_calls = Cell::new(0);
+        assert!(cached_driver_zip_with(&cache, || {
+            recheck_calls.set(recheck_calls.get() + 1);
+            None
+        })
+        .is_none());
+        assert_eq!(recheck_calls.get(), 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn older_probe_cannot_overwrite_a_later_repair_result() {
+        let cache = Arc::new(Mutex::new(VoiceEnvStatusCache::new()));
+        let (old_probe_started_tx, old_probe_started_rx) = mpsc::channel();
+        let (release_old_probe_tx, release_old_probe_rx) = mpsc::channel();
+
+        let old_cache = Arc::clone(&cache);
+        let old_probe = std::thread::spawn(move || {
+            probe_and_store_with(&old_cache, || {
+                old_probe_started_tx.send(()).unwrap();
+                release_old_probe_rx.recv().unwrap();
+                Ok((false, false))
+            })
+            .unwrap();
+        });
+
+        // 旧探测已持有锁时启动修复结果写入。后者必须等待旧探测完成，
+        // 因此最终缓存一定是更新的修复结果。
+        old_probe_started_rx.recv().unwrap();
+        assert!(matches!(
+            cache.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ));
+        let repair_cache = Arc::clone(&cache);
+        let repair_probe = std::thread::spawn(move || {
+            probe_and_store_with(&repair_cache, || Ok((true, true))).unwrap();
+        });
+        release_old_probe_tx.send(()).unwrap();
+
+        old_probe.join().unwrap();
+        repair_probe.join().unwrap();
+        assert_eq!(
+            cache
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .latest(),
+            Some((true, true))
+        );
+    }
 }

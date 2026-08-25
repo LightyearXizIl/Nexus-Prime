@@ -11,9 +11,9 @@ fn restore_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
+        crate::set_main_webview_visible(app, true);
         let _ = window.set_focus();
     }
-    crate::set_main_webview_visible(app, true);
 }
 
 fn quit_app(app: &AppHandle) {
