@@ -17,13 +17,20 @@
 - `npm.cmd test`：30/30 通过；`npm.cmd run build`：通过。
 - `cargo test --workspace`：89/89 通过；`cargo check --workspace --all-targets`：通过。
 - PowerShell 安装脚本语法检查、`git diff --check` 与 `npm.cmd run tauri:build` 均通过。
-- 本地正式 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.8_x64-setup.exe`，13,270,177 bytes，SHA-256 `DA38EE58C48E0714E17DFB5F6CB35605AE72CA4D9792DA1D41BC80E0D60B1E44`。已检查 NSIS 脚本包含 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本。
+- 本地正式 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.8_x64-setup.exe`，13,271,770 bytes，SHA-256 `D205316D3D927949146FC1CFDD83CF470678F6046EF7D7D93E06ED937E35F499`。已检查 NSIS 脚本包含 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本。
+
+### GitHub 发布记录
+
+- 源码提交：`8d7fd06e977fbb70a0794a0a560916661ac279ca`（`main`）。
+- [`v0.2.7 Release`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.2.7)：`Nexus.Prime_0.2.7_x64-setup.exe`，13,266,457 bytes，SHA-256 `8C5D004DDACC1F78FBF347289462A8FDDCDF23ECBDE0BE396519000E5C6826C8`，GitHub 资产状态为 `uploaded`。
+- [`v0.2.8 Release`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.2.8)：`Nexus.Prime_0.2.8_x64-setup.exe`，13,271,770 bytes，SHA-256 `D205316D3D927949146FC1CFDD83CF470678F6046EF7D7D93E06ED937E35F499`，GitHub 资产状态为 `uploaded`。
+- v0.2.8 已公开发布且是 `releases/latest`；应用内更新器会读取它并匹配同名的 x64 NSIS 安装包。
 
 ### 待真实 Windows 验收
 
 - 当前机器仍在运行已安装的 v0.2.6，`\\.\WinUHid` 尚未创建；本轮没有把 v0.2.8 安装到真实环境，也没有完成 UAC/驱动设备/豆包或微信的端到端验收。
 - 安装 v0.2.8 后，先接受首次 WinUHid 安装提示；若未就绪，在首页执行“修复虚拟键盘”，按结果重启 Windows。随后分别在 Click/Hold 下验证豆包右 Alt、微信 Ctrl + Win 和 Ctrl + Shift + D，确认日志为 `route=virtual_hid`；再回归 Alt+Tab、Space、音量、方向与返回。
-- 本次只推送源码与文档；尚未创建 Git tag、GitHub Release 或上传 v0.2.8 安装包资产。
+- 两个 Release 已包含正式安装包；仍需在真实 Windows 设备安装后完成驱动、输入法与遥控器端到端验收。
 
 ## 本次范围（v0.2.6，2026-08-25）
 
