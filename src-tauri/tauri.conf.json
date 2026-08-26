@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/refs/heads/v2/crates/tauri-utils/schema.json",
   "productName": "Nexus Prime",
-  "version": "0.2.6",
+  "version": "0.2.8",
   "identifier": "com.lightyear.nexusprime",
   "build": {
     "frontendDist": "../dist",
@@ -17,6 +17,7 @@
         "height": 814,
         "minWidth": 880,
         "minHeight": 720,
+        "visible": false,
         "resizable": true,
         "center": true,
         "decorations": true
@@ -31,7 +32,9 @@
     "targets": "all",
     "useLocalToolsDir": true,
     "resources": [
-      "assets/xiaomi/*"
+      "assets/xiaomi/*",
+      "assets/winuhid/*",
+      "assets/winuhid/driver/*"
     ],
     "icon": [
       "icons/32x32.png",

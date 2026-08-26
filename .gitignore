@@ -99,8 +99,9 @@ id_ed25519.*
 *.wav
 *.reg
 
-# Optional third-party binary supplied locally by the developer
-src-tauri/assets/winuhid/WinUHid.dll
+# Bundled WinUHid runtime and driver package
+!src-tauri/assets/winuhid/WinUHid.dll
+!src-tauri/assets/winuhid/driver/WinUHidDriver.dll
 
 # Editor / IDE / local agent tooling
 .vscode/

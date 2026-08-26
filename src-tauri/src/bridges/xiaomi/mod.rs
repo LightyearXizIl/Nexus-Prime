@@ -2,6 +2,7 @@ pub mod conflict_guard;
 pub mod ble_bridge;
 pub mod adpcm_decoder;
 pub mod hid_injector;
+pub mod winuhid_env;
 #[cfg(test)]
 mod voice_f5_suppress_tests;
 pub mod hid_tap_runtime;

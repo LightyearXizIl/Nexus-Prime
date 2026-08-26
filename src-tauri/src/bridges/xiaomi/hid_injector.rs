@@ -77,6 +77,14 @@ unsafe impl Send for Devices {}
 static INIT_TRIED: AtomicBool = AtomicBool::new(false);
 static DEVICES: Mutex<Option<Devices>> = Mutex::new(None);
 
+/// The bundled driver can become available after the process has already
+/// attempted initialization. Clear the one-shot probe state before retrying.
+pub fn reset_and_retry() {
+    *DEVICES.lock() = None;
+    INIT_TRIED.store(false, Ordering::SeqCst);
+    let _ = ensure_init();
+}
+
 fn dll_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("REMOTE_BRIDGE_WINUHID_DLL") {

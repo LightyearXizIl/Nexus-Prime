@@ -4,7 +4,6 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{copy, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const GADGET_VERSION: &str = "17.15.3";
 pub const GADGET_ARCHIVE_NAME: &str = "frida-gadget-17.15.3-windows-x86_64.dll.xz";
@@ -150,7 +149,7 @@ fn write_verified_text(path: &Path, content: &str) -> Result<(), String> {
 fn lock_runtime_acl(path: &Path) -> Result<(), String> {
     fn apply(target: &Path, directory: bool) -> Result<(), String> {
         let suffix = if directory { "(OI)(CI)" } else { "" };
-        let output = Command::new("icacls.exe")
+        let output = crate::windows_command::background_command("icacls.exe")
             .arg(target)
             .args([
                 "/inheritance:r",

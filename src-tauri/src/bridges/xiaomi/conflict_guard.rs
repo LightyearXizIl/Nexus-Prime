@@ -221,8 +221,29 @@ pub fn retry_after_clear() -> Result<String, String> {
     }
 }
 
-fn pids_holding_port(port: u16, proto: &str) -> HashSet<u32> {
+fn parse_port_pids(text: &str, port: u16) -> HashSet<u32> {
     let mut out = HashSet::new();
+    let port_s = port.to_string();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        // TCP: Proto Local Foreign State PID | UDP: Proto Local Foreign PID
+        let local = parts[1];
+        let local_port = local.rsplit_once(':').map(|(_, p)| p);
+        if local_port != Some(port_s.as_str()) {
+            continue;
+        }
+        let pid_str = parts.last().copied().unwrap_or("");
+        if let Ok(pid) = pid_str.parse::<u32>() {
+            out.insert(pid);
+        }
+    }
+    out
+}
+
+fn pids_holding_port(port: u16, proto: &str) -> HashSet<u32> {
     #[cfg(target_os = "windows")]
     {
         let proto_arg = if proto.eq_ignore_ascii_case("UDP") {
@@ -230,33 +251,20 @@ fn pids_holding_port(port: u16, proto: &str) -> HashSet<u32> {
         } else {
             "tcp"
         };
-        let Ok(output) = std::process::Command::new("netstat")
+        let Ok(output) = crate::windows_command::background_command("netstat.exe")
             .args(["-ano", "-p", proto_arg])
             .output()
         else {
-            return out;
+            return HashSet::new();
         };
         let text = String::from_utf8_lossy(&output.stdout);
-        let port_s = port.to_string();
-        for line in text.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 4 {
-                continue;
-            }
-            // TCP: Proto Local Foreign State PID | UDP: Proto Local Foreign PID
-            let local = parts[1];
-            let local_port = local.rsplit_once(':').map(|(_, p)| p);
-            if local_port != Some(port_s.as_str()) {
-                continue;
-            }
-            let pid_str = parts.last().copied().unwrap_or("");
-            if let Ok(pid) = pid_str.parse::<u32>() {
-                out.insert(pid);
-            }
-        }
+        return parse_port_pids(&text, port);
     }
-    let _ = (port, proto);
-    out
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (port, proto);
+        HashSet::new()
+    }
 }
 
 fn list_whitelist_processes() -> Vec<(u32, String)> {
@@ -419,4 +427,22 @@ pub fn notify_hid_tap_bind_failed(port: u16, err: &str) {
         &format!("HID Tap 端口 {port} 绑定失败: {err}"),
         true,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_tcp_udp_and_ignores_malformed_netstat_rows() {
+        let output = "\
+  TCP    127.0.0.1:30684      0.0.0.0:0      LISTENING       1234\n\
+  UDP    127.0.0.1:31680      *:*                            5678\n\
+  UDP    127.0.0.1:9999       *:*                            4321\n\
+  malformed\n";
+
+        assert_eq!(parse_port_pids(output, 30684), HashSet::from([1234]));
+        assert_eq!(parse_port_pids(output, 31680), HashSet::from([5678]));
+        assert!(parse_port_pids(output, 1).is_empty());
+    }
 }

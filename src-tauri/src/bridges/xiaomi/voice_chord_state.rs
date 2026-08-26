@@ -1,11 +1,23 @@
 //! 与平台无关的语音组合键状态机。
 //!
-//! Windows 注入层只提供 `inject(keys, key_up)`；此处保证记录实际 DOWN 的键位、
-//! DOWN 失败立即补偿，以及 KEYUP 至多重试一次。
+//! Windows 注入层提供一个实际路由（虚拟 HID 或 SendInput）；此处保证记录实际
+//! DOWN 的键位与路由、DOWN 失败立即补偿，以及 KEYUP 至多重试一次。
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VoiceInjectionRoute {
+    VirtualHid,
+    SendInputFallback,
+}
+
+#[derive(Debug)]
+struct HeldVoiceChord {
+    keys: Vec<u16>,
+    route: VoiceInjectionRoute,
+}
 
 #[derive(Default, Debug)]
 pub(crate) struct VoiceChordState {
-    held: Option<Vec<u16>>,
+    held: Option<HeldVoiceChord>,
 }
 
 impl VoiceChordState {
@@ -18,30 +30,46 @@ impl VoiceChordState {
         self.held.is_some()
     }
 
-    pub(crate) fn press_with<F>(&mut self, keys: &[u16], mut inject: F) -> bool
+    pub(crate) fn held_route(&self) -> Option<VoiceInjectionRoute> {
+        self.held.as_ref().map(|held| held.route)
+    }
+
+    pub(crate) fn press_with<F, C>(
+        &mut self,
+        keys: &[u16],
+        mut inject_down: F,
+        mut compensate: C,
+    ) -> bool
     where
-        F: FnMut(&[u16], bool) -> bool,
+        F: FnMut(&[u16]) -> Option<VoiceInjectionRoute>,
+        C: FnMut(&[u16]),
     {
         if self.held.is_some() {
             return false;
         }
-        if inject(keys, false) {
-            self.held = Some(keys.to_vec());
+        if let Some(route) = inject_down(keys) {
+            self.held = Some(HeldVoiceChord {
+                keys: keys.to_vec(),
+                route,
+            });
             true
         } else {
-            // SendInput 可能已写入前半段，必须补一组反向 KEYUP。
-            let _ = inject(keys, true);
+            // 任一路由可能已写入前半段，必须补一组反向 KEYUP。
+            compensate(keys);
             false
         }
     }
 
-    pub(crate) fn release_with<F>(&mut self, mut inject: F) -> Option<(Vec<u16>, bool)>
+    pub(crate) fn release_with<F>(
+        &mut self,
+        mut inject: F,
+    ) -> Option<(Vec<u16>, VoiceInjectionRoute, bool)>
     where
-        F: FnMut(&[u16], bool) -> bool,
+        F: FnMut(&[u16], VoiceInjectionRoute) -> bool,
     {
-        let keys = self.held.take()?;
-        let released = inject(&keys, true) || inject(&keys, true);
-        Some((keys, released))
+        let held = self.held.take()?;
+        let released = inject(&held.keys, held.route) || inject(&held.keys, held.route);
+        Some((held.keys, held.route, released))
     }
 }
 
@@ -53,35 +81,47 @@ mod tests {
     fn releases_original_keys_and_is_idempotent() {
         let keys = vec![0xA2, 0x5B];
         let mut state = VoiceChordState::default();
-        assert!(state.press_with(&keys, |_keys, _up| true));
-        assert_eq!(state.release_with(|_keys, _up| true), Some((keys, true)));
+        assert!(state.press_with(
+            &keys,
+            |_keys| Some(VoiceInjectionRoute::VirtualHid),
+            |_keys| {},
+        ));
+        assert_eq!(
+            state.release_with(|_keys, route| route == VoiceInjectionRoute::VirtualHid),
+            Some((keys, VoiceInjectionRoute::VirtualHid, true))
+        );
         assert!(state.release_with(|_keys, _up| true).is_none());
     }
 
     #[test]
     fn partial_down_is_compensated() {
         let mut state = VoiceChordState::default();
-        let mut phases = Vec::new();
-        assert!(!state.press_with(&[0xA2, 0x5B], |_keys, up| {
-            phases.push(up);
-            false
-        }));
-        assert_eq!(phases, vec![false, true]);
+        let mut compensated = false;
+        assert!(!state.press_with(
+            &[0xA2, 0x5B],
+            |_keys| None,
+            |_keys| compensated = true,
+        ));
+        assert!(compensated);
         assert!(!state.is_held());
     }
 
     #[test]
     fn release_retries_once() {
         let mut state = VoiceChordState::default();
-        assert!(state.press_with(&[0xA2, 0x5B], |_keys, _up| true));
+        assert!(state.press_with(
+            &[0xA2, 0x5B],
+            |_keys| Some(VoiceInjectionRoute::SendInputFallback),
+            |_keys| {},
+        ));
         let mut attempts = 0;
         assert_eq!(
-            state.release_with(|_keys, up| {
-                assert!(up);
+            state.release_with(|_keys, route| {
+                assert_eq!(route, VoiceInjectionRoute::SendInputFallback);
                 attempts += 1;
                 attempts == 2
             }),
-            Some((vec![0xA2, 0x5B], true))
+            Some((vec![0xA2, 0x5B], VoiceInjectionRoute::SendInputFallback, true))
         );
         assert_eq!(attempts, 2);
     }
@@ -92,15 +132,42 @@ mod tests {
         let mut state = VoiceChordState::default();
         let mut calls = Vec::new();
 
-        assert!(state.press_with(&keys, |injected, up| {
-            calls.push((injected.to_vec(), up));
-            true
-        }));
-        assert_eq!(state.release_with(|injected, up| {
-            calls.push((injected.to_vec(), up));
-            true
-        }), Some((keys.clone(), true)));
-        assert!(state.release_with(|_injected, _up| true).is_none());
-        assert_eq!(calls, vec![(keys.clone(), false), (keys, true)]);
+        assert!(state.press_with(
+            &keys,
+            |injected| {
+                calls.push((injected.to_vec(), VoiceInjectionRoute::VirtualHid));
+                Some(VoiceInjectionRoute::VirtualHid)
+            },
+            |_keys| {},
+        ));
+        assert_eq!(
+            state.release_with(|injected, route| {
+                calls.push((injected.to_vec(), route));
+                true
+            }),
+            Some((keys.clone(), VoiceInjectionRoute::VirtualHid, true))
+        );
+        assert!(state.release_with(|_injected, _route| true).is_none());
+        assert_eq!(
+            calls,
+            vec![
+                (keys.clone(), VoiceInjectionRoute::VirtualHid),
+                (keys, VoiceInjectionRoute::VirtualHid),
+            ]
+        );
+    }
+
+    #[test]
+    fn release_uses_the_route_selected_on_press() {
+        let mut state = VoiceChordState::default();
+        assert!(state.press_with(
+            &[0xA5],
+            |_keys| Some(VoiceInjectionRoute::VirtualHid),
+            |_keys| {},
+        ));
+        assert_eq!(
+            state.release_with(|_keys, route| route == VoiceInjectionRoute::VirtualHid),
+            Some((vec![0xA5], VoiceInjectionRoute::VirtualHid, true))
+        );
     }
 }

@@ -15,6 +15,7 @@ type SectionId = "general" | "appearance" | "about";
 
 const settings = ref<GlobalSettings>({
   autostart: false,
+  autostart_minimized_to_tray: false,
   language: "zh-CN",
   minimize_to_tray: true,
   auto_check_updates: true,
@@ -181,7 +182,7 @@ async function openExternal(url: string) {
             <span></span><span></span>
           </div>
           <div class="loading-settings-list">
-            <span v-for="index in 3" :key="index"></span>
+            <span v-for="index in 4" :key="index"></span>
           </div>
         </section>
 
@@ -202,6 +203,17 @@ async function openExternal(url: string) {
               </div>
               <label class="toggle" :title="t('settings.autostart')">
                 <input v-model="settings.autostart" type="checkbox" :aria-label="t('settings.autostart')" @change="onSettingChange" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="preference-row" :class="{ 'is-disabled': !settings.autostart }">
+              <div class="preference-icon" aria-hidden="true">⌄</div>
+              <div class="preference-copy">
+                <strong>{{ t("settings.autostartMinimize") }}</strong>
+                <span>{{ settings.autostart ? t("settings.autostartMinimizeHint") : t("settings.autostartMinimizeDisabledHint") }}</span>
+              </div>
+              <label class="toggle" :title="t('settings.autostartMinimize')">
+                <input v-model="settings.autostart_minimized_to_tray" type="checkbox" :disabled="!settings.autostart" :aria-label="t('settings.autostartMinimize')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -433,6 +445,7 @@ async function openExternal(url: string) {
 .toggle input:checked + .toggle-slider { background: var(--primary); }
 .toggle input:checked + .toggle-slider::before { transform: translateX(19px); }
 .toggle input:focus-visible + .toggle-slider { outline: 2px solid var(--primary); outline-offset: 2px; }
+.toggle input:disabled + .toggle-slider { cursor: default; }
 .is-disabled { opacity: 0.55; }
 .disabled-toggle { width: 42px; height: 23px; border-radius: 999px; background: var(--border); }
 .disabled-toggle::before { display: block; width: 17px; height: 17px; margin: 3px; border-radius: 50%; background: var(--control-thumb); content: ""; }

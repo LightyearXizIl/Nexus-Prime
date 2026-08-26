@@ -1,6 +1,29 @@
 # 交接记录
 
-更新时间：2026-08-25
+更新时间：2026-08-26
+
+## 本次范围（v0.2.8，2026-08-26）
+
+本次把截至当前工作区的图标、启动行为与虚拟键盘可靠性改动统一整理为 v0.2.8：
+
+- **输入法虚拟键盘修复**：豆包右 Alt、微信旧版 Ctrl + Win 和新版 Ctrl + Shift + D 的语音快捷键，在 Click、Click 后长按和 Hold 三条路径都会优先使用 WinUHid；一次按下后会记住实际注入路由，抬起、重试与异常补偿只使用同一路由，防止混用 SendInput、重复触发或粘键。WinUHid 不可用时才回退 SendInput，并写入 `route=virtual_hid` 或 `route=send_input_fallback` 日志。
+- **不扩大影响范围**：Alt 组合、Space、静音与音量保留原有分流；ATVV、返回、方向、音量及其它普通遥控器映射不改为虚拟键盘。新增回归覆盖固定路由释放、注入失败补偿与普通 Alt 组合不优先走 WinUHid。
+- **驱动与修复入口**：NSIS 资源含 WinUHid SDK DLL、证书、INF、CAT、驱动 DLL 和 PowerShell 安装脚本。首次启动后台检测并请求 UAC 安装；首页“修复虚拟键盘”会先释放正在按住的语音组合键，强制重新部署/安装，并明确显示“已就绪”“需要重启”“UAC 已取消”或失败信息。声卡、虚拟键盘、ATVV 和桥接修复互斥执行。
+- **启动与桌面体验**：开机启动使用当前用户 Run 注册表并迁移清理旧 Startup 快捷方式；“登录时最小化到托盘”只影响 Windows 登录启动，手动打开仍显示窗口。端口检测和 HID Tap 的后台系统命令不再弹出控制台窗口。图标资源链路继续使用透明 `N.` 图标，覆盖桌面、任务栏、托盘、安装器、网页和移动端资产。
+- **文档与版本**：`package.json`、Cargo、Tauri 配置均为 `0.2.8`；README、更新日志和第三方声明已写明虚拟键盘用途、修复方法和 WinUHid 来源。
+
+### 已完成验证
+
+- `npm.cmd test`：30/30 通过；`npm.cmd run build`：通过。
+- `cargo test --workspace`：89/89 通过；`cargo check --workspace --all-targets`：通过。
+- PowerShell 安装脚本语法检查、`git diff --check` 与 `npm.cmd run tauri:build` 均通过。
+- 本地正式 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.8_x64-setup.exe`，13,270,177 bytes，SHA-256 `DA38EE58C48E0714E17DFB5F6CB35605AE72CA4D9792DA1D41BC80E0D60B1E44`。已检查 NSIS 脚本包含 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本。
+
+### 待真实 Windows 验收
+
+- 当前机器仍在运行已安装的 v0.2.6，`\\.\WinUHid` 尚未创建；本轮没有把 v0.2.8 安装到真实环境，也没有完成 UAC/驱动设备/豆包或微信的端到端验收。
+- 安装 v0.2.8 后，先接受首次 WinUHid 安装提示；若未就绪，在首页执行“修复虚拟键盘”，按结果重启 Windows。随后分别在 Click/Hold 下验证豆包右 Alt、微信 Ctrl + Win 和 Ctrl + Shift + D，确认日志为 `route=virtual_hid`；再回归 Alt+Tab、Space、音量、方向与返回。
+- 本次只推送源码与文档；尚未创建 Git tag、GitHub Release 或上传 v0.2.8 安装包资产。
 
 ## 本次范围（v0.2.6，2026-08-25）
 

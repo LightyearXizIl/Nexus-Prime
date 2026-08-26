@@ -5,7 +5,7 @@
 use crate::bridges::xiaomi::connect;
 use crate::bridges::xiaomi::key_log::{button_label, emit_key_phase, emit_message};
 use crate::bridges::xiaomi::tv_gate;
-use crate::bridges::xiaomi::voice_chord_state::VoiceChordState;
+use crate::bridges::xiaomi::voice_chord_state::{VoiceChordState, VoiceInjectionRoute};
 use crate::config::manager::{ConfigManager, DeviceConfig, KeyAction};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -1016,10 +1016,11 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     }
     // 点击 / 按住：快捷键都跟遥控按下/抬起走（短按≈点按，长按=按住）
     // 「点击模式」的短按点按由 input_session 在短于阈值抬起时改走 tap；此处处理按下/抬起和弦
-    if press_voice_shortcut(&vks, "remote_down") {
+    if let Some(route) = press_voice_shortcut(&vks, "remote_down") {
         log::info!(
-            "XIAOMI VOICE SHORTCUT DOWN mode={:?} vks={vks:?}",
-            config.trigger_mode
+            "XIAOMI VOICE SHORTCUT DOWN mode={:?} route={} vks={vks:?}",
+            config.trigger_mode,
+            voice_injection_route_label(route),
         );
     }
 }
@@ -1043,8 +1044,11 @@ pub fn voice_shortcut_tap(app: &AppHandle) {
     } else {
         70
     };
-    tap_vks(&vks, hold);
-    log::info!("XIAOMI VOICE SHORTCUT TAP (click) vks={vks:?} hold_ms={hold}");
+    let route = tap_voice_shortcut_vks(&vks, hold);
+    log::info!(
+        "XIAOMI VOICE SHORTCUT TAP (click) route={} vks={vks:?} hold_ms={hold}",
+        voice_injection_route_label(route),
+    );
 }
 
 /// 点击模式：确认已进入长按后补发 DOWN（若尚未 DOWN）
@@ -1059,36 +1063,99 @@ pub fn voice_shortcut_ensure_down(app: &AppHandle) {
     if vks.is_empty() {
         return;
     }
-    if press_voice_shortcut(&vks, "hold_threshold") {
-        log::info!("XIAOMI VOICE SHORTCUT DOWN (hold-after-click-threshold) vks={vks:?}");
+    if let Some(route) = press_voice_shortcut(&vks, "hold_threshold") {
+        log::info!(
+            "XIAOMI VOICE SHORTCUT DOWN (hold-after-click-threshold) route={} vks={vks:?}",
+            voice_injection_route_label(route),
+        );
     }
 }
 
-fn press_voice_shortcut(vks: &[u16], reason: &str) -> bool {
+fn press_voice_shortcut(vks: &[u16], reason: &str) -> Option<VoiceInjectionRoute> {
     let mut state = VOICE_HELD_KEYS.lock();
     if state.is_held() {
         log::debug!("XIAOMI VOICE SHORTCUT DOWN ignored already_held reason={reason}");
-        return false;
+        return None;
     }
-    let pressed = state.press_with(vks, key_chord);
+    let pressed = state.press_with(
+        vks,
+        inject_voice_shortcut_down,
+        compensate_voice_shortcut_down,
+    );
     if !pressed {
         log::warn!("XIAOMI VOICE SHORTCUT DOWN failed reason={reason} vks={vks:?}");
     }
-    pressed
+    state.held_route()
 }
 
 /// 释放实际按下的组合键；对同一会话重复调用不产生额外键盘事件。
 pub fn force_release_voice_shortcut(reason: &str) -> bool {
     let mut state = VOICE_HELD_KEYS.lock();
-    let Some((keys, released)) = state.release_with(key_chord) else {
+    let Some((keys, route, released)) = state.release_with(release_voice_shortcut) else {
         return false;
     };
     if released {
-        log::info!("XIAOMI VOICE SHORTCUT UP reason={reason} vks={keys:?}");
+        log::info!(
+            "XIAOMI VOICE SHORTCUT UP reason={reason} route={} vks={keys:?}",
+            voice_injection_route_label(route),
+        );
     } else {
         log::error!("XIAOMI VOICE SHORTCUT UP failed reason={reason} vks={keys:?}");
     }
     released
+}
+
+fn voice_injection_route_label(route: VoiceInjectionRoute) -> &'static str {
+    match route {
+        VoiceInjectionRoute::VirtualHid => "virtual_hid",
+        VoiceInjectionRoute::SendInputFallback => "send_input_fallback",
+    }
+}
+
+/// Voice shortcuts are the only path allowed to bypass the ordinary Alt/Space/media
+/// exclusions. IME global shortcuts such as Doubao's right Alt need hardware origin.
+fn should_try_virtual_hid_for_voice(vks: &[u16]) -> bool {
+    !vks.is_empty()
+}
+
+fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
+    if should_try_virtual_hid_for_voice(vks)
+        && crate::bridges::xiaomi::hid_injector::press(vks).is_ok()
+    {
+        return Some(VoiceInjectionRoute::VirtualHid);
+    }
+
+    // A driver write may have partially succeeded before reporting an error.
+    // Clear it before falling back to SendInput so a modifier can never remain held.
+    let _ = crate::bridges::xiaomi::hid_injector::release(vks);
+    if key_chord(vks, false) {
+        Some(VoiceInjectionRoute::SendInputFallback)
+    } else {
+        None
+    }
+}
+
+fn compensate_voice_shortcut_down(vks: &[u16]) {
+    let _ = crate::bridges::xiaomi::hid_injector::release(vks);
+    let _ = key_chord(vks, true);
+}
+
+fn release_voice_shortcut(vks: &[u16], route: VoiceInjectionRoute) -> bool {
+    match route {
+        VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release(vks).is_ok(),
+        VoiceInjectionRoute::SendInputFallback => key_chord(vks, true),
+    }
+}
+
+fn tap_voice_shortcut_vks(vks: &[u16], hold_ms: u64) -> VoiceInjectionRoute {
+    if should_try_virtual_hid_for_voice(vks)
+        && crate::bridges::xiaomi::hid_injector::tap_vks(vks, hold_ms)
+    {
+        let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+        return VoiceInjectionRoute::VirtualHid;
+    }
+    tap_vks_fallback(vks, hold_ms);
+    VoiceInjectionRoute::SendInputFallback
 }
 
 /// ATVV opcode 路径调用（对齐 VoiceShortcut.press/release/tap）
@@ -1413,6 +1480,10 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) {
         }
     }
 
+    tap_vks_fallback(vks, hold_ms);
+}
+
+fn tap_vks_fallback(vks: &[u16], hold_ms: u64) {
     match fallback_injection_route(vks) {
         FallbackInjectionRoute::SystemAltTabSendInput => {
             // Do not arm ALT_CHORD_ACTIVE here. Alt+Tab must reach Windows as a
@@ -1432,10 +1503,7 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) {
         FallbackInjectionRoute::SendInput => {
             inject_chord_via_send_input(vks, hold_ms);
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
-            log::debug!(
-                "XIAOMI MAPPING inject SendInput vks={vks:?} hold_ms={hold_ms} forced={}",
-                !try_virtual_hid
-            );
+            log::debug!("XIAOMI MAPPING inject SendInput vks={vks:?} hold_ms={hold_ms}");
         }
     }
 }
@@ -1777,6 +1845,15 @@ mod gesture_tests {
         assert!(!should_try_virtual_hid(&[0xA5, 0x20]));
         assert!(!should_try_virtual_hid(&[0xA5, 0x53]));
         assert!(should_try_virtual_hid(&[0x11, 0x09]));
+    }
+
+    #[test]
+    fn voice_shortcuts_try_virtual_hid_for_both_ime_presets() {
+        // Doubao/Qianwen: right Alt; WeChat: legacy Ctrl+Win and current Ctrl+Shift+D.
+        assert!(should_try_virtual_hid_for_voice(&[0xA5]));
+        assert!(should_try_virtual_hid_for_voice(&[0xA2, 0x5B]));
+        assert!(should_try_virtual_hid_for_voice(&[0xA2, 0xA0, 0x44]));
+        assert!(!should_try_virtual_hid_for_voice(&[]));
     }
 
     #[test]

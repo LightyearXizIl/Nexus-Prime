@@ -51,7 +51,11 @@ interface HostStatus {
 
 const restarting = ref(false);
 const voiceRepairing = ref(false);
+const virtualKeyboardRepairing = ref(false);
 const atvvRepairing = ref(false);
+const repairBusy = computed(
+  () => restarting.value || voiceRepairing.value || virtualKeyboardRepairing.value || atvvRepairing.value,
+);
 const showVoiceChoice = ref(false);
 const voiceChoiceMsg = ref("");
 const showLogModal = ref(false);
@@ -111,30 +115,35 @@ const showVoiceShortcutTip = ref(false);
 const showGainTip = ref(false);
 const showTriggerTip = ref(false);
 const showRepairTip = ref(false);
+const showVirtualKeyboardTip = ref(false);
 const showAtvvTip = ref(false);
 const showRestartTip = ref(false);
 const voiceInfoBtn = ref<HTMLElement | null>(null);
 const gainInfoBtn = ref<HTMLElement | null>(null);
 const triggerInfoBtn = ref<HTMLElement | null>(null);
 const repairInfoBtn = ref<HTMLElement | null>(null);
+const virtualKeyboardInfoBtn = ref<HTMLElement | null>(null);
 const atvvInfoBtn = ref<HTMLElement | null>(null);
 const restartInfoBtn = ref<HTMLElement | null>(null);
 const voiceTipEl = ref<HTMLElement | null>(null);
 const gainTipEl = ref<HTMLElement | null>(null);
 const triggerTipEl = ref<HTMLElement | null>(null);
 const repairTipEl = ref<HTMLElement | null>(null);
+const virtualKeyboardTipEl = ref<HTMLElement | null>(null);
 const atvvTipEl = ref<HTMLElement | null>(null);
 const restartTipEl = ref<HTMLElement | null>(null);
 const voiceTipStyle = ref<Record<string, string>>({});
 const gainTipStyle = ref<Record<string, string>>({});
 const triggerTipStyle = ref<Record<string, string>>({});
 const repairTipStyle = ref<Record<string, string>>({});
+const virtualKeyboardTipStyle = ref<Record<string, string>>({});
 const atvvTipStyle = ref<Record<string, string>>({});
 const restartTipStyle = ref<Record<string, string>>({});
 let voiceTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let gainTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let triggerTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let repairTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
+let virtualKeyboardTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let atvvTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let restartTipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -315,6 +324,29 @@ function toggleRepairTip() {
   }
 }
 
+async function openVirtualKeyboardTip() {
+  if (virtualKeyboardTipCloseTimer) {
+    clearTimeout(virtualKeyboardTipCloseTimer);
+    virtualKeyboardTipCloseTimer = null;
+  }
+  virtualKeyboardTipStyle.value = { position: "fixed", top: "0px", left: "0px", visibility: "hidden", zIndex: "2000" };
+  showVirtualKeyboardTip.value = true;
+  await nextTick();
+  requestAnimationFrame(() => {
+    placeInfoTip(virtualKeyboardInfoBtn.value, virtualKeyboardTipEl.value, virtualKeyboardTipStyle);
+  });
+}
+
+function scheduleCloseVirtualKeyboardTip() {
+  if (virtualKeyboardTipCloseTimer) clearTimeout(virtualKeyboardTipCloseTimer);
+  virtualKeyboardTipCloseTimer = setTimeout(() => { showVirtualKeyboardTip.value = false; }, 120);
+}
+
+function toggleVirtualKeyboardTip() {
+  if (showVirtualKeyboardTip.value) showVirtualKeyboardTip.value = false;
+  else void openVirtualKeyboardTip();
+}
+
 async function openAtvvTip() {
   if (atvvTipCloseTimer) {
     clearTimeout(atvvTipCloseTimer);
@@ -395,6 +427,9 @@ function onViewportChange() {
   }
   if (showRepairTip.value) {
     placeInfoTip(repairInfoBtn.value, repairTipEl.value, repairTipStyle);
+  }
+  if (showVirtualKeyboardTip.value) {
+    placeInfoTip(virtualKeyboardInfoBtn.value, virtualKeyboardTipEl.value, virtualKeyboardTipStyle);
   }
   if (showAtvvTip.value) {
     placeInfoTip(atvvInfoBtn.value, atvvTipEl.value, atvvTipStyle);
@@ -723,6 +758,7 @@ async function refreshHost() {
 }
 
 async function restartBridge() {
+  if (repairBusy.value) return;
   restarting.value = true;
   try {
     await invoke("restart_xiaomi_bridge");
@@ -748,7 +784,7 @@ interface AtvvRepairResult {
 }
 
 async function repairAtvv() {
-  if (atvvRepairing.value || restarting.value || voiceRepairing.value) return;
+  if (repairBusy.value) return;
   atvvRepairing.value = true;
   let awaitingClear = false;
   try {
@@ -781,6 +817,34 @@ async function repairAtvv() {
     if (!awaitingClear) {
       atvvRepairing.value = false;
     }
+  }
+}
+
+interface VirtualKeyboardRepairResult {
+  ready: boolean;
+  restartRequired: boolean;
+  message: string;
+}
+
+async function repairVirtualKeyboard() {
+  if (repairBusy.value) return;
+  virtualKeyboardRepairing.value = true;
+  try {
+    const result = await invoke<VirtualKeyboardRepairResult>("repair_xiaomi_virtual_keyboard");
+    const message = result.message || "虚拟键盘修复已完成。";
+    prependLog(message);
+    host.value = {
+      ...host.value,
+      status_text: result.ready ? "虚拟键盘已修复" : result.restartRequired ? "虚拟键盘待重启" : "虚拟键盘未就绪",
+      detail: message,
+      tone: result.ready ? "ok" : result.restartRequired ? "warn" : "error",
+    };
+  } catch (error) {
+    const message = `虚拟键盘修复失败: ${error}`;
+    prependLog(message);
+    host.value = { ...host.value, status_text: "虚拟键盘修复失败", detail: message, tone: "error" };
+  } finally {
+    virtualKeyboardRepairing.value = false;
   }
 }
 
@@ -833,6 +897,7 @@ interface VoiceEnvActionResult {
 }
 
 async function voiceDetectAndRepair() {
+  if (repairBusy.value) return;
   voiceRepairing.value = true;
   showVoiceChoice.value = false;
   try {
@@ -859,6 +924,7 @@ async function voiceDetectAndRepair() {
 }
 
 async function chooseVoiceSource(source: "embedded" | "download_page" | "download_zip") {
+  if (repairBusy.value && !voiceRepairing.value) return;
   voiceRepairing.value = true;
   showVoiceChoice.value = false;
   try {
@@ -983,6 +1049,7 @@ onUnmounted(() => {
   if (gainTipCloseTimer) clearTimeout(gainTipCloseTimer);
   if (triggerTipCloseTimer) clearTimeout(triggerTipCloseTimer);
   if (repairTipCloseTimer) clearTimeout(repairTipCloseTimer);
+  if (virtualKeyboardTipCloseTimer) clearTimeout(virtualKeyboardTipCloseTimer);
   if (atvvTipCloseTimer) clearTimeout(atvvTipCloseTimer);
   if (restartTipCloseTimer) clearTimeout(restartTipCloseTimer);
   if (mappingFlashClearTimer) clearTimeout(mappingFlashClearTimer);
@@ -1023,6 +1090,7 @@ function closeTransientUi() {
   showGainTip.value = false;
   showTriggerTip.value = false;
   showRepairTip.value = false;
+  showVirtualKeyboardTip.value = false;
   showAtvvTip.value = false;
   showRestartTip.value = false;
 }
@@ -1172,7 +1240,7 @@ watch(
               <button
                 class="btn btn-secondary"
                 type="button"
-                :disabled="voiceRepairing || restarting"
+                :disabled="repairBusy"
                 @click="voiceDetectAndRepair"
               >
                 {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudio") }}
@@ -1230,7 +1298,65 @@ watch(
               <button
                 class="btn btn-secondary"
                 type="button"
-                :disabled="atvvRepairing || restarting || voiceRepairing"
+                :disabled="repairBusy"
+                @click="repairVirtualKeyboard"
+              >
+                {{ virtualKeyboardRepairing ? t("common.processing") : t("dashboard.repairVirtualKeyboard") }}
+              </button>
+              <button
+                ref="virtualKeyboardInfoBtn"
+                type="button"
+                class="title-info"
+                :aria-expanded="showVirtualKeyboardTip"
+                aria-label="修复虚拟键盘说明"
+                @mouseenter="openVirtualKeyboardTip"
+                @mouseleave="scheduleCloseVirtualKeyboardTip"
+                @focus="openVirtualKeyboardTip"
+                @blur="scheduleCloseVirtualKeyboardTip"
+                @click.stop="toggleVirtualKeyboardTip"
+              >
+                <span class="title-info-icon" aria-hidden="true">i</span>
+              </button>
+              <Teleport to="body">
+                <div
+                  v-if="showVirtualKeyboardTip"
+                  ref="virtualKeyboardTipEl"
+                  class="floating-info-tip voice-info-tip"
+                  role="tooltip"
+                  :style="virtualKeyboardTipStyle"
+                  @mouseenter="openVirtualKeyboardTip"
+                  @mouseleave="scheduleCloseVirtualKeyboardTip"
+                >
+                  <p class="tip-lead">
+                    用来修复遥控器发送给输入法的“虚拟硬件键盘”。豆包、微信等输入法会忽略普通模拟按键时，需要它来发送真正的键盘快捷键。
+                  </p>
+                  <div class="tip-block tip-on">
+                    <div class="tip-badge">会做什么</div>
+                    <ul>
+                      <li>重新部署 WinUHid 虚拟键盘组件</li>
+                      <li>重新安装内嵌的虚拟键盘驱动</li>
+                      <li>修复完成后，按遥控器语音键会按硬件键盘方式发送已配置的快捷键</li>
+                    </ul>
+                  </div>
+                  <div class="tip-block tip-off">
+                    <div class="tip-badge">什么时候点</div>
+                    <ul>
+                      <li>网页键盘测试能看到按键，但豆包、微信或其它输入法没有反应</li>
+                      <li>日志出现 WinUHid unavailable 或虚拟键盘未就绪</li>
+                      <li>重装应用、系统更新或驱动异常后，输入法快捷键失效</li>
+                    </ul>
+                  </div>
+                  <p class="tip-foot">
+                    点击后会出现 Windows 管理员确认。修复期间不要退出应用；若完成后仍提示未就绪，请重启 Windows 再测试。这和“声卡检测与修复”不同：声卡负责传送声音，虚拟键盘负责唤起输入法。
+                  </p>
+                </div>
+              </Teleport>
+            </div>
+            <div class="host-action-group">
+              <button
+                class="btn btn-secondary"
+                type="button"
+                :disabled="repairBusy"
                 @click="repairAtvv"
               >
                 {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvv") }}
@@ -1288,7 +1414,7 @@ watch(
               <button
                 class="btn btn-secondary"
                 type="button"
-                :disabled="restarting || voiceRepairing || atvvRepairing"
+                :disabled="repairBusy"
                 @click="restartBridge"
               >
                 {{ restarting ? t("common.processing") : t("dashboard.restartBridge") }}
@@ -2563,7 +2689,7 @@ watch(
 .host-detail { display: none; }
 
 .quick-section { padding: 20px; }
-.host-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.host-actions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .host-action-group,
 .host-actions > .btn:not(.quick-log-trigger) { position: relative; min-height: 78px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease; }
 .host-action-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
@@ -2572,8 +2698,9 @@ watch(
 .host-action-group .btn { width: 100%; padding: 13px 12px 27px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; font-weight: 700; }
 .host-action-group .title-info { align-self: start; margin: 12px 10px 0 0; }
 .host-action-group::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; content: "建议优先使用"; pointer-events: none; }
-.host-action-group:nth-child(2)::after { content: "连接异常时使用"; }
-.host-action-group:nth-child(3)::after { content: "刷新监听服务"; }
+.host-action-group:nth-child(2)::after { content: "输入法无响应时使用"; }
+.host-action-group:nth-child(3)::after { content: "连接异常时使用"; }
+.host-action-group:nth-child(4)::after { content: "刷新监听服务"; }
 .host-actions > .btn:not(.quick-log-trigger) { display: flex; align-items: flex-start; padding: 13px 12px 27px; color: var(--text); background: var(--surface-raised); text-align: left; font-weight: 700; }
 .host-actions > .btn:not(.quick-log-trigger)::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; font-weight: 500; content: "管理语音输入"; }
 .quick-log-trigger { display: none; }
@@ -2602,6 +2729,7 @@ watch(
   .device-primary { padding: 0 0 22px; }
   .device-primary::after { top: auto; right: 0; bottom: 0; left: 0; width: auto; height: 1px; }
   .device-data { grid-template-columns: repeat(4, minmax(0, 1fr)); padding-left: 0; }
+  .host-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -2611,6 +2739,7 @@ watch(
   .device-data { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
   .host-status-row,
   .host-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .host-actions > .btn:not(.quick-log-trigger):last-child { grid-column: 1 / -1; }
 }
 
 /* 按键映射页：沿用首页的控制台层级，但让编辑区保持专注。 */

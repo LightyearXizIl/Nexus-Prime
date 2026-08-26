@@ -26,7 +26,9 @@ VB-CABLE 是 Donationware。仓库中的驱动包应保持供应商原始 ZIP �
 
 ## WinUHid
 
-仓库不包含 `WinUHid.dll`，只保留放置说明文件。开发者自行提供该 DLL 时，应确认来源和许可；`.gitignore` 已阻止其被意外提交。
+- 文件：`src-tauri/assets/winuhid/WinUHid.dll` 与 `driver/WinUHidDriver.*`。
+- 来源：用户指定的原版 [Voice VibeCoding](https://github.com/mwlt/Voice_VibeCoding) 仓库，其中的 WinUHid 实现基于 [cgutman/WinUHid](https://github.com/cgutman/WinUHid)。
+- 安装：首次启动会经 UAC 安装该包内的虚拟键盘驱动，供豆包、微信等输入法快捷键按硬件 HID 路径发送。
 
 ## 商标
 

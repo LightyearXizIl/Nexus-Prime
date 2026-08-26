@@ -151,6 +151,9 @@ impl Default for ThemePreference {
 pub struct GlobalSettings {
     /// 开机自启
     pub autostart: bool,
+    /// 仅在 Windows 开机自启时隐藏主窗口到托盘；旧配置缺失时保持首次可见。
+    #[serde(default)]
+    pub autostart_minimized_to_tray: bool,
     /// 界面语言
     pub language: String,
     /// 最小化到托盘
@@ -175,6 +178,7 @@ impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             autostart: false,
+            autostart_minimized_to_tray: false,
             language: "zh-CN".to_string(),
             minimize_to_tray: true,
             auto_check_updates: true,
@@ -639,6 +643,7 @@ mod tests {
     fn test_global_settings_default() {
         let settings = GlobalSettings::default();
         assert!(!settings.autostart);
+        assert!(!settings.autostart_minimized_to_tray);
         assert_eq!(settings.language, "zh-CN");
         assert!(settings.minimize_to_tray);
         assert!(settings.auto_check_updates);
@@ -653,6 +658,18 @@ mod tests {
         .unwrap();
         assert_eq!(settings.theme, ThemePreference::System);
         assert!(settings.auto_check_updates);
+        assert!(!settings.autostart_minimized_to_tray);
+    }
+
+    #[test]
+    fn test_global_settings_autostart_minimize_round_trip() {
+        let settings: GlobalSettings = serde_json::from_str(
+            r#"{"autostart":true,"autostart_minimized_to_tray":true,"language":"zh-CN","minimize_to_tray":true}"#,
+        )
+        .unwrap();
+        assert!(settings.autostart_minimized_to_tray);
+        let encoded = serde_json::to_string(&settings).unwrap();
+        assert!(encoded.contains("\"autostart_minimized_to_tray\":true"));
     }
 
     #[test]

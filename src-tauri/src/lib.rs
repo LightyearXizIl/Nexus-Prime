@@ -4,6 +4,10 @@ pub mod ipc;
 pub mod audio;
 pub mod logging;
 pub mod update;
+pub mod windows_command;
+
+pub const AUTOSTART_ARGUMENT: &str = "--autostart";
+const LEGACY_AUTOSTART_ARGUMENT: &str = "--minimized";
 
 // Tauri's dialog dependencies import TaskDialogIndirect from Common Controls
 // v6. tauri-build embeds that activation manifest into application binaries,
@@ -38,6 +42,25 @@ fn focus_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn is_autostart_invocation(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            AUTOSTART_ARGUMENT | LEGACY_AUTOSTART_ARGUMENT
+        )
+    })
+}
+
+fn should_start_hidden(args: &[String], autostart_minimized_to_tray: bool) -> bool {
+    autostart_minimized_to_tray && is_autostart_invocation(args)
+}
+
+fn should_focus_existing_instance(args: &[String]) -> bool {
+    // Windows may still run a legacy Startup shortcut beside the new Run entry.
+    // Ignore either marker so a duplicate login launch cannot reveal a hidden app.
+    !is_autostart_invocation(args)
+}
+
 /// 托盘隐藏时停止 WebView2 渲染：不隐藏子 WebView 时 Chromium 会继续
 /// 全速合成动画并保持 1s 轮询定时器不节流（实测占 ~5.6% 单核）
 pub fn set_main_webview_visible(app: &tauri::AppHandle, visible: bool) {
@@ -62,8 +85,12 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            focus_main_window(app);
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if should_focus_existing_instance(&args) {
+                focus_main_window(app);
+            } else {
+                log::info!("Ignoring duplicate autostart activation");
+            }
         }));
     }
 
@@ -105,6 +132,19 @@ pub fn run() {
             bridges::xiaomi::voice_meter::bind_app(app.handle().clone());
             bridges::xiaomi::conflict_guard::bind_app(app.handle().clone());
 
+            // Deploy the bundled WinUHid SDK, then install the bundled virtual
+            // keyboard driver on first run. This is required for IME global
+            // hotkeys such as Doubao and WeChat, which filter SendInput events.
+            bridges::xiaomi::winuhid_env::ensure_runtime_quiet();
+            std::thread::Builder::new()
+                .name("winuhid-bootstrap".into())
+                .spawn(|| {
+                    if let Err(error) = bridges::xiaomi::winuhid_env::install_if_needed() {
+                        log::warn!("WinUHid bootstrap failed: {error}");
+                    }
+                })?;
+
+            let launch_args: Vec<String> = std::env::args().collect();
             if let Some(window) = app.get_webview_window("main") {
                 // WIN10 兼容：默认窗口 1080x814 可能超出小屏/高缩放的工作区
                 // （如 1366x768@125% 逻辑工作区约 1093x614），底部内容会被裁出屏幕。
@@ -152,6 +192,27 @@ pub fn run() {
                         // else: 允许关闭 → 触发 Exit → cleanup_on_exit
                     }
                 });
+
+                let start_hidden = match app
+                    .try_state::<config::manager::ConfigManager>()
+                    .and_then(|manager| manager.get_global_settings().ok())
+                {
+                    Some(settings) => should_start_hidden(
+                        &launch_args,
+                        settings.autostart_minimized_to_tray,
+                    ),
+                    None => {
+                        log::warn!("Unable to read startup visibility preference; showing main window");
+                        false
+                    }
+                };
+                if start_hidden {
+                    set_main_webview_visible(app.handle(), false);
+                    let _ = window.hide();
+                    log::info!("Main window hidden for autostart launch");
+                } else {
+                    focus_main_window(app.handle());
+                }
             }
 
             // 独立 audio_router 子进程（对齐 Python --role audio）
@@ -229,6 +290,7 @@ pub fn run() {
             ipc::commands::check_xiaomi_voice_env,
             ipc::commands::get_xiaomi_voice_env_status,
             ipc::commands::repair_xiaomi_voice_env,
+            ipc::commands::repair_xiaomi_virtual_keyboard,
             ipc::commands::open_logs_folder,
             ipc::commands::get_app_log,
             ipc::commands::open_app_log,
@@ -252,4 +314,28 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn startup_visibility_requires_marker_and_preference() {
+        assert!(!should_start_hidden(&args(&["nexus-prime.exe"]), true));
+        assert!(!should_start_hidden(&args(&["nexus-prime.exe", "--autostart"]), false));
+        assert!(should_start_hidden(&args(&["nexus-prime.exe", "--autostart"]), true));
+        assert!(should_start_hidden(&args(&["nexus-prime.exe", "--minimized"]), true));
+    }
+
+    #[test]
+    fn only_manual_secondary_launches_restore_the_window() {
+        assert!(should_focus_existing_instance(&args(&["nexus-prime.exe"])));
+        assert!(!should_focus_existing_instance(&args(&["nexus-prime.exe", "--autostart"])));
+        assert!(!should_focus_existing_instance(&args(&["nexus-prime.exe", "--minimized"])));
+    }
 }

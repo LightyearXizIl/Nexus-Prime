@@ -728,11 +728,13 @@ Section Install
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
 
   ; Autostart is managed by the app itself. Preserve its enabled/disabled state
-  ; during a relocation, but point an existing entry at the new executable.
+  ; during a relocation, migrate either legacy entry to the canonical Run value.
   ${If} $InstallDirChanged = 1
     ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NexusPrime"
     ${If} $0 != ""
-      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NexusPrime" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --minimized"
+    ${OrIf} ${FileExists} "$APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\NexusPrime.lnk"
+      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NexusPrime" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --autostart"
+      Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\NexusPrime.lnk"
     ${EndIf}
   ${EndIf}
 
@@ -912,12 +914,12 @@ Section Uninstall
     DeleteRegKey HKCU "${UNINSTKEY}"
   !endif
 
-  ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
-  ; This ensures the program does not launch automatically after uninstallation if it exists.
-  ; If it doesn't exist, it does nothing.
-  ; We do this when not updating (to preserve the registry value on updates)
+  ; Keep the preference intact while updating. A complete uninstall removes the
+  ; canonical Run value, old product-name value and the former Startup shortcut.
   ${If} $UpdateMode <> 1
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NexusPrime"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    Delete "$APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\NexusPrime.lnk"
   ${EndIf}
 
   ; Delete app data if the checkbox is selected

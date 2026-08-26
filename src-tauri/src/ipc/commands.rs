@@ -616,6 +616,15 @@ pub async fn repair_xiaomi_voice_env(
     .map_err(|e| format!("voice repair task: {e}"))?
 }
 
+/// 重新部署并安装包内 WinUHid 虚拟键盘，用于输入法忽略快捷键时的手动修复。
+#[tauri::command]
+pub async fn repair_xiaomi_virtual_keyboard(
+) -> Result<crate::bridges::xiaomi::winuhid_env::WinUHidRepairResult, String> {
+    tokio::task::spawn_blocking(crate::bridges::xiaomi::winuhid_env::repair)
+        .await
+        .map_err(|error| format!("virtual keyboard repair task: {error}"))?
+}
+
 /// 对齐 Python `open_logs`：打开日志目录
 #[tauri::command]
 pub async fn open_logs_folder(config_manager: State<'_, ConfigManager>) -> Result<(), String> {

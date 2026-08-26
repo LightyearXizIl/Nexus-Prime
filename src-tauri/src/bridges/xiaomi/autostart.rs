@@ -1,4 +1,4 @@
-//! 开机自启：写入当前用户 Startup 快捷方式 + Run 注册表（对齐安装器/源码文档意图）
+//! 开机自启：仅使用当前用户 Run 注册表，并清理旧版 Startup 快捷方式。
 
 use std::path::PathBuf;
 
@@ -18,12 +18,19 @@ fn shortcut_path() -> Result<PathBuf, String> {
     Ok(startup_dir()?.join("NexusPrime.lnk"))
 }
 
-/// 启用/禁用开机自启（`--minimized`）
+/// 启用/禁用开机自启。新入口使用 `--autostart`，旧版快捷方式仅作兼容检测。
 pub fn set_autostart_enabled(enable: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        set_run_key(enable)?;
-        set_startup_shortcut(enable)?;
+        if enable {
+            // 先写入规范入口，避免迁移失败时意外丢失已有自启。
+            set_run_key(true)?;
+            remove_startup_shortcut()?;
+        } else {
+            // 禁用时两处都清理，兼容旧版 Startup 快捷方式。
+            remove_startup_shortcut()?;
+            set_run_key(false)?;
+        }
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
@@ -54,7 +61,7 @@ fn set_run_key(enable: bool) -> Result<(), String> {
     };
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let value = format!("\"{}\" --minimized", exe.display());
+    let value = format!("\"{}\" {}", exe.display(), crate::AUTOSTART_ARGUMENT);
     let value_wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
     let name = w!("NexusPrime");
 
@@ -124,40 +131,11 @@ fn run_key_exists() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn set_startup_shortcut(enable: bool) -> Result<(), String> {
+fn remove_startup_shortcut() -> Result<(), String> {
     let link = shortcut_path()?;
-    if !enable {
-        let _ = std::fs::remove_file(&link);
-        return Ok(());
+    match std::fs::remove_file(&link) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("remove legacy startup shortcut {}: {error}", link.display())),
     }
-    let dir = startup_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // 用 PowerShell 创建 .lnk（无需额外 COM 绑定）
-    let ps = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut('{}'); \
-         $s.TargetPath = '{}'; \
-         $s.Arguments = '--minimized'; \
-         $s.WorkingDirectory = '{}'; \
-         $s.Save()",
-        link.display().to_string().replace('\'', "''"),
-        exe.display().to_string().replace('\'', "''"),
-        exe.parent()
-            .unwrap_or(std::path::Path::new("."))
-            .display()
-            .to_string()
-            .replace('\'', "''"),
-    );
-    let out = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps])
-        .output()
-        .map_err(|e| format!("powershell: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "create shortcut failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-    Ok(())
 }

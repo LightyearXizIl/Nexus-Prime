@@ -48,6 +48,7 @@ export interface DeviceConfig {
 
 export interface GlobalSettings {
   autostart: boolean;
+  autostart_minimized_to_tray: boolean;
   language: AppLocale;
   minimize_to_tray: boolean;
   auto_check_updates: boolean;

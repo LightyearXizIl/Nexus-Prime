@@ -47,10 +47,7 @@ function toggleTheme() {
   <header class="topnav">
     <div class="brand-block">
       <div class="brand-symbol" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path d="M7 6.5h3.5v11H7zM13.5 6.5H17v11h-3.5z" fill="currentColor" opacity=".96" />
-          <path d="M10.5 9.2h3v5.6h-3z" fill="currentColor" opacity=".62" />
-        </svg>
+        <img src="/favicon.png" alt="" />
       </div>
       <div class="brand-copy">
         <strong>Nexus Prime</strong>
@@ -155,14 +152,14 @@ function toggleTheme() {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  border: 0;
   border-radius: 10px;
-  color: var(--text-inverse);
-  background: linear-gradient(145deg, #2f7cf8, #6b5cf4);
-  box-shadow: 0 8px 18px rgba(52, 120, 246, 0.25);
+  background: transparent;
+  box-shadow: none;
 }
 
-.brand-symbol svg { width: 19px; height: 19px; }
+.brand-symbol img { display: block; width: 100%; height: 100%; object-fit: contain; }
 
 .brand-copy {
   min-width: 0;
