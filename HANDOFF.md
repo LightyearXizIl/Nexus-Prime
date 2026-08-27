@@ -10,6 +10,7 @@
 - 旧版微信的 Hold `Ctrl+Win` 释放不再回放裸组合键：虚拟 HID 使用“原组合+F24 → F24 → 全部抬起”，SendInput 使用“F24 按下 → 原组合逐键抬起 → F24 抬起”；保留同路由重试、延迟确认和紧急 KEYUP。
 - 托盘改用紧凑专用图标。16px 下有效不透明主体从约 14×14px 提升至约 16×14px，不影响窗口、安装器或网页图标。
 - 已通过 `npm.cmd test`（35 项）、`npm.cmd run build`、`cargo test --workspace`（104 项）、`cargo check --workspace --all-targets`、`git diff --check` 和 `npm.cmd run tauri:build`。源码以 `v0.3.2` 标签发布；本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.2_x64-setup.exe`，13,315,955 bytes，SHA-256 `779F4CBDDE40680FA6E57FEF214C81431B3AE680376C2335AF1B0108C504357C`，文件版本与产品版本均为 `0.3.2`，未签名（`NotSigned`）。
+- [GitHub 正式 Release v0.3.2](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.2) 已公开；标签解引用提交为 `cebdbf15a3123e990b9f2aa91bec7cd446d1f26d`，资产 `Nexus.Prime_0.3.2_x64-setup.exe` 状态为 `uploaded`、大小 13,315,955 bytes、GitHub digest 为 `sha256:779f4cbdde40680fa6e57fef214c81431b3ae680376c2335af1b0108c504357c`，与本地 SHA-256 一致。
 
 ### 仍待真实设备验收
 
