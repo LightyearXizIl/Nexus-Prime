@@ -28,6 +28,10 @@ pub enum KeyAction {
     TextInput(String),
     /// 启动应用
     LaunchApp(String),
+    /// 鼠标左键点击
+    MouseClick,
+    /// 鼠标移动：dx/dy 为方向（-1/0/1），step 为每帧像素数，accelerate 为是否加速
+    MouseMove { dx: i32, dy: i32, step: u32, accelerate: bool },
     /// 无动作
     None,
 }
@@ -255,13 +259,15 @@ impl ConfigManager {
             let mut config: DeviceConfig = serde_json::from_str(&content)
                 .map_err(|e| format!("解析配置失败: {}", e))?;
             if device == "xiaomi" {
-                let removed_voice_gestures = Self::merge_xiaomi_defaults(&mut config);
-                if removed_voice_gestures {
-                    log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
-                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
-                        "voice_gesture_config_removed",
-                    );
-                    crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                let (changed, removed_voice_gestures) = Self::merge_xiaomi_defaults(&mut config);
+                if changed {
+                    if removed_voice_gestures {
+                        log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
+                        crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                            "voice_gesture_config_removed",
+                        );
+                        crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                    }
                     self.write_device_config(device, &config)?;
                 }
             }
@@ -289,34 +295,49 @@ impl ConfigManager {
     }
 
     /// 对齐 Python schema 升级：补齐缺失的默认绑定/别名，不覆盖用户已有项
-    fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> bool {
+    fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> (bool, bool) {
+        let mut changed = false;
         let defaults = Self::default_config_for("xiaomi");
         for (k, v) in defaults.button_aliases {
-            config.button_aliases.entry(k).or_insert(v);
+            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_aliases.entry(k) {
+                entry.insert(v);
+                changed = true;
+            }
         }
         for (k, v) in defaults.button_bindings {
-            config.button_bindings.entry(k).or_insert(v);
+            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_bindings.entry(k) {
+                entry.insert(v);
+                changed = true;
+            }
         }
         if config.voice_hotkey.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
             config.voice_hotkey = defaults.voice_hotkey;
+            changed = true;
         }
-        Self::sanitize_xiaomi_gesture_bindings(config)
+        let (sanitized, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(config);
+        (changed || sanitized, removed_voice_gestures)
     }
 
-    /// Returns true when legacy voice gestures were removed. Voice is reserved
-    /// for its input-method shortcut and must not enter the general gesture path.
-    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) -> bool {
+    /// Returns `(changed, removed_voice_gestures)`. Voice is reserved for its
+    /// input-method shortcut and must not enter the general gesture path.
+    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) -> (bool, bool) {
+        let mut changed = false;
         let mut removed_voice_gestures = false;
+        for action in config.button_bindings.values_mut() {
+            changed |= Self::normalize_mouse_action(action);
+        }
         let mut sanitized: HashMap<String, HashMap<u8, KeyAction>> = HashMap::new();
         for (button_id, slots) in std::mem::take(&mut config.multi_click_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
             if canonical == "unknown" {
+                changed = true;
                 if !slots.is_empty() {
                     log::warn!("XIAOMI CONFIG ignored multi-click binding for {button_id}");
                 }
                 continue;
             }
             if canonical == "mic" {
+                changed = true;
                 if !slots.is_empty() {
                     removed_voice_gestures = true;
                     log::info!("XIAOMI CONFIG removed multi-click binding for dedicated voice key");
@@ -325,11 +346,14 @@ impl ConfigManager {
             }
             for (count, action) in slots {
                 if !(2..=4).contains(&count) {
+                    changed = true;
                     log::warn!(
                         "XIAOMI CONFIG ignored invalid multi-click count {count} for {button_id}"
                     );
                     continue;
                 }
+                let mut action = action;
+                changed |= Self::normalize_mouse_action(&mut action);
                 if matches!(action, KeyAction::None) {
                     continue;
                 }
@@ -345,16 +369,20 @@ impl ConfigManager {
         for (button_id, action) in std::mem::take(&mut config.long_press_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
             if canonical == "unknown" {
+                changed = true;
                 log::warn!("XIAOMI CONFIG ignored long-press binding for {button_id}");
                 continue;
             }
             if canonical == "mic" {
+                changed = true;
                 if !matches!(action, KeyAction::None) {
                     removed_voice_gestures = true;
                     log::info!("XIAOMI CONFIG removed long-press binding for dedicated voice key");
                 }
                 continue;
             }
+            let mut action = action;
+            changed |= Self::normalize_mouse_action(&mut action);
             if matches!(action, KeyAction::None) {
                 continue;
             }
@@ -368,8 +396,27 @@ impl ConfigManager {
                 config.multi_click_interval_ms
             );
             config.multi_click_interval_ms = config.multi_click_interval_ms.clamp(150, 800);
+            changed = true;
         }
-        removed_voice_gestures
+        (changed, removed_voice_gestures)
+    }
+
+    fn normalize_mouse_action(action: &mut KeyAction) -> bool {
+        let KeyAction::MouseMove { dx, dy, step, .. } = action else {
+            return false;
+        };
+        if !matches!((*dx, *dy), (0, -1) | (0, 1) | (-1, 0) | (1, 0)) {
+            log::warn!("XIAOMI CONFIG removed invalid mouse direction dx={dx} dy={dy}");
+            *action = KeyAction::None;
+            return true;
+        }
+        let normalized_step = (*step).clamp(1, 100);
+        if normalized_step != *step {
+            log::warn!("XIAOMI CONFIG clamped mouse step {} to {normalized_step}", *step);
+            *step = normalized_step;
+            return true;
+        }
+        false
     }
 
     fn write_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
@@ -396,7 +443,7 @@ impl ConfigManager {
     pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
         let mut config = config.clone();
         if device == "xiaomi" {
-            let removed_voice_gestures = Self::sanitize_xiaomi_gesture_bindings(&mut config);
+            let (_, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(&mut config);
             if removed_voice_gestures {
                 crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
                     "voice_gesture_config_removed",
@@ -641,7 +688,10 @@ mod tests {
             .or_default()
             .insert(2, KeyAction::SingleKey(0x41));
 
-        assert!(ConfigManager::sanitize_xiaomi_gesture_bindings(&mut config));
+        let (changed, removed_voice_gestures) =
+            ConfigManager::sanitize_xiaomi_gesture_bindings(&mut config);
+        assert!(changed);
+        assert!(removed_voice_gestures);
 
         assert_eq!(
             config.long_press_bindings.get("up"),
@@ -656,6 +706,56 @@ mod tests {
             config.multi_click_bindings.get("menu").and_then(|slots| slots.get(&2)),
             Some(&KeyAction::SingleKey(0x41))
         );
+    }
+
+    #[test]
+    fn mouse_actions_round_trip_and_normalize_at_the_config_boundary() {
+        let action = KeyAction::MouseMove {
+            dx: 0,
+            dy: -1,
+            step: 20,
+            accelerate: true,
+        };
+        let encoded = serde_json::to_string(&action).unwrap();
+        assert_eq!(serde_json::from_str::<KeyAction>(&encoded).unwrap(), action);
+        let click = KeyAction::MouseClick;
+        assert_eq!(
+            serde_json::from_str::<KeyAction>(&serde_json::to_string(&click).unwrap()).unwrap(),
+            click
+        );
+
+        let mut config = DeviceConfig::new();
+        config.button_bindings.insert(
+            "up".into(),
+            KeyAction::MouseMove {
+                dx: 0,
+                dy: -1,
+                step: 999,
+                accelerate: false,
+            },
+        );
+        config.long_press_bindings.insert(
+            "right".into(),
+            KeyAction::MouseMove {
+                dx: 1,
+                dy: 1,
+                step: 20,
+                accelerate: true,
+            },
+        );
+
+        let (changed, _) = ConfigManager::sanitize_xiaomi_gesture_bindings(&mut config);
+        assert!(changed);
+        assert_eq!(
+            config.button_bindings.get("up"),
+            Some(&KeyAction::MouseMove {
+                dx: 0,
+                dy: -1,
+                step: 100,
+                accelerate: false,
+            })
+        );
+        assert!(!config.long_press_bindings.contains_key("right"));
     }
 
     #[test]

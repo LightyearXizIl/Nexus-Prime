@@ -8,7 +8,7 @@ const zhCN = {
   common: { saving: "正在保存…", saved: "所有更改已保存", save: "保存设置", cancel: "取消", close: "关闭", retry: "重试", processing: "处理中…", unknown: "未知", none: "—" },
   status: { connected: "已连接", connecting: "连接中…", connectingDevice: "正在连接设备", disconnected: "未连接", deviceNotConnected: "设备未连接", noDeviceConnected: "尚未连接设备", connectionFailed: "连接失败", error: "错误", connect: "连接设备", disconnect: "断开连接", autosave: "更改自动保存", savingMapping: "正在保存映射…" },
   dashboard: { title: "设备控制台", device: "小米蓝牙遥控器 2 Pro", ble: "蓝牙 BLE", lowEnergy: "低功耗连接", battery: "电池电量", audio: "音频信号", address: "蓝牙地址", synced: "最近同步", justNow: "刚刚", services: "服务状态", actions: "快捷操作", activity: "实时动态", live: "实时", logs: "查看完整日志", normal: "所有服务运行正常", needsAttention: "部分服务需要处理", checking: "服务正在检测中", cable: "虚拟声卡", route: "语音路由", bridge: "按键桥接", injection: "键盘注入", installed: "已安装", running: "运行中", listening: "监听中", stopped: "已停止", notStarted: "未启动", hardwareKeyboard: "硬件键盘就绪", sendInputFallback: "SendInput 兜底已验证", inputWaiting: "等待键盘事件验证", stable: "稳定", noSignal: "无信号", receiving: "接收中", voiceSession: "语音会话", atvvDisconnected: "ATVV 未连接", repairAudio: "声卡检测与修复", repairVirtualKeyboard: "修复虚拟键盘", repairAtvv: "修复 ATVV 连接", restartBridge: "重启按键桥接", inputSettings: "输入法设置", recommended: "建议优先使用", connectionIssue: "连接异常时使用", refreshService: "刷新监听服务", manageVoice: "管理语音输入" },
-  mapping: { title: "按键映射", subtitle: "选择遥控器按键，为它设置触发方式与键盘快捷键。", voiceSettings: "语音听写设置", voiceSend: "语音键发送映射按键", voiceSendHint: "点击语音键时同步发送快捷键", triggerMode: "默认触发模式", triggerHint: "语音快捷键的发送方式", gain: "音量增益", gainHint: "语音输入的增益", remotePreview: "遥控器预览", locate: "点击按键快速定位", selected: "当前选择", capture: "录入快捷键", cancelCapture: "取消录入", clear: "清除", reset: "重置", mappingList: "映射列表", keysAndAutosave: "{count} 个按键 · 即时保存", search: "搜索按键或快捷键", noMatch: "未找到匹配的按键或快捷键。", listHint: "选择任意按键即可录入或修改映射；修改后会立即保存，无需重启桥接服务。", single: "单击", double: "双击", triple: "三击", quadruple: "四连击", long: "长按", trigger: "触发", unbound: "未绑定", text: "文字：{value}", launch: "启动：{value}", press: "按下", release: "抬起", interval: "连击间隔", intervalHint: "间隔越短响应越快，间隔越长则更容易识别连续点击。", chooseKey: "请选择目标键或组合键", noSelection: "选择遥控器上的任意按键，即可查看和编辑映射。" },
+  mapping: { title: "按键映射", subtitle: "选择遥控器按键，为它设置触发方式与键盘快捷键。", voiceSettings: "语音听写设置", voiceSend: "语音键发送映射按键", voiceSendHint: "点击语音键时同步发送快捷键", triggerMode: "默认触发模式", triggerHint: "语音快捷键的发送方式", gain: "音量增益", gainHint: "语音输入的增益", remotePreview: "遥控器预览", locate: "点击按键快速定位", selected: "当前选择", capture: "录入快捷键", cancelCapture: "取消录入", clear: "清除", reset: "重置", mappingList: "映射列表", keysAndAutosave: "{count} 个按键 · 即时保存", search: "搜索按键或快捷键", noMatch: "未找到匹配的按键或快捷键。", listHint: "选择任意按键即可录入或修改映射；修改后会立即保存，无需重启桥接服务。", single: "单击", double: "双击", triple: "三击", quadruple: "四连击", long: "长按", trigger: "触发", unbound: "未绑定", text: "文字：{value}", launch: "启动：{value}", press: "按下", release: "抬起", interval: "连击间隔", intervalHint: "间隔越短响应越快，间隔越长则更容易识别连续点击。", chooseKey: "请选择目标键或组合键", noSelection: "选择遥控器上的任意按键，即可查看和编辑映射。", mouseActions: "鼠标操作", mouseLeftClick: "鼠标左键", mouseMove: "鼠标", mouseUp: "鼠标向上移动", mouseDown: "鼠标向下移动", mouseLeft: "鼠标向左移动", mouseRight: "鼠标向右移动", mouseStep: "步幅", mouseAccelerate: "加速" },
   settings: { title: "全局设置", subtitle: "管理应用启动、外观与工作环境偏好。", categories: "设置分类", general: "通用", generalHint: "启动与窗口", appearance: "外观与语言", appearanceHint: "显示偏好", about: "关于", aboutHint: "版本与致谢", generalTitle: "通用", generalDesc: "应用启动方式与窗口行为。", autostart: "开机自启", autostartHint: "Windows 启动后自动运行 Nexus Prime", autostartMinimize: "开机自启时最小化到托盘", autostartMinimizeHint: "仅随 Windows 自动启动时隐藏主窗口，手动启动仍显示窗口", autostartMinimizeDisabledHint: "请先开启开机自启", tray: "最小化到托盘", trayHint: "关闭窗口时隐藏到托盘，可从托盘重新打开", updates: "自动检查更新", updatesHint: "启动时静默检查 GitHub 的最新正式版本", logRetention: "日志保留时间", logRetentionHint: "按天保存运行日志，到期后自动清理", logRetentionDays: "保留 {days} 天", appearanceTitle: "外观与语言", appearanceDesc: "主题即时生效，语言会立即应用到界面。", language: "界面语言", languageHint: "选择应用程序的显示语言", theme: "外观主题", themeHint: "即时应用并保存你的主题偏好", light: "浅色", system: "跟随系统", dark: "深色", aboutTitle: "关于", aboutDesc: "Windows 桌面版遥控器语音桥接工具。", languageSaveFailed: "语言保存失败，请重试。" },
   update: { downloading: "正在下载 {version}", keepOpen: "请保持 Nexus Prime 打开，下载完成后即可安装。", progress: "下载进度", cancel: "取消下载", ready: "更新已准备就绪", verified: "{version} 已通过完整性校验。安装将关闭本应用并启动正常安装流程。", later: "稍后安装", install: "安装更新", installing: "正在启动安装程序", closing: "Nexus Prime 即将关闭，随后将进入正常安装流程。", found: "发现新版本 {version}", notes: "更新内容", laterTalk: "稍后再说", update: "更新", retryDownload: "重试下载", check: "检查更新", latest: "已是最新版本", checking: "正在检查…" },
   conflict: { pcm: "语音端口冲突", hid: "HID Tap 端口冲突", atvv: "ATVV 语音通道失败", repair: "修复 ATVV：请先结束占用", generic: "桥接进程冲突", detail: "检测到其它遥控桥接进程，可能占用端口或 BLE。", ports: "关注端口：PCM UDP {pcm}、HID Tap TCP {hid}", endOne: "结束此进程", hint: "也可手动打开任务管理器（Ctrl+Shift+Esc）结束上列进程。仅允许结束已知桥接程序。", endAll: "关掉上列全部", cleared: "占用已清理，正在继续修复 ATVV…" },
@@ -19,7 +19,7 @@ type LocalizedMessage<T> = {
   [K in keyof T]: T[K] extends Record<string, unknown> ? LocalizedMessage<T[K]> : string;
 };
 
-const zhTW: LocalizedMessage<typeof zhCN> = {
+const zhTW = {
   nav: { home: "首頁", mapping: "按鍵對應", settings: "設定", main: "主導覽", light: "切換為淺色模式", dark: "切換為深色模式" },
   common: { saving: "正在儲存…", saved: "所有變更已儲存", save: "儲存設定", cancel: "取消", close: "關閉", retry: "重試", processing: "處理中…", unknown: "未知", none: "—" },
   status: { connected: "已連線", connecting: "連線中…", connectingDevice: "正在連線裝置", disconnected: "未連線", deviceNotConnected: "裝置未連線", noDeviceConnected: "尚未連線裝置", connectionFailed: "連線失敗", error: "錯誤", connect: "連線裝置", disconnect: "中斷連線", autosave: "變更自動儲存", savingMapping: "正在儲存對應…" },
@@ -29,9 +29,21 @@ const zhTW: LocalizedMessage<typeof zhCN> = {
   update: { downloading: "正在下載 {version}", keepOpen: "請保持 Nexus Prime 開啟，下載完成後即可安裝。", progress: "下載進度", cancel: "取消下載", ready: "更新已準備就緒", verified: "{version} 已通過完整性驗證。安裝將關閉本應用程式並啟動正常安裝流程。", later: "稍後安裝", install: "安裝更新", installing: "正在啟動安裝程式", closing: "Nexus Prime 即將關閉，隨後將進入正常安裝流程。", found: "發現新版本 {version}", notes: "更新內容", laterTalk: "稍後再說", update: "更新", retryDownload: "重試下載", check: "檢查更新", latest: "已是最新版本", checking: "正在檢查…" },
   conflict: { pcm: "語音連接埠衝突", hid: "HID Tap 連接埠衝突", atvv: "ATVV 語音通道失敗", repair: "修復 ATVV：請先結束占用", generic: "橋接程序衝突", detail: "偵測到其他遙控橋接程序，可能占用連接埠或 BLE。", ports: "注意連接埠：PCM UDP {pcm}、HID Tap TCP {hid}", endOne: "結束此程序", hint: "也可手動開啟工作管理員（Ctrl+Shift+Esc）結束上列程序。僅允許結束已知橋接程式。", endAll: "關掉上列全部", cleared: "占用已清理，正在繼續修復 ATVV…" },
   keys: { power: "電源", mic: "語音", up: "上", down: "下", left: "左", right: "右", ok: "確認", back: "返回", home: "主頁", menu: "選單", volume_up: "音量+", volume_down: "音量-", tv: "TV", leftShift: "左 Shift", rightShift: "右 Shift", leftCtrl: "左 Ctrl", rightCtrl: "右 Ctrl", leftAlt: "左 Alt", rightAlt: "右 Alt", leftWin: "左 Win", rightWin: "右 Win" }
-};
+} as LocalizedMessage<typeof zhCN>;
 
-const en: LocalizedMessage<typeof zhCN> = {
+Object.assign(zhTW.mapping, {
+  mouseActions: "滑鼠操作",
+  mouseLeftClick: "滑鼠左鍵",
+  mouseMove: "滑鼠",
+  mouseUp: "滑鼠向上移動",
+  mouseDown: "滑鼠向下移動",
+  mouseLeft: "滑鼠向左移動",
+  mouseRight: "滑鼠向右移動",
+  mouseStep: "步幅",
+  mouseAccelerate: "加速",
+});
+
+const en = {
   nav: { home: "Home", mapping: "Key Mapping", settings: "Settings", main: "Main navigation", light: "Switch to light mode", dark: "Switch to dark mode" },
   common: { saving: "Saving…", saved: "All changes saved", save: "Save settings", cancel: "Cancel", close: "Close", retry: "Retry", processing: "Processing…", unknown: "Unknown", none: "—" },
   status: { connected: "Connected", connecting: "Connecting…", connectingDevice: "Connecting device", disconnected: "Disconnected", deviceNotConnected: "Device not connected", noDeviceConnected: "No device connected", connectionFailed: "Connection failed", error: "Error", connect: "Connect device", disconnect: "Disconnect", autosave: "Autosave on", savingMapping: "Saving mapping…" },
@@ -41,7 +53,19 @@ const en: LocalizedMessage<typeof zhCN> = {
   update: { downloading: "Downloading {version}", keepOpen: "Keep Nexus Prime open. You can install once the download completes.", progress: "Download progress", cancel: "Cancel download", ready: "Update ready", verified: "{version} passed integrity verification. Installing will close this app and start the normal installer.", later: "Install later", install: "Install update", installing: "Starting installer", closing: "Nexus Prime will close shortly, then the normal installer will open.", found: "New version {version} available", notes: "What's new", laterTalk: "Not now", update: "Update", retryDownload: "Retry download", check: "Check for updates", latest: "You're up to date", checking: "Checking…" },
   conflict: { pcm: "Voice port conflict", hid: "HID Tap port conflict", atvv: "ATVV voice channel failed", repair: "Repair ATVV: clear conflicts first", generic: "Bridge process conflict", detail: "Another remote bridge process may be using the port or BLE.", ports: "Ports: PCM UDP {pcm}, HID Tap TCP {hid}", endOne: "End this process", hint: "You can also end the listed processes in Task Manager (Ctrl+Shift+Esc). Only known bridge processes can be ended.", endAll: "End all listed", cleared: "Conflict cleared. Continuing ATVV repair…" },
   keys: { power: "Power", mic: "Voice", up: "Up", down: "Down", left: "Left", right: "Right", ok: "Confirm", back: "Back", home: "Home", menu: "Menu", volume_up: "Volume +", volume_down: "Volume −", tv: "TV", leftShift: "Left Shift", rightShift: "Right Shift", leftCtrl: "Left Ctrl", rightCtrl: "Right Ctrl", leftAlt: "Left Alt", rightAlt: "Right Alt", leftWin: "Left Win", rightWin: "Right Win" }
-};
+} as LocalizedMessage<typeof zhCN>;
+
+Object.assign(en.mapping, {
+  mouseActions: "Mouse controls",
+  mouseLeftClick: "Left click",
+  mouseMove: "Mouse",
+  mouseUp: "Move mouse up",
+  mouseDown: "Move mouse down",
+  mouseLeft: "Move mouse left",
+  mouseRight: "Move mouse right",
+  mouseStep: "Step",
+  mouseAccelerate: "Accelerate",
+});
 
 export const i18n = createI18n({
   legacy: false,

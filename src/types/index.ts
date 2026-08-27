@@ -23,10 +23,21 @@ export interface DeviceInfo {
   battery_charging: boolean | null;
 }
 
-export interface KeyAction {
-  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "None";
-  value: number | number[] | string | null;
-}
+export type MouseMoveValue = {
+  dx: -1 | 0 | 1;
+  dy: -1 | 0 | 1;
+  step: number;
+  accelerate: boolean;
+};
+
+export type KeyAction =
+  | { type: "SingleKey"; value: number }
+  | { type: "ComboKey"; value: number[] }
+  | { type: "TextInput"; value: string }
+  | { type: "LaunchApp"; value: string }
+  | { type: "MouseClick"; value: null }
+  | { type: "MouseMove"; value: MouseMoveValue }
+  | { type: "None"; value: null };
 
 export type TriggerMode = "Toggle" | "Hold";
 /** Toggle=点击型快捷键；Hold=按住型快捷键（传声仍为按住遥控语音键） */

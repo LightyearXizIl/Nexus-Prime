@@ -645,7 +645,6 @@ fn handle_gesture_button(
     }
 
     mark_direct_signal(button_id);
-    cancel_repeat(button_id);
     let (was_hold, held_alt_tab_modifier, held_keys) = {
         let mut states = press_states();
         let Some(state) = states.as_mut().unwrap().get_mut(button_id) else {
@@ -658,6 +657,7 @@ fn handle_gesture_button(
         state.active = false;
         (state.held_fired, take_held_alt_tab_modifier(state), state.held_keys.take())
     };
+    cancel_repeat(button_id);
     if let Some(alt_vk) = held_alt_tab_modifier {
         release_held_alt_tab(alt_vk, "remote_up");
     }
@@ -773,7 +773,24 @@ fn start_hold_detector(
                                 perform_action(action)
                             }
                         } else {
-                            perform_action(action)
+                            // MouseMove 长按：启动专用循环，按住期间持续移动
+                            if let KeyAction::MouseMove { dx, dy, step, accelerate } = action {
+                                if let Some(repeat_gen) = reserve_repeat_for_active_press(&button_id, gen) {
+                                    start_mouse_move_loop(
+                                        button_id.clone(),
+                                        *dx,
+                                        *dy,
+                                        *step,
+                                        *accelerate,
+                                        repeat_gen,
+                                    );
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                perform_action(action)
+                            }
                         };
                         if triggered {
                             mark_direct_signal(&button_id);
@@ -787,7 +804,9 @@ fn start_hold_detector(
                         &format!("长按 → {}", action_label_for_button(&config, &button_id, 1)),
                     );
                     if let Some(interval) = repeat_interval(&button_id) {
-                        start_hold_repeat_loop(app, button_id, interval);
+                        if let Some(repeat_gen) = reserve_repeat_for_active_press(&button_id, gen) {
+                            start_hold_repeat_loop(app, button_id, interval, repeat_gen);
+                        }
                     }
                 }
             }
@@ -795,22 +814,13 @@ fn start_hold_detector(
         .ok();
 }
 
-fn start_hold_repeat_loop(app: AppHandle, button_id: String, interval: Duration) {
-    let gen = {
-        let mut map = repeats();
-        let e = map.as_mut().unwrap().entry(button_id.clone()).or_insert(0);
-        *e = e.wrapping_add(1);
-        *e
-    };
+fn start_hold_repeat_loop(app: AppHandle, button_id: String, interval: Duration, gen: u64) {
     std::thread::Builder::new()
         .name(format!("xiaomi-repeat-{button_id}"))
         .spawn(move || loop {
             std::thread::sleep(interval);
-            {
-                let map = repeats();
-                if map.as_ref().and_then(|m| m.get(&button_id)).copied() != Some(gen) {
-                    break;
-                }
+            if !repeat_is_active(&button_id, gen) {
+                break;
             }
             if let Some(config) = load_xiaomi_config(&app) {
                 let _ = perform_button_action(&config, &button_id);
@@ -940,6 +950,30 @@ fn cancel_repeat(button_id: &str) {
     *gen = gen.wrapping_add(1);
 }
 
+/// Reserve a repeat generation while the matching physical press is still active.
+/// The release path changes `active` before invalidating this generation, which
+/// prevents a delayed hold detector from creating a loop after key-up.
+fn reserve_repeat_for_active_press(button_id: &str, press_gen: u64) -> Option<u64> {
+    let states = press_states();
+    let state = states.as_ref()?.get(button_id)?;
+    if state.gen != press_gen || !state.active {
+        return None;
+    }
+    let mut map = repeats();
+    let repeat_gen = map
+        .as_mut()
+        .unwrap()
+        .entry(button_id.to_string())
+        .or_insert(0);
+    *repeat_gen = repeat_gen.wrapping_add(1);
+    Some(*repeat_gen)
+}
+
+fn repeat_is_active(button_id: &str, generation: u64) -> bool {
+    let map = repeats();
+    map.as_ref().and_then(|m| m.get(button_id)).copied() == Some(generation)
+}
+
 fn start_hold_repeat(app: AppHandle, button_id: String, delay: Duration, interval: Duration) {
     let gen = {
         let mut map = repeats();
@@ -997,6 +1031,10 @@ fn perform_action(action: &KeyAction) -> bool {
             let _ = std::process::Command::new(path).spawn();
             true
         }
+        KeyAction::MouseClick => mouse_left_click(),
+        KeyAction::MouseMove { dx, dy, step, .. } => {
+            mouse_move_relative(*dx * *step as i32, *dy * *step as i32)
+        }
     }
 }
 
@@ -1021,6 +1059,17 @@ fn action_label(action: &KeyAction) -> String {
         KeyAction::ComboKey(_) => "未绑定".into(),
         KeyAction::TextInput(text) => format!("文字: {text}"),
         KeyAction::LaunchApp(path) => format!("启动: {path}"),
+        KeyAction::MouseClick => "鼠标左键".into(),
+        KeyAction::MouseMove { dx, dy, step, .. } => {
+            let dir = match (*dx, *dy) {
+                (0, -1) => "鼠标↑",
+                (0, 1) => "鼠标↓",
+                (-1, 0) => "鼠标←",
+                (1, 0) => "鼠标→",
+                _ => "鼠标移动",
+            };
+            format!("{dir} {step}px")
+        }
     }
 }
 
@@ -1900,6 +1949,145 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
     }
 }
 
+fn send_input_complete(sent: u32, expected: usize) -> bool {
+    sent == expected as u32
+}
+
+fn mouse_move_speed(step: u32, frame: u32, accelerate: bool) -> u32 {
+    if accelerate {
+        (step + frame / 10).min(step.saturating_mul(4))
+    } else {
+        step
+    }
+}
+
+/// 模拟鼠标左键点击（在当前鼠标位置按下并抬起）。
+fn mouse_left_click() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN,
+            MOUSEEVENTF_LEFTUP,
+        };
+
+        let down = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTDOWN,
+                    time: 0,
+                    dwExtraInfo: EXTRA_INFO,
+                },
+            },
+        };
+        let up = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTUP,
+                    time: 0,
+                    dwExtraInfo: EXTRA_INFO,
+                },
+            },
+        };
+        let inputs = [down, up];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if send_input_complete(sent, inputs.len()) {
+            log::debug!("XIAOMI MAPPING mouse left click");
+            true
+        } else {
+            log::warn!(
+                "XIAOMI MAPPING mouse left click SendInput incomplete sent={sent} expected={} error={}",
+                inputs.len(),
+                std::io::Error::last_os_error()
+            );
+            false
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        log::warn!("XIAOMI MAPPING mouse click not supported on this platform");
+        false
+    }
+}
+
+/// 模拟鼠标相对移动（dx/dy 为像素偏移）。
+fn mouse_move_relative(dx: i32, dy: i32) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+        };
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx,
+                    dy,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_MOVE,
+                    time: 0,
+                    dwExtraInfo: EXTRA_INFO,
+                },
+            },
+        };
+        let inputs = [input];
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        if send_input_complete(sent, inputs.len()) {
+            log::debug!("XIAOMI MAPPING mouse move dx={dx} dy={dy}");
+            true
+        } else {
+            log::warn!(
+                "XIAOMI MAPPING mouse move SendInput incomplete dx={dx} dy={dy} sent={sent} expected={} error={}",
+                inputs.len(),
+                std::io::Error::last_os_error()
+            );
+            false
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (dx, dy);
+        log::warn!("XIAOMI MAPPING mouse move not supported on this platform");
+        false
+    }
+}
+
+/// 长按鼠标移动循环：generation 必须已在有效的物理按压期间预留。
+fn start_mouse_move_loop(
+    button_id: String,
+    dx: i32,
+    dy: i32,
+    step: u32,
+    accelerate: bool,
+    generation: u64,
+) {
+    std::thread::Builder::new()
+        .name(format!("xiaomi-mouse-move-{button_id}"))
+        .spawn(move || {
+            let mut frame: u32 = 0;
+            loop {
+                if !repeat_is_active(&button_id, generation) {
+                    break;
+                }
+                // 加速：从 step 开始，每 10 帧增加 1px，上限 step*4。
+                let speed = mouse_move_speed(step, frame, accelerate);
+                if !mouse_move_relative(dx * speed as i32, dy * speed as i32) {
+                    break;
+                }
+                frame += 1;
+                std::thread::sleep(Duration::from_millis(16)); // ~60fps
+            }
+        })
+        .ok();
+}
+
 #[cfg(test)]
 mod gesture_tests {
     use super::*;
@@ -1910,6 +2098,52 @@ mod gesture_tests {
         assert_eq!(hold_delay("volume_down"), Duration::from_millis(400));
         assert_eq!(hold_delay("menu"), Duration::from_millis(280));
         assert_eq!(hold_delay("up"), Duration::from_millis(280));
+    }
+
+    #[test]
+    fn mouse_send_input_reports_partial_delivery_as_failure() {
+        assert!(send_input_complete(2, 2));
+        assert!(!send_input_complete(1, 2));
+        assert!(!send_input_complete(0, 1));
+    }
+
+    #[test]
+    fn mouse_move_acceleration_is_bounded() {
+        assert_eq!(mouse_move_speed(20, 0, true), 20);
+        assert_eq!(mouse_move_speed(20, 10, true), 21);
+        assert_eq!(mouse_move_speed(20, 1_000, true), 80);
+        assert_eq!(mouse_move_speed(20, 1_000, false), 20);
+    }
+
+    #[test]
+    fn repeat_token_cannot_be_armed_after_the_press_was_released() {
+        let button_id = "mouse-repeat-race-test";
+        let press_gen = 73;
+        {
+            let mut states = press_states();
+            states.as_mut().unwrap().insert(
+                button_id.into(),
+                PressState {
+                    gen: press_gen,
+                    active: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let repeat_gen = reserve_repeat_for_active_press(button_id, press_gen).unwrap();
+        assert!(repeat_is_active(button_id, repeat_gen));
+
+        {
+            let mut states = press_states();
+            let state = states.as_mut().unwrap().get_mut(button_id).unwrap();
+            state.gen = state.gen.wrapping_add(1);
+            state.active = false;
+        }
+        cancel_repeat(button_id);
+
+        assert!(!repeat_is_active(button_id, repeat_gen));
+        assert_eq!(reserve_repeat_for_active_press(button_id, press_gen), None);
     }
 
     #[test]
