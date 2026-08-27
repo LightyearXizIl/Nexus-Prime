@@ -11,6 +11,7 @@
 - **强制修复**：保留 `-Force` 入口；仅删除旧版脚本所产生的“逐字符硬件 ID”WinUHid 根设备，再重新绑定正确节点，不影响其它物理或虚拟设备。安装过程会记录 `install.log`，提升权限子进程失败时把末条原因带回应用日志。
 - **真实 Windows 11 验证**：强制修复返回 0；设备 `ROOT\\WINUHID_VIRTUAL_HID_ENUMERATOR\\0008` 状态为 Started、驱动为 `oem103.inf`、提供方 WinUHid Project；`\\.\\WinUHid` 可打开。`cargo run --example diag_voice_tap` 显示 `WinUHid available=true`，右 Alt、Ctrl+Win、普通按键和连续 20 次点击均已释放，无粘键。
 - **本地正式安装包**：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.9_x64-setup.exe`，13,272,757 bytes，SHA-256 `D7406F6B8F7AC68CC20AB9D5236147BA21623E5D39164E7B51AC54BDE26A12DE`；文件版本和产品版本均为 `0.2.9`，构建配置将 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本作为安装资源打包。
+- **GitHub 正式发布**：[`v0.2.9 Release`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.2.9) 已公开发布；资产 `Nexus.Prime_0.2.9_x64-setup.exe` 状态为 `uploaded`、大小 13,272,757 bytes，GitHub digest 为 `sha256:d7406f6b8f7ac68cc20ab9d5236147ba21623e5d39164e7b51ac54bde26a12de`。
 
 ### 仍待用户输入法验收
 
