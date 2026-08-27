@@ -1232,10 +1232,13 @@ fn press_voice_shortcut(vks: &[u16], reason: &str) -> Option<VoiceInjectionRoute
 
 /// 释放实际按下的组合键；对同一会话重复调用不产生额外键盘事件。
 pub fn force_release_voice_shortcut(reason: &str) -> bool {
-    if let Some(session) = VOICE_WECHAT_TAP_SESSION.lock().clone() {
+    // 停止点按与清空会话必须经同一守卫完成：parking_lot 不可重入，
+    // 持锁期间再次 lock() 同一把锁会自锁死调用线程。
+    let mut session_slot = VOICE_WECHAT_TAP_SESSION.lock();
+    if let Some(session) = session_slot.clone() {
         let released = tap_voice_shortcut_on_route(&session.keys, session.route, 120, false);
         if released {
-            *VOICE_WECHAT_TAP_SESSION.lock() = None;
+            *session_slot = None;
             log::info!(
                 "XIAOMI VOICE legacy WeChat stop tap reason={reason} route={} vks={:?}",
                 voice_injection_route_label(session.route),
@@ -1250,6 +1253,7 @@ pub fn force_release_voice_shortcut(reason: &str) -> bool {
         }
         return released;
     }
+    drop(session_slot);
     let mut state = VOICE_HELD_KEYS.lock();
     let Some((keys, route, mut released)) = state.release_with(release_voice_shortcut) else {
         return false;
@@ -2489,6 +2493,21 @@ mod gesture_tests {
                 VoiceReleaseStep::Release(vec![0xA2, 0x5B]),
             ]
         );
+    }
+
+    #[test]
+    fn force_release_keeps_legacy_wechat_session_when_stop_tap_fails() {
+        // 测试进程中 WinUHid 设备从未预热，VirtualHid 路由的停止点按会立即
+        // 失败且不产生真实按键；失败时会话必须保留以便稍后重试，且函数必须
+        // 正常返回（锁守卫不得遗留持有可能导致后续 lock() 挂起）。
+        *VOICE_WECHAT_TAP_SESSION.lock() = Some(VoiceTapSession {
+            keys: vec![0xA2, 0x5B],
+            route: VoiceInjectionRoute::VirtualHid,
+        });
+        let released = force_release_voice_shortcut("test");
+        assert!(!released);
+        assert!(VOICE_WECHAT_TAP_SESSION.lock().is_some());
+        *VOICE_WECHAT_TAP_SESSION.lock() = None;
     }
 
     #[test]
