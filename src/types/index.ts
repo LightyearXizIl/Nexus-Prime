@@ -24,7 +24,7 @@ export interface DeviceInfo {
 }
 
 export interface KeyAction {
-  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "None";
+  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "MouseClick" | "None";
   value: number | number[] | string | null;
 }
 

@@ -959,6 +959,10 @@ fn perform_action(action: &KeyAction) -> bool {
             let _ = std::process::Command::new(path).spawn();
             true
         }
+        KeyAction::MouseClick => {
+            mouse_left_click();
+            true
+        }
     }
 }
 
@@ -983,6 +987,7 @@ fn action_label(action: &KeyAction) -> String {
         KeyAction::ComboKey(_) => "未绑定".into(),
         KeyAction::TextInput(text) => format!("文字: {text}"),
         KeyAction::LaunchApp(path) => format!("启动: {path}"),
+        KeyAction::MouseClick => "鼠标左键".into(),
     }
 }
 
@@ -1705,6 +1710,53 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
     {
         let _ = (vks, key_up);
         true
+    }
+}
+
+/// 模拟鼠标左键点击（在当前鼠标位置按下并抬起）
+fn mouse_left_click() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN,
+            MOUSEEVENTF_LEFTUP,
+        };
+
+        let down = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTDOWN,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let up = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let inputs = [down, up];
+        unsafe {
+            let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        }
+        log::debug!("XIAOMI MAPPING mouse left click");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        log::warn!("XIAOMI MAPPING mouse click not supported on this platform");
     }
 }
 

@@ -259,6 +259,7 @@ function actionLabel(action: KeyAction): string {
   }
   if (action.type === "TextInput") return t("mapping.text", { value: action.value });
   if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
+  if (action.type === "MouseClick") return "鼠标左键";
   return "—";
 }
 
@@ -635,6 +636,37 @@ async function pickMediaKey(vk: number) {
   applyCapturedKeys(buttonId, [vk]);
 }
 
+/** 鼠标左键：直接设置为 MouseClick 动作 */
+async function pickMouseClick() {
+  const buttonId = selectedId.value;
+  if (!buttonId) return;
+  await cancelCapture();
+  const count = isVoiceButton(buttonId) ? 1 : selectedClick(buttonId);
+  const action: KeyAction = { type: "MouseClick", value: null };
+  if (!props.config.button_bindings) {
+    (props.config as DeviceConfig).button_bindings = {};
+  }
+  if (count === "long") {
+    ensureLongPressBindings();
+    props.config.long_press_bindings![buttonId] = action;
+  } else if (count === 1) {
+    props.config.button_bindings[buttonId] = action;
+  } else {
+    ensureMultiClickBindings();
+    props.config.multi_click_bindings![buttonId] = {
+      ...(props.config.multi_click_bindings![buttonId] || {}),
+      [count]: action,
+    };
+  }
+  const next: DeviceConfig = {
+    ...props.config,
+    button_bindings: { ...props.config.button_bindings },
+    long_press_bindings: { ...(props.config.long_press_bindings || {}) },
+    multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
+  };
+  emit("save", next);
+}
+
 function applyCapturedKeys(buttonId: string, vks: number[]) {
   applyShortcutKeys(buttonId, vks, selectedClick(buttonId));
 }
@@ -902,6 +934,13 @@ onUnmounted(() => {
             @click.stop="pickMediaKey(k.vk)"
           >
             {{ k.label }}
+          </button>
+          <button
+            type="button"
+            class="selection-action"
+            @click.stop="pickMouseClick"
+          >
+            鼠标左键
           </button>
         </div>
         <p v-if="captureError && selectedId === selectedMappingButton.id" class="capture-err">{{ captureError }}</p>

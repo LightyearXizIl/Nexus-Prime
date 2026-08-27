@@ -28,6 +28,8 @@ pub enum KeyAction {
     TextInput(String),
     /// 启动应用
     LaunchApp(String),
+    /// 鼠标左键点击
+    MouseClick,
     /// 无动作
     None,
 }
