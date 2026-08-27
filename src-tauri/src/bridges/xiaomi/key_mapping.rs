@@ -1953,6 +1953,14 @@ fn send_input_complete(sent: u32, expected: usize) -> bool {
     sent == expected as u32
 }
 
+fn mouse_move_speed(step: u32, frame: u32, accelerate: bool) -> u32 {
+    if accelerate {
+        (step + frame / 10).min(step.saturating_mul(4))
+    } else {
+        step
+    }
+}
+
 /// 模拟鼠标左键点击（在当前鼠标位置按下并抬起）。
 fn mouse_left_click() -> bool {
     #[cfg(target_os = "windows")]
@@ -2068,12 +2076,8 @@ fn start_mouse_move_loop(
                 if !repeat_is_active(&button_id, generation) {
                     break;
                 }
-                let speed = if accelerate {
-                    // 加速：从 step 开始，每 10 帧增加 1px，上限 step*4
-                    (step + frame / 10).min(step * 4)
-                } else {
-                    step
-                };
+                // 加速：从 step 开始，每 10 帧增加 1px，上限 step*4。
+                let speed = mouse_move_speed(step, frame, accelerate);
                 if !mouse_move_relative(dx * speed as i32, dy * speed as i32) {
                     break;
                 }
@@ -2094,6 +2098,52 @@ mod gesture_tests {
         assert_eq!(hold_delay("volume_down"), Duration::from_millis(400));
         assert_eq!(hold_delay("menu"), Duration::from_millis(280));
         assert_eq!(hold_delay("up"), Duration::from_millis(280));
+    }
+
+    #[test]
+    fn mouse_send_input_reports_partial_delivery_as_failure() {
+        assert!(send_input_complete(2, 2));
+        assert!(!send_input_complete(1, 2));
+        assert!(!send_input_complete(0, 1));
+    }
+
+    #[test]
+    fn mouse_move_acceleration_is_bounded() {
+        assert_eq!(mouse_move_speed(20, 0, true), 20);
+        assert_eq!(mouse_move_speed(20, 10, true), 21);
+        assert_eq!(mouse_move_speed(20, 1_000, true), 80);
+        assert_eq!(mouse_move_speed(20, 1_000, false), 20);
+    }
+
+    #[test]
+    fn repeat_token_cannot_be_armed_after_the_press_was_released() {
+        let button_id = "mouse-repeat-race-test";
+        let press_gen = 73;
+        {
+            let mut states = press_states();
+            states.as_mut().unwrap().insert(
+                button_id.into(),
+                PressState {
+                    gen: press_gen,
+                    active: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let repeat_gen = reserve_repeat_for_active_press(button_id, press_gen).unwrap();
+        assert!(repeat_is_active(button_id, repeat_gen));
+
+        {
+            let mut states = press_states();
+            let state = states.as_mut().unwrap().get_mut(button_id).unwrap();
+            state.gen = state.gen.wrapping_add(1);
+            state.active = false;
+        }
+        cancel_repeat(button_id);
+
+        assert!(!repeat_is_active(button_id, repeat_gen));
+        assert_eq!(reserve_repeat_for_active_press(button_id, press_gen), None);
     }
 
     #[test]

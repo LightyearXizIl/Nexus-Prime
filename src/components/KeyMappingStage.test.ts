@@ -31,7 +31,10 @@ function latestSave(wrapper: ReturnType<typeof mount>) {
 }
 
 describe("KeyMappingStage voice mapping", () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    i18n.global.locale.value = "zh-CN";
+  });
 
   it("only flags the known truncated Codex mapping and synchronizes the single-click aliases", async () => {
     const wrapper = mount(KeyMappingStage, {
@@ -93,6 +96,56 @@ describe("KeyMappingStage voice mapping", () => {
         menu: { 2: { type: "SingleKey", value: 0x41 } },
       },
     });
+    wrapper.unmount();
+  });
+
+  it("shows mouse controls without shortcut capture and saves a left click to the selected slot", async () => {
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    const upRow = wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"));
+    expect(upRow).toBeDefined();
+    await upRow!.trigger("click");
+
+    expect(wrapper.find('[aria-label="鼠标操作"]').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("取消录入");
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("鼠标左键"))!.trigger("click");
+
+    expect(latestSave(wrapper).button_bindings.up).toEqual({ type: "MouseClick", value: null });
+    wrapper.unmount();
+  });
+
+  it("clamps mouse movement step, limits acceleration to long press, and localizes its controls", async () => {
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    const upRow = wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"));
+    await upRow!.trigger("click");
+
+    await wrapper.find('[aria-label="鼠标向上移动"]').trigger("click");
+    expect(latestSave(wrapper).button_bindings.up).toEqual({
+      type: "MouseMove",
+      value: { dx: 0, dy: -1, step: 20, accelerate: false },
+    });
+
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("长按"))!.trigger("click");
+    await nextTick();
+    await wrapper.find(".mouse-pick-step input").setValue(999);
+    await wrapper.find(".mouse-pick-accel input").setValue(false);
+    await wrapper.find('[aria-label="鼠标向上移动"]').trigger("click");
+
+    expect(latestSave(wrapper).long_press_bindings?.up).toEqual({
+      type: "MouseMove",
+      value: { dx: 0, dy: -1, step: 100, accelerate: false },
+    });
+
+    i18n.global.locale.value = "en";
+    await nextTick();
+    expect(wrapper.text()).toContain("Mouse controls");
+    expect(wrapper.find('[aria-label="Move mouse up"]').exists()).toBe(true);
     wrapper.unmount();
   });
 });
