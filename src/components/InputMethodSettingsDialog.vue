@@ -199,7 +199,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <span class="ime-eyebrow">{{ activeLabel }} · 版本选择</span>
             <h4>按你的微信输入法版本选择</h4>
             <p id="ime-wechat-summary">
-              微信输入法不同版本的语音快捷键不同；两个预设都使用“按住”触发模式，且只会修改 Nexus Prime 的遥控器映射。
+              微信输入法不同版本的语音快捷键不同：旧版为「按下发一次脉冲」（按下启动语音、按任意键结束），新版为「按住说话」（按住说话、松手结束）；两个预设都只修改 Nexus Prime 的遥控器映射。
             </p>
             <ol>
               <li>在微信输入法“设置 → 语音输入”中查看实际的语音快捷键。</li>
@@ -221,7 +221,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <section class="ime-wechat-option">
               <span class="ime-status">旧版</span>
               <strong>左 Ctrl + 左 Win</strong>
-              <p>匹配旧版“启动语音输入”：按下启动，松开结束</p>
+              <p>匹配旧版“启动语音输入”：按下启动语音，按任意键结束（软件点按一次）</p>
               <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
                 <span>{{ saving ? "正在应用…" : "应用旧版映射" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>

@@ -28,16 +28,16 @@ export const IME_PRESETS: Record<ImePreset, ImePresetDefinition> = {
   wechat: {
     shortcutVks: [0xa2, 0x5b],
     voiceHotkey: ["leftctrl", "leftwin"],
-    triggerMode: "Hold",
-    applyHint: "已应用：语音键 = 左 Ctrl + 左 Win，按下启动、松开结束",
-    logMessage: "设置建议：已快速应用旧版微信输入法映射（左 Ctrl + 左 Win）",
+    triggerMode: "Toggle",
+    applyHint: "已应用：语音键 = 左 Ctrl + 左 Win，按下启动语音，按任意键结束（软件只发一次脉冲）",
+    logMessage: "设置建议：已快速应用微信输入法「启动语音输入」映射（左 Ctrl + 左 Win，点按脉冲）",
   },
   "wechat-current": {
     shortcutVks: [0xa2, 0xa0, 0x44],
     voiceHotkey: ["leftctrl", "leftshift", "d"],
     triggerMode: "Hold",
-    applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D，触发模式 = 按住",
-    logMessage: "设置建议：已快速应用新版微信输入法按住说话映射（左 Ctrl + 左 Shift + D）",
+    applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D，按住说话，松手结束",
+    logMessage: "设置建议：已快速应用微信输入法「按住说话」映射（左 Ctrl + 左 Shift + D）",
   },
   qianwen: {
     shortcutVks: [0xa5],

@@ -34,7 +34,7 @@ describe("applyImePresetConfig", () => {
       },
       voice_hotkey: ["leftctrl", "leftwin"],
       voice_shortcut_enabled: true,
-      trigger_mode: "Hold",
+      trigger_mode: "Toggle",
       long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },
       multi_click_bindings: { menu: { 2: { type: "SingleKey", value: 0x41 } } },
     });

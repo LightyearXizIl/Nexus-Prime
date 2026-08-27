@@ -1,6 +1,15 @@
 # 交接记录
 
-更新时间：2026-08-27
+更新时间：2026-08-28
+
+## 本次范围（v0.3.5，2026-08-28）
+
+- 微信输入法预设文案与触发模式对齐：
+  - `src/utils/imePreset.ts`：`wechat`（启动语音输入，左 Ctrl + 左 Win）触发模式由「按住」改为「点击」，`applyHint` 与 `logMessage` 同步微信输入法原生措辞；`wechat-current`（按住说话，左 Ctrl + 左 Shift + D）描述同步。
+  - `src/utils/imePreset.test.ts`：`wechat` 预设的 `trigger_mode` 断言由 `Hold` 改为 `Toggle`。
+  - `src/components/InputMethodSettingsDialog.vue`：微信面板摘要与「启动语音输入」说明同步上述措辞（卡片按钮与「新版/旧版」状态徽标仍在 v0.3.6 中改为「按住说话」「启动语音输入」）。
+- 版本号同步升至 0.3.5（`package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`）。
+- 验证与构建产物 SHA-256 见本次提交完成后回填。
 
 ## 本次范围（v0.3.3，2026-08-27）
 
