@@ -1,6 +1,21 @@
 # 交接记录
 
-更新时间：2026-08-26
+更新时间：2026-08-27
+
+## 本次范围（v0.2.9，2026-08-27）
+
+修复已发布 v0.2.8 在真实 Windows 11 中“修复虚拟键盘失败”的根因，并以新的正式版本交付：
+
+- **根因**：旧 PowerShell 脚本以 ANSI 形式调用 `SetupDiSetDeviceRegistryProperty`，却传入 UTF-16 `MULTI_SZ`。Windows 因此把 `Root\\WinUHid` 写成 12 个单字符硬件 ID；驱动可以成功暂存为 `oem103.inf`，但永远不会匹配该设备，`\\.\\WinUHid` 不存在。
+- **修复**：所有涉及字符串结构的 SetupAPI 调用显式使用 Unicode；创建或复用正确根设备后，列出兼容驱动、选中 WinUHid 并调用 `DIF_INSTALLDEVICE`，随后执行 PnP 扫描。安装成功只在 `\\.\\WinUHid` 实际可打开时报告“已就绪”。
+- **强制修复**：保留 `-Force` 入口；仅删除旧版脚本所产生的“逐字符硬件 ID”WinUHid 根设备，再重新绑定正确节点，不影响其它物理或虚拟设备。安装过程会记录 `install.log`，提升权限子进程失败时把末条原因带回应用日志。
+- **真实 Windows 11 验证**：强制修复返回 0；设备 `ROOT\\WINUHID_VIRTUAL_HID_ENUMERATOR\\0008` 状态为 Started、驱动为 `oem103.inf`、提供方 WinUHid Project；`\\.\\WinUHid` 可打开。`cargo run --example diag_voice_tap` 显示 `WinUHid available=true`，右 Alt、Ctrl+Win、普通按键和连续 20 次点击均已释放，无粘键。
+- **本地正式安装包**：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.9_x64-setup.exe`，13,272,757 bytes，SHA-256 `D7406F6B8F7AC68CC20AB9D5236147BA21623E5D39164E7B51AC54BDE26A12DE`；文件版本和产品版本均为 `0.2.9`，构建配置将 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本作为安装资源打包。
+
+### 仍待用户输入法验收
+
+- 请安装 v0.2.9 后在实际豆包和微信中分别验证 Click/Hold。驱动与虚拟键盘注入已在本机通过，但是否触发第三方输入法的听写界面仍需以用户实际配置为准。
+- 回归 Alt+Tab、Space、音量、方向与返回；这些路径未改为 WinUHid。
 
 ## 本次范围（v0.2.8，2026-08-26）
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/refs/heads/v2/crates/tauri-utils/schema.json",
   "productName": "Nexus Prime",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "identifier": "com.lightyear.nexusprime",
   "build": {
     "frontendDist": "../dist",
