@@ -1211,7 +1211,7 @@ pub fn force_release_voice_shortcut(reason: &str) -> bool {
         // that handle, then use KEYUP only as an emergency for keys owned by
         // this voice session.  The state is cleared only after verification.
         crate::bridges::xiaomi::hid_injector::reset_and_retry();
-        released = key_chord(&keys, true) && owned_modifiers_released(&keys);
+        released = key_chord(&keys, true) && wait_for_owned_modifiers_released(&keys);
         if released {
             state.clear_after_verified_release();
             log::warn!(
@@ -1276,18 +1276,19 @@ fn compensate_voice_shortcut_down(vks: &[u16]) {
 }
 
 fn release_voice_shortcut(vks: &[u16], route: VoiceInjectionRoute) -> bool {
-    // An unhandled pure Win/Alt shortcut normally opens Start/the system menu
-    // on modifier release.  Mark it as a real chord before the modifier UP,
-    // without changing ordinary custom Win mappings that intentionally invoke
-    // Windows UI.
-    if voice_needs_shell_neutralizer(vks) {
-        let _ = neutralize_voice_shell(vks, route);
-    }
-    let released = match route {
-        VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok(),
-        VoiceInjectionRoute::SendInputFallback => key_chord(vks, true),
+    // A pure Win/Alt shortcut must be turned into a real chord before the
+    // modifiers lift, otherwise Windows can open Start/the system menu.  Keep
+    // F24 held while releasing the original chord: returning to a bare
+    // Ctrl+Win report would make IMEs such as WeChat see a second hotkey.
+    let released = if voice_needs_shell_neutralizer(vks) {
+        neutralize_and_release_voice_shell(vks, route)
+    } else {
+        match route {
+            VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok(),
+            VoiceInjectionRoute::SendInputFallback => key_chord(vks, true),
+        }
     };
-    released && owned_modifiers_released(vks)
+    released && wait_for_owned_modifiers_released(vks)
 }
 
 fn is_modifier_key(vk: u16) -> bool {
@@ -1300,22 +1301,74 @@ fn voice_needs_shell_neutralizer(vks: &[u16]) -> bool {
         && vks.iter().any(|vk| matches!(vk, 0x12 | 0xA4 | 0xA5 | 0x5B | 0x5C))
 }
 
-fn neutralize_voice_shell(vks: &[u16], route: VoiceInjectionRoute) -> bool {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum VoiceReleaseStep {
+    Press(Vec<u16>),
+    Release(Vec<u16>),
+}
+
+fn neutralized_voice_release_steps(vks: &[u16], route: VoiceInjectionRoute) -> Vec<VoiceReleaseStep> {
     const VK_F24: u16 = 0x87;
     match route {
         VoiceInjectionRoute::VirtualHid => {
             let mut chord = vks.to_vec();
             chord.push(VK_F24);
-            crate::bridges::xiaomi::hid_injector::press_ready(&chord).is_ok()
-                && crate::bridges::xiaomi::hid_injector::press_ready(vks).is_ok()
+            vec![
+                VoiceReleaseStep::Press(chord),
+                VoiceReleaseStep::Press(vec![VK_F24]),
+                VoiceReleaseStep::Release(vec![VK_F24]),
+            ]
         }
-        VoiceInjectionRoute::SendInputFallback => {
-            key_chord(&[VK_F24], false) && key_chord(&[VK_F24], true)
-        }
+        VoiceInjectionRoute::SendInputFallback => vec![
+            VoiceReleaseStep::Press(vec![VK_F24]),
+            VoiceReleaseStep::Release(vks.to_vec()),
+            VoiceReleaseStep::Release(vec![VK_F24]),
+        ],
     }
 }
 
-fn owned_modifiers_released(vks: &[u16]) -> bool {
+fn neutralize_and_release_voice_shell(vks: &[u16], route: VoiceInjectionRoute) -> bool {
+    let steps = neutralized_voice_release_steps(vks, route);
+    let released = steps.into_iter().all(|step| match (route, step) {
+        (VoiceInjectionRoute::VirtualHid, VoiceReleaseStep::Press(keys)) => {
+            crate::bridges::xiaomi::hid_injector::press_ready(&keys).is_ok()
+        }
+        (VoiceInjectionRoute::VirtualHid, VoiceReleaseStep::Release(keys)) => {
+            crate::bridges::xiaomi::hid_injector::release_ready(&keys).is_ok()
+        }
+        (VoiceInjectionRoute::SendInputFallback, VoiceReleaseStep::Press(keys)) => {
+            key_chord(&keys, false)
+        }
+        (VoiceInjectionRoute::SendInputFallback, VoiceReleaseStep::Release(keys)) => {
+            key_chord(&keys, true)
+        }
+    });
+    log::info!(
+        "XIAOMI VOICE shell-neutralized release route={} result={released} vks={vks:?}",
+        voice_injection_route_label(route),
+    );
+    released
+}
+
+fn wait_for_owned_modifiers_released(vks: &[u16]) -> bool {
+    for attempt in 0..=4 {
+        if owned_modifiers_released(vks, false) {
+            if attempt > 0 {
+                log::info!(
+                    "XIAOMI VOICE modifier release confirmed after {}ms",
+                    attempt * 10,
+                );
+            }
+            return true;
+        }
+        if attempt < 4 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    owned_modifiers_released(vks, true)
+}
+
+fn owned_modifiers_released(vks: &[u16], log_stuck_key: bool) -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -1324,7 +1377,9 @@ fn owned_modifiers_released(vks: &[u16]) -> bool {
         // physically held by the user and must not block cleanup.
         for &vk in vks.iter().filter(|vk| is_modifier_key(**vk)) {
             if unsafe { GetAsyncKeyState(vk as i32) } < 0 {
-                log::warn!("XIAOMI VOICE modifier still down vk=0x{vk:02X}");
+                if log_stuck_key {
+                    log::warn!("XIAOMI VOICE modifier still down after release confirmation vk=0x{vk:02X}");
+                }
                 return false;
             }
         }
@@ -2289,6 +2344,57 @@ mod gesture_tests {
         assert!(voice_needs_shell_neutralizer(&[0x5C]));
         assert!(!voice_needs_shell_neutralizer(&[0xA2, 0xA0, 0x44]));
         assert!(!voice_needs_shell_neutralizer(&[0x5B, 0x44]));
+    }
+
+    #[test]
+    fn virtual_hid_voice_release_keeps_f24_held_while_modifiers_lift() {
+        let legacy_wechat = vec![0xA2, 0x5B];
+        assert_eq!(
+            neutralized_voice_release_steps(&legacy_wechat, VoiceInjectionRoute::VirtualHid),
+            vec![
+                VoiceReleaseStep::Press(vec![0xA2, 0x5B, 0x87]),
+                VoiceReleaseStep::Press(vec![0x87]),
+                VoiceReleaseStep::Release(vec![0x87]),
+            ]
+        );
+    }
+
+    #[test]
+    fn send_input_voice_release_lifts_chord_between_f24_down_and_up() {
+        let legacy_wechat = vec![0xA2, 0x5B];
+        assert_eq!(
+            neutralized_voice_release_steps(&legacy_wechat, VoiceInjectionRoute::SendInputFallback),
+            vec![
+                VoiceReleaseStep::Press(vec![0x87]),
+                VoiceReleaseStep::Release(vec![0xA2, 0x5B]),
+                VoiceReleaseStep::Release(vec![0x87]),
+            ]
+        );
+    }
+
+    #[test]
+    fn right_alt_uses_the_same_neutralized_release_shape() {
+        assert_eq!(
+            neutralized_voice_release_steps(&[0xA5], VoiceInjectionRoute::VirtualHid),
+            vec![
+                VoiceReleaseStep::Press(vec![0xA5, 0x87]),
+                VoiceReleaseStep::Press(vec![0x87]),
+                VoiceReleaseStep::Release(vec![0x87]),
+            ]
+        );
+        assert_eq!(
+            neutralized_voice_release_steps(&[0xA5], VoiceInjectionRoute::SendInputFallback),
+            vec![
+                VoiceReleaseStep::Press(vec![0x87]),
+                VoiceReleaseStep::Release(vec![0xA5]),
+                VoiceReleaseStep::Release(vec![0x87]),
+            ]
+        );
+    }
+
+    #[test]
+    fn ordinary_wechat_chord_skips_shell_neutralization() {
+        assert!(!voice_needs_shell_neutralizer(&[0xA2, 0xA0, 0x44]));
     }
 
     #[test]

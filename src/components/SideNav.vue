@@ -60,7 +60,7 @@ function toggleTheme() {
         :class="['device-chip', statusClass(device.status)]"
         :title="devicePresentation.detail || bridge.statusLabel(device.status)"
       >
-        <span class="status-dot" aria-hidden="true" />
+        <span class="status-dot status-light" :class="statusClass(device.status)" aria-hidden="true" />
         <span>{{ deviceLabel }}</span>
       </div>
     </div>
@@ -199,19 +199,15 @@ function toggleTheme() {
 }
 
 .status-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #8792a7;
+  --status-light-color: #8792a7;
 }
-.device-chip.connected .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.11); }
-.device-chip.connecting .status-dot { background: var(--warning); }
+.device-chip.connected .status-dot { --status-light-color: var(--success); }
+.device-chip.connecting .status-dot { --status-light-color: var(--warning); }
 .device-chip.connecting { color: var(--warning-text); }
 .device-chip.disconnected,
 .device-chip.error { color: var(--danger-text); border-color: var(--nav-segment-border); border-color: color-mix(in srgb, var(--danger) 35%, var(--nav-segment-border)); background: var(--nav-segment-bg); background: color-mix(in srgb, var(--danger) 13%, var(--nav-segment-bg)); }
 .device-chip.disconnected .status-dot,
-.device-chip.error .status-dot { background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 13%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 13%, transparent); }
+.device-chip.error .status-dot { --status-light-color: var(--danger); }
 
 .main-nav {
   gap: 3px;

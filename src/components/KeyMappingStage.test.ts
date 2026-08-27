@@ -110,7 +110,8 @@ describe("KeyMappingStage voice mapping", () => {
 
     expect(wrapper.find('[aria-label="鼠标操作"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain("取消录入");
-    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("鼠标左键"))!.trigger("click");
+    await wrapper.find('[aria-label="鼠标操作"]').trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("鼠标左键"))!.trigger("click");
 
     expect(latestSave(wrapper).button_bindings.up).toEqual({ type: "MouseClick", value: null });
     wrapper.unmount();
@@ -124,7 +125,8 @@ describe("KeyMappingStage voice mapping", () => {
     const upRow = wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"));
     await upRow!.trigger("click");
 
-    await wrapper.find('[aria-label="鼠标向上移动"]').trigger("click");
+    await wrapper.find('[aria-label="鼠标操作"]').trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("鼠标向上移动"))!.trigger("click");
     expect(latestSave(wrapper).button_bindings.up).toEqual({
       type: "MouseMove",
       value: { dx: 0, dy: -1, step: 20, accelerate: false },
@@ -133,9 +135,10 @@ describe("KeyMappingStage voice mapping", () => {
     await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
     await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("长按"))!.trigger("click");
     await nextTick();
+    await wrapper.find('[aria-label="鼠标操作"]').trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("鼠标向上移动"))!.trigger("click");
     await wrapper.find(".mouse-pick-step input").setValue(999);
     await wrapper.find(".mouse-pick-accel input").setValue(false);
-    await wrapper.find('[aria-label="鼠标向上移动"]').trigger("click");
 
     expect(latestSave(wrapper).long_press_bindings?.up).toEqual({
       type: "MouseMove",
@@ -145,7 +148,27 @@ describe("KeyMappingStage voice mapping", () => {
     i18n.global.locale.value = "en";
     await nextTick();
     expect(wrapper.text()).toContain("Mouse controls");
-    expect(wrapper.find('[aria-label="Move mouse up"]').exists()).toBe(true);
+    expect(wrapper.findAll('[role="menuitemradio"]').some((item) => item.text().includes("Move mouse up"))).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("keeps the mouse and click-count menus mutually exclusive and closes them with Escape", async () => {
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    const upRow = wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"));
+    await upRow!.trigger("click");
+
+    await wrapper.find('[aria-label="鼠标操作"]').trigger("click");
+    expect(wrapper.find(".mouse-menu").exists()).toBe(true);
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
+    expect(wrapper.find(".mouse-menu").exists()).toBe(false);
+    expect(wrapper.find(".click-menu").exists()).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await nextTick();
+    expect(wrapper.find(".click-menu").exists()).toBe(false);
     wrapper.unmount();
   });
 });

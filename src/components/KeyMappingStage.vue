@@ -81,6 +81,7 @@ const VOLUME_DEFAULT_BINDINGS: Record<string, KeyAction> = {
 };
 const selectedClickById = ref<Record<string, MappingSlot>>({});
 const openClickMenuId = ref<string | null>(null);
+const openMouseMenuId = ref<string | null>(null);
 const manualEditor = ref<{
   buttonId: string;
   slot: MappingSlot;
@@ -207,6 +208,7 @@ function clickMenuId(id: string) {
 }
 
 function toggleClickMenu(id: string) {
+  openMouseMenuId.value = null;
   openClickMenuId.value = openClickMenuId.value === id ? null : id;
 }
 
@@ -221,11 +223,54 @@ function selectClickCount(id: string, count: MappingSlot) {
   if (isVoiceButton(id)) return;
   closeManualShortcutEditor();
   setClickCount(id, count);
-  openClickMenuId.value = null;
+  closeActionMenus();
 }
 
 function closeClickMenu() {
   openClickMenuId.value = null;
+}
+
+function mouseMenuId(id: string) {
+  return `mouse-menu-${id}`;
+}
+
+function syncMouseControls(action: KeyAction) {
+  if (action.type !== "MouseMove") {
+    mouseStep.value = 20;
+    mouseAccelerate.value = false;
+    return;
+  }
+  mouseStep.value = Math.min(100, Math.max(1, Math.trunc(Number(action.value.step) || 20)));
+  mouseAccelerate.value = Boolean(action.value.accelerate);
+}
+
+function toggleMouseMenu(id: string) {
+  if (isVoiceButton(id)) return;
+  openClickMenuId.value = null;
+  if (openMouseMenuId.value === id) {
+    openMouseMenuId.value = null;
+    return;
+  }
+  syncMouseControls(actionOf(id, selectedClick(id)));
+  openMouseMenuId.value = id;
+}
+
+function closeActionMenus() {
+  openClickMenuId.value = null;
+  openMouseMenuId.value = null;
+}
+
+function closeActionMenusOnEscape(e: KeyboardEvent) {
+  if (e.key !== "Escape" || (!openClickMenuId.value && !openMouseMenuId.value)) return;
+  const triggerId = openClickMenuId.value
+    ? clickMenuId(openClickMenuId.value)
+    : mouseMenuId(openMouseMenuId.value!);
+  e.preventDefault();
+  e.stopPropagation();
+  closeActionMenus();
+  void nextTick(() => {
+    document.querySelector<HTMLButtonElement>(`button[aria-controls="${triggerId}"]`)?.focus();
+  });
 }
 
 const multiClickInterval = computed({
@@ -397,6 +442,7 @@ function updateLine() {
 
 async function selectButton(id: string) {
   closeManualShortcutEditor();
+  closeActionMenus();
   selectedId.value = id;
   await nextTick();
   updateLine();
@@ -422,7 +468,7 @@ function openManualShortcutEditor() {
     slot: isVoiceButton(button.id) ? 1 : button.selectedClick,
     initialKeys: actionKeys(button.selectedAction),
   };
-  openClickMenuId.value = null;
+  closeActionMenus();
 }
 
 function closeManualShortcutEditor() {
@@ -681,6 +727,7 @@ function saveActionToSelectedSlot(action: KeyAction) {
 
 function pickMouseClick() {
   saveActionToSelectedSlot({ type: "MouseClick", value: null });
+  closeActionMenus();
 }
 
 function pickMouseMove(dx: -1 | 0 | 1, dy: -1 | 0 | 1) {
@@ -694,6 +741,19 @@ function pickMouseMove(dx: -1 | 0 | 1, dy: -1 | 0 | 1) {
       accelerate: count === "long" && mouseAccelerate.value,
     },
   });
+}
+
+function selectedMouseMove(): Extract<KeyAction, { type: "MouseMove" }> | null {
+  const buttonId = selectedId.value;
+  if (!buttonId) return null;
+  const action = actionOf(buttonId, selectedClick(buttonId));
+  return action.type === "MouseMove" ? action : null;
+}
+
+function saveCurrentMouseMove() {
+  const action = selectedMouseMove();
+  if (!action) return;
+  pickMouseMove(action.value.dx, action.value.dy);
 }
 
 function applyCapturedKeys(buttonId: string, vks: number[]) {
@@ -812,8 +872,9 @@ onMounted(async () => {
   stageRef.value?.addEventListener("scroll", updateLine, { passive: true });
   window.addEventListener("resize", updateLine);
   window.addEventListener("keydown", blockBrowserKeysDuringCapture, true);
+  window.addEventListener("keydown", closeActionMenusOnEscape, true);
   window.addEventListener("keyup", blockBrowserKeysDuringCapture, true);
-  window.addEventListener("click", closeClickMenu);
+  window.addEventListener("click", closeActionMenus);
 });
 
 onUnmounted(() => {
@@ -824,8 +885,9 @@ onUnmounted(() => {
   stageRef.value?.removeEventListener("scroll", updateLine);
   window.removeEventListener("resize", updateLine);
   window.removeEventListener("keydown", blockBrowserKeysDuringCapture, true);
+  window.removeEventListener("keydown", closeActionMenusOnEscape, true);
   window.removeEventListener("keyup", blockBrowserKeysDuringCapture, true);
-  window.removeEventListener("click", closeClickMenu);
+  window.removeEventListener("click", closeActionMenus);
   if (capturing.value) {
     invoke("capture_shortcut_stop").catch(() => {});
   }
@@ -927,6 +989,81 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <div v-if="!isVoiceButton(selectedMappingButton.id)" class="mouse-select-wrap">
+            <button
+              type="button"
+              class="selection-action"
+              :aria-label="t('mapping.mouseActions')"
+              :aria-expanded="openMouseMenuId === selectedMappingButton.id"
+              :aria-controls="mouseMenuId(selectedMappingButton.id)"
+              :disabled="capturing"
+              @click.stop="toggleMouseMenu(selectedMappingButton.id)"
+              @keydown.esc.stop.prevent="closeActionMenus"
+            >
+              {{ t("mapping.mouseActions") }} ▾
+            </button>
+            <div
+              v-if="openMouseMenuId === selectedMappingButton.id"
+              :id="mouseMenuId(selectedMappingButton.id)"
+              class="mouse-menu"
+              role="menu"
+              @click.stop
+              @keydown.esc.stop.prevent="closeActionMenus"
+            >
+              <button
+                type="button"
+                class="mouse-menu-item"
+                :class="{ active: selectedMappingButton.selectedAction.type === 'MouseClick' }"
+                role="menuitemradio"
+                :aria-checked="selectedMappingButton.selectedAction.type === 'MouseClick'"
+                @click="pickMouseClick"
+              >
+                {{ t("mapping.mouseLeftClick") }}
+              </button>
+              <button
+                type="button"
+                class="mouse-menu-item"
+                :class="{ active: selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 0 && selectedMappingButton.selectedAction.value.dy === -1 }"
+                role="menuitemradio"
+                :aria-checked="selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 0 && selectedMappingButton.selectedAction.value.dy === -1"
+                @click="pickMouseMove(0, -1)"
+              >{{ t("mapping.mouseUp") }}</button>
+              <button
+                type="button"
+                class="mouse-menu-item"
+                :class="{ active: selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 0 && selectedMappingButton.selectedAction.value.dy === 1 }"
+                role="menuitemradio"
+                :aria-checked="selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 0 && selectedMappingButton.selectedAction.value.dy === 1"
+                @click="pickMouseMove(0, 1)"
+              >{{ t("mapping.mouseDown") }}</button>
+              <button
+                type="button"
+                class="mouse-menu-item"
+                :class="{ active: selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === -1 && selectedMappingButton.selectedAction.value.dy === 0 }"
+                role="menuitemradio"
+                :aria-checked="selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === -1 && selectedMappingButton.selectedAction.value.dy === 0"
+                @click="pickMouseMove(-1, 0)"
+              >{{ t("mapping.mouseLeft") }}</button>
+              <button
+                type="button"
+                class="mouse-menu-item"
+                :class="{ active: selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 1 && selectedMappingButton.selectedAction.value.dy === 0 }"
+                role="menuitemradio"
+                :aria-checked="selectedMappingButton.selectedAction.type === 'MouseMove' && selectedMappingButton.selectedAction.value.dx === 1 && selectedMappingButton.selectedAction.value.dy === 0"
+                @click="pickMouseMove(1, 0)"
+              >{{ t("mapping.mouseRight") }}</button>
+              <div v-if="selectedMappingButton.selectedAction.type === 'MouseMove'" class="mouse-menu-options">
+                <label class="mouse-pick-step">
+                  <span>{{ t("mapping.mouseStep") }}</span>
+                  <input v-model.number="mouseStep" type="number" min="1" max="100" :disabled="capturing" @input="saveCurrentMouseMove" @change="saveCurrentMouseMove" />
+                </label>
+                <label v-if="selectedMappingButton.selectedClick === 'long'" class="mouse-pick-accel">
+                  <input v-model="mouseAccelerate" type="checkbox" :disabled="capturing" @change="saveCurrentMouseMove" />
+                  <span>{{ t("mapping.mouseAccelerate") }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
           <button
             v-if="isVolumeButton(selectedMappingButton.id)"
             type="button"
@@ -948,29 +1085,6 @@ onUnmounted(() => {
         <p v-if="capturing && selectedId === selectedMappingButton.id" class="capture-live">
           {{ liveLabels.length ? liveLabels.join(" + ") + " …" : t("mapping.chooseKey") }}
         </p>
-        <div
-          v-if="!isVoiceButton(selectedMappingButton.id)"
-          class="mouse-pick"
-          role="group"
-          :aria-label="t('mapping.mouseActions')"
-        >
-          <span class="mouse-pick-label">{{ t("mapping.mouseActions") }}</span>
-          <button type="button" class="selection-action" :disabled="capturing" @click.stop="pickMouseClick">
-            {{ t("mapping.mouseLeftClick") }}
-          </button>
-          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseUp')" @click.stop="pickMouseMove(0, -1)">↑</button>
-          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseLeft')" @click.stop="pickMouseMove(-1, 0)">←</button>
-          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseRight')" @click.stop="pickMouseMove(1, 0)">→</button>
-          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseDown')" @click.stop="pickMouseMove(0, 1)">↓</button>
-          <label class="mouse-pick-step">
-            <span>{{ t("mapping.mouseStep") }}</span>
-            <input v-model.number="mouseStep" type="number" min="1" max="100" :disabled="capturing" @change="normalizedMouseStep" />
-          </label>
-          <label v-if="selectedMappingButton.selectedClick === 'long'" class="mouse-pick-accel">
-            <input v-model="mouseAccelerate" type="checkbox" :disabled="capturing" />
-            <span>{{ t("mapping.mouseAccelerate") }}</span>
-          </label>
-        </div>
         <div
           v-if="capturing && selectedId === selectedMappingButton.id && !isVoiceButton(selectedMappingButton.id)"
           class="media-pick"
@@ -1510,7 +1624,8 @@ onUnmounted(() => {
 .btn-clear:hover:not(:disabled) {
   background: var(--danger-bg);
 }
-.click-select-wrap {
+.click-select-wrap,
+.mouse-select-wrap {
   position: relative;
 }
 .btn-click-select {
@@ -1521,7 +1636,8 @@ onUnmounted(() => {
 .btn-click-select:hover:not(:disabled) {
   background: var(--surface-hover);
 }
-.click-menu {
+.click-menu,
+.mouse-menu {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
@@ -1533,7 +1649,8 @@ onUnmounted(() => {
   background: var(--card-bg);
   box-shadow: var(--dialog-shadow);
 }
-.click-menu-item {
+.click-menu-item,
+.mouse-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1549,7 +1666,9 @@ onUnmounted(() => {
   text-align: left;
 }
 .click-menu-item:hover,
-.click-menu-item.active {
+.click-menu-item.active,
+.mouse-menu-item:hover,
+.mouse-menu-item.active {
   background: var(--surface-selected);
   color: var(--info-text);
 }
@@ -1767,7 +1886,8 @@ onUnmounted(() => {
 .selection-action.primary:hover:not(:disabled) { background: var(--primary-dark); }
 .selection-action.danger:hover:not(:disabled) { background: var(--danger-bg); }
 .selection-action:disabled { opacity: 0.55; cursor: not-allowed; }
-.mapping-selection-card .click-menu {
+.mapping-selection-card .click-menu,
+.mapping-selection-card .mouse-menu {
   top: auto;
   right: auto;
   bottom: calc(100% + 6px);
@@ -1854,8 +1974,7 @@ onUnmounted(() => {
 }
 .media-pick { display: flex; width: 100%; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 0; padding-top: 8px; border-top: 1px solid var(--info-border); }
 .media-pick-label { color: var(--text-secondary); font-size: 11px; }
-.mouse-pick { display: flex; width: 100%; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--info-border); }
-.mouse-pick-label { color: var(--text-secondary); font-size: 11px; }
+.mouse-menu-options { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 6px 2px 2px; padding: 8px 6px 2px; border-top: 1px solid var(--border); }
 .mouse-pick-step, .mouse-pick-accel { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 11px; }
 .mouse-pick-step input { width: 52px; min-height: 29px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 11px; }
 .mapping-row.active .mapping-row-keycap { border-color: var(--border); border-color: color-mix(in srgb, var(--primary) 44%, var(--border)); }

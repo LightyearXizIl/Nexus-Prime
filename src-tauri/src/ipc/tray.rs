@@ -137,7 +137,7 @@ pub fn setup_tray(app: &AppHandle) -> Result<TrayIcon, Box<dyn std::error::Error
     let menu = build_tray_menu(app)?;
 
     // 优先用专用托盘图；失败再退回窗口默认图标
-    let icon = Image::from_bytes(include_bytes!("../../icons/tray-icon.png"))
+    let icon = Image::from_bytes(include_bytes!("../../icons/tray-icon-compact.png"))
         .or_else(|_| Image::from_bytes(include_bytes!("../../icons/32x32.png")))
         .or_else(|_| {
             app.default_window_icon()

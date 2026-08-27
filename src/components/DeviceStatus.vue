@@ -33,7 +33,7 @@ function buttonText(status: BridgeStatus): string {
       :title="statusDetail || undefined"
       :aria-label="statusDetail ? `${statusText}：${statusDetail}` : statusText"
     >
-      <span class="dot"></span>
+      <span class="dot status-light" :class="presentation.tone"></span>
       {{ statusText }}
     </span>
     <button
@@ -72,31 +72,20 @@ function buttonText(status: BridgeStatus): string {
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
+  --status-light-color: var(--text-muted);
 }
 
 .status-indicator.connected { color: var(--success-text); background: var(--success-bg); border-color: var(--success-border); }
-.status-indicator.connected .dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.1); }
+.status-indicator.connected .dot { --status-light-color: var(--success); }
 
 .status-indicator.connecting { color: var(--warning-text); background: var(--warning-bg); border-color: var(--warning-border); }
-.status-indicator.connecting .dot {
-  background: var(--warning);
-  animation: pulse 1s ease-in-out infinite;
-}
+.status-indicator.connecting .dot { --status-light-color: var(--warning); }
 
 .status-indicator.disconnected { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
-.status-indicator.disconnected .dot { background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 12%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.status-indicator.disconnected .dot { --status-light-color: var(--danger); }
 
 .status-indicator.error { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
-.status-indicator.error .dot { background: var(--danger); }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
+.status-indicator.error .dot { --status-light-color: var(--danger); }
 
 .connection-action {
   height: 34px;

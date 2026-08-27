@@ -500,11 +500,20 @@ function hostItemState(item: HostStatusItem) {
   return t(item.tone === "ok" ? "dashboard.listening" : "dashboard.notStarted");
 }
 
+function statusLightClass(
+  tone: HostStatusItem["tone"] | "success" | "info" | "error" | "connected" | "connecting" | "disconnected",
+) {
+  if (tone === "ok" || tone === "success" || tone === "connected") return "is-success";
+  if (tone === "warn" || tone === "connecting") return "is-warning";
+  if (tone === "info") return "is-info";
+  return "is-danger";
+}
+
 function bridgeStatusLabel() {
   return t(connectionPresentation.value.labelKey);
 }
 
-function activityTone(text: string): string {
+function activityTone(text: string): "success" | "info" | "error" {
   if (/失败|错误|异常|未连接|断开|未检测/.test(text)) return "error";
   if (/正在|检测中|等待|修复中|连接中/.test(text)) return "info";
   return "success";
@@ -1151,7 +1160,7 @@ watch(
               <img class="remote-product-image" :src="remoteProductImage" alt="" />
             </div>
             <div class="device-meta">
-              <div :class="['model', connectionPresentation.tone]"><span class="status-dot" />{{ deviceModelLabel }}</div>
+              <div :class="['model', connectionPresentation.tone]"><span class="status-dot status-light" />{{ deviceModelLabel }}</div>
               <h2>{{ deviceDisplayName }}</h2>
               <div class="tag-row">
                 <span class="mini-tag">
@@ -1223,29 +1232,27 @@ watch(
               :class="[`service-${item.id}`, { 'host-status-cable': item.id === 'cable' }]"
               role="listitem"
             >
-              <span
-                class="host-dot"
-                :class="itemToneClass(item.tone)"
-                aria-hidden="true"
-              />
               <span class="host-item-label">{{ hostItemLabel(item.id) }}</span>
-              <div
-                v-if="item.id === 'cable'"
-                class="cable-meter"
-                :class="{ active: voiceMeter.cableActive }"
-                :title="cableActivityLabel"
-                aria-hidden="true"
-              >
-                <span class="cable-meter-track">
-                  <span
-                    class="cable-meter-fill"
-                    :style="{ width: `${Math.round(voiceMeter.cableLevel * 100)}%` }"
-                  />
+              <div class="host-state-row">
+                <span class="host-item-state" :class="itemToneClass(item.tone)">
+                  <span class="status-light" :class="statusLightClass(item.tone)" aria-hidden="true" />
+                  {{ hostItemState(item) }}
                 </span>
+                <div
+                  v-if="item.id === 'cable'"
+                  class="cable-meter"
+                  :class="{ active: voiceMeter.cableActive }"
+                  :title="cableActivityLabel"
+                  aria-hidden="true"
+                >
+                  <span class="cable-meter-track">
+                    <span
+                      class="cable-meter-fill"
+                      :style="{ width: `${Math.round(voiceMeter.cableLevel * 100)}%` }"
+                    />
+                  </span>
+                </div>
               </div>
-              <span class="host-item-state" :class="itemToneClass(item.tone)">
-                {{ hostItemState(item) }}
-              </span>
             </div>
           </div>
           <p v-if="host.detail" class="host-detail">{{ host.detail }}</p>
@@ -1264,7 +1271,7 @@ watch(
                 :disabled="repairBusy"
                 @click="voiceDetectAndRepair"
               >
-                {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudio") }}
+                {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudioShort") }}
               </button>
               <button
                 ref="repairInfoBtn"
@@ -1314,6 +1321,7 @@ watch(
                   </p>
                 </div>
               </Teleport>
+              <span class="quick-action-hint">{{ t("dashboard.repairAudioHint") }}</span>
             </div>
             <div class="host-action-group">
               <button
@@ -1372,6 +1380,7 @@ watch(
                   </p>
                 </div>
               </Teleport>
+              <span class="quick-action-hint">{{ t("dashboard.repairVirtualKeyboardHint") }}</span>
             </div>
             <div class="host-action-group">
               <button
@@ -1380,7 +1389,7 @@ watch(
                 :disabled="repairBusy"
                 @click="repairAtvv"
               >
-                {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvv") }}
+                {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvvShort") }}
               </button>
               <button
                 ref="atvvInfoBtn"
@@ -1430,6 +1439,7 @@ watch(
                   </p>
                 </div>
               </Teleport>
+              <span class="quick-action-hint">{{ t("dashboard.repairAtvvHint") }}</span>
             </div>
             <div class="host-action-group">
               <button
@@ -1488,16 +1498,18 @@ watch(
                   </p>
                 </div>
               </Teleport>
+              <span class="quick-action-hint">{{ t("dashboard.restartBridgeHint") }}</span>
             </div>
             <button class="btn btn-secondary quick-log-trigger" type="button" @click="openLogs">
               日志
             </button>
             <button
-              class="btn btn-secondary"
+              class="btn btn-secondary quick-input-settings"
               type="button"
               @click="showSetupTips = true"
             >
-              {{ t("dashboard.inputSettings") }}
+              <span>{{ t("dashboard.inputSettings") }}</span>
+              <small>{{ t("dashboard.inputSettingsHint") }}</small>
             </button>
           </div>
         </section>
@@ -1507,7 +1519,7 @@ watch(
         <section class="card activity-card">
           <div class="section-title">
             <h3>{{ t("dashboard.activity") }}</h3>
-            <span class="live"><span class="status-dot" />{{ t("dashboard.live") }}</span>
+            <span class="live"><span class="status-dot status-light is-success" />{{ t("dashboard.live") }}</span>
           </div>
           <div class="timeline" aria-live="polite">
             <article
@@ -1515,7 +1527,7 @@ watch(
               :key="entry.id"
               :class="['activity-event', activityTone(entry.text)]"
             >
-              <span class="event-dot" aria-hidden="true" />
+              <span class="event-dot status-light" :class="statusLightClass(activityTone(entry.text))" aria-hidden="true" />
               <div class="event-content">
                 <strong>{{ entry.text }}</strong>
                 <time>{{ entry.time }}</time>
@@ -1617,7 +1629,7 @@ watch(
               :title="connectionPresentation.detail || undefined"
               :aria-label="connectionPresentation.detail ? `${bridgeStatusLabel()}：${connectionPresentation.detail}` : bridgeStatusLabel()"
             >
-              <span aria-hidden="true"></span>{{ bridgeStatusLabel() }}
+              <span class="status-light" :class="statusLightClass(connectionPresentation.tone)" aria-hidden="true"></span>{{ bridgeStatusLabel() }}
             </span>
             <span class="mapping-save-state" :class="{ saving: configStore.saving }">
               <span aria-hidden="true">{{ configStore.saving ? '↻' : '✓' }}</span>
@@ -2660,11 +2672,11 @@ watch(
 
 .device-meta { min-width: 0; }
 .model { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
-.model .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--danger); box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 12%); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 12%, transparent); }
+.model .status-dot { --status-light-color: var(--danger); }
 .model.connected { color: var(--success-text); }
-.model.connected .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(24, 185, 121, 0.1); }
+.model.connected .status-dot { --status-light-color: var(--success); }
 .model.connecting { color: var(--warning-text); }
-.model.connecting .status-dot { background: var(--warning); }
+.model.connecting .status-dot { --status-light-color: var(--warning); }
 .model.error,
 .model.disconnected { color: var(--danger-text); }
 .device-meta h2 { margin: 8px 0 13px; color: var(--text); font-size: 20px; font-weight: 700; letter-spacing: -0.25px; }
@@ -2701,54 +2713,47 @@ watch(
 .section-title h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 700; letter-spacing: -0.15px; }
 .section-title > span { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 
-.host-card { padding: 20px; }
+.host-card { padding: 16px; }
 .host-status-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
-.host-status-item { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: auto auto auto; gap: 6px 10px; min-width: 0; min-height: 112px; padding: 15px; border-radius: 10px; background: var(--surface-soft); }
-.host-status-item::before { grid-row: 1 / span 2; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: var(--primary); background: var(--surface-selected); font-size: 17px; font-weight: 700; content: "⌁"; }
+.host-status-item { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto auto; gap: 3px 8px; min-width: 0; min-height: 68px; padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); }
+.host-status-item::before { grid-row: 1 / span 2; width: 28px; height: 28px; display: grid; place-items: center; align-self: center; border-radius: 8px; color: var(--primary); background: var(--surface-selected); font-size: 14px; font-weight: 700; content: "⌁"; }
 .host-status-item.service-cable::before { content: "▭"; }
 .host-status-item.service-audio::before { content: "◉"; }
 .host-status-item.service-bridge::before { content: "⌘"; }
 .host-status-item.service-injection::before { content: "⌨"; }
-.host-dot { display: none; }
-.host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; color: var(--text); font-size: 14px; font-weight: 700; }
-.host-item-state { grid-column: 2; grid-row: 2; align-self: start; justify-self: start; margin: 0; color: var(--success-text); font-size: 12px; font-weight: 700; }
-.host-item-state::before { display: inline-block; width: 6px; height: 6px; margin: 0 5px 1px 0; border-radius: 999px; background: currentColor; content: ""; }
+.host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.host-state-row { grid-column: 2; grid-row: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.host-item-state { display: inline-flex; align-items: center; gap: 5px; min-width: 0; margin: 0; color: var(--success-text); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .host-item-state.warn { color: var(--warning-text); }
 .host-item-state.error { color: var(--danger-text); }
-.host-status-cable { flex-wrap: initial; }
-.cable-meter { grid-column: 1 / -1; grid-row: 3; max-width: none; min-width: 0; margin: 2px 0 0; }
-.cable-meter-track { height: 5px; background: var(--border); }
+.cable-meter { flex: 1 1 32px; min-width: 32px; margin: 0; }
+.cable-meter-track { height: 4px; background: var(--border); }
 .cable-meter.active .cable-meter-fill { background: var(--success); }
 .host-detail { display: none; }
 
-.quick-section { padding: 20px; }
+.quick-section { padding: 16px; }
 .host-actions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
 .host-action-group,
-.host-actions > .btn:not(.quick-log-trigger) { position: relative; min-height: 78px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease; }
-.host-action-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
+.host-actions > .btn:not(.quick-log-trigger) { position: relative; min-height: 70px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease; }
+.host-action-group { display: block; }
 .host-action-group:hover,
 .host-actions > .btn:not(.quick-log-trigger):hover { border-color: rgba(52, 120, 246, 0.38); box-shadow: 0 8px 18px rgba(28, 39, 60, 0.08); transform: translateY(-1px); }
-.host-action-group .btn { width: 100%; padding: 13px 12px 27px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; font-weight: 700; }
-.host-action-group .title-info { align-self: start; margin: 12px 10px 0 0; }
-.host-action-group::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; content: "建议优先使用"; pointer-events: none; }
-.host-action-group:nth-child(2)::after { content: "输入法无响应时使用"; }
-.host-action-group:nth-child(3)::after { content: "连接异常时使用"; }
-.host-action-group:nth-child(4)::after { content: "刷新监听服务"; }
-.host-actions > .btn:not(.quick-log-trigger) { display: flex; align-items: flex-start; padding: 13px 12px 27px; color: var(--text); background: var(--surface-raised); text-align: left; font-weight: 700; }
-.host-actions > .btn:not(.quick-log-trigger)::after { position: absolute; bottom: 10px; left: 12px; color: var(--text-secondary); font-size: 11px; font-weight: 500; content: "管理语音输入"; }
+.host-action-group .btn { width: 100%; min-height: 68px; padding: 11px 34px 27px 12px; overflow: hidden; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.host-action-group .title-info { position: absolute; top: 10px; right: 10px; z-index: 1; margin: 0; }
+.quick-action-hint { position: absolute; right: 12px; bottom: 9px; left: 12px; overflow: hidden; color: var(--text-secondary); font-size: 11px; font-weight: 500; line-height: 1.2; pointer-events: none; text-overflow: ellipsis; white-space: nowrap; }
+.host-actions > .btn:not(.quick-log-trigger) { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 7px; min-height: 70px; padding: 11px 12px; color: var(--text); background: var(--surface-raised); font-weight: 700; text-align: left; }
+.quick-input-settings > span { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
+.quick-input-settings > small { overflow: hidden; max-width: 100%; margin-top: auto; color: var(--text-secondary); font-size: 11px; font-weight: 500; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .quick-log-trigger { display: none; }
 
 .log-aside { position: static; min-height: 0; }
 .activity-card { display: flex; min-height: 100%; flex-direction: column; padding: 20px; overflow: hidden; }
 .live { display: inline-flex; align-items: center; gap: 6px; color: var(--success) !important; font-weight: 700; }
-.live .status-dot { width: 6px; height: 6px; background: var(--success); box-shadow: 0 0 0 3px rgba(24, 185, 121, 0.08); }
+.live .status-dot { --status-light-color: var(--success); }
 .timeline { position: relative; flex: 1; min-height: 0; padding: 1px 0 0 18px; }
 .timeline::before { position: absolute; top: 6px; bottom: 3px; left: 4px; width: 1px; background: var(--border); content: ""; }
 .activity-event { position: relative; min-height: 58px; padding: 0 0 13px; }
-.event-dot { position: absolute; top: 5px; left: -18px; width: 9px; height: 9px; border: 2px solid var(--card-bg); border-radius: 999px; background: var(--text-muted); box-shadow: 0 0 0 1px var(--border); }
-.activity-event.success .event-dot { background: var(--success); box-shadow: 0 0 0 1px rgba(24, 185, 121, 0.32); }
-.activity-event.info .event-dot { background: var(--primary); box-shadow: 0 0 0 1px rgba(52, 120, 246, 0.32); }
-.activity-event.error .event-dot { background: var(--danger); box-shadow: 0 0 0 1px rgba(239, 91, 97, 0.32); }
+.event-dot { position: absolute; top: 6px; left: -17px; }
 .event-content strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 700; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .event-content time { display: block; margin-top: 5px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; }
 .activity-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
@@ -2784,7 +2789,6 @@ watch(
 .mapping-head-actions { justify-self: end; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
 .mapping-status-pill,
 .mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.mapping-status-pill > span { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
 .mapping-status-pill.connected { color: var(--success-text); background: var(--success-bg); }
 .mapping-status-pill.connecting { color: var(--warning-text); background: var(--warning-bg); }
 .mapping-status-pill.disconnected,

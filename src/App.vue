@@ -358,6 +358,23 @@ onUnmounted(() => {
   --danger-text: #fda4af;
 }
 
+/* Shared status light: a solid state-colored core with a restrained translucent ring. */
+.status-light {
+  --status-light-color: var(--text-muted);
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--status-light-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-light-color) 12%, transparent);
+}
+
+.status-light.is-success { --status-light-color: var(--success); }
+.status-light.is-warning { --status-light-color: var(--warning); }
+.status-light.is-danger { --status-light-color: var(--danger); }
+.status-light.is-info { --status-light-color: var(--primary); }
+
 * {
   margin: 0;
   padding: 0;

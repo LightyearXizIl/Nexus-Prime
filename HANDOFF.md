@@ -2,6 +2,31 @@
 
 更新时间：2026-08-27
 
+## 本次范围（v0.3.2，2026-08-27）
+
+- 首页服务状态卡片压缩为 68px 的扁平四列布局；快捷操作改为短标题与单行说明，信息按钮固定在右上角，简体中文、繁体中文和英文文案同步。
+- 顶部设备、页面连接状态、服务状态、实时提示和动态时间线统一使用 7px 实心圆与 4px 半透明外环的状态灯；不再使用方形提示或闪烁动画。
+- 非语音按键的鼠标操作收为下拉菜单，支持鼠标左键及四向移动、步幅 1–100、长按加速、已有参数回填、外部点击/Escape 关闭及与连击菜单互斥。
+- 旧版微信的 Hold `Ctrl+Win` 释放不再回放裸组合键：虚拟 HID 使用“原组合+F24 → F24 → 全部抬起”，SendInput 使用“F24 按下 → 原组合逐键抬起 → F24 抬起”；保留同路由重试、延迟确认和紧急 KEYUP。
+- 托盘改用紧凑专用图标。16px 下有效不透明主体从约 14×14px 提升至约 16×14px，不影响窗口、安装器或网页图标。
+- 已通过 `npm.cmd test`（35 项）、`npm.cmd run build`、`cargo test --workspace`（104 项）、`cargo check --workspace --all-targets`、`git diff --check` 和 `npm.cmd run tauri:build`。源码以 `v0.3.2` 标签发布；本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.2_x64-setup.exe`，13,315,955 bytes，SHA-256 `779F4CBDDE40680FA6E57FEF214C81431B3AE680376C2335AF1B0108C504357C`，文件版本与产品版本均为 `0.3.2`，未签名（`NotSigned`）。
+
+### 仍待真实设备验收
+
+- 请在实际遥控器上验证旧版微信 `Ctrl+Win + Hold` 只出现一次语音窗，抬起不弹开始菜单/系统菜单且无粘键；同时回归新版微信、右 Alt、Click/Hold、鼠标左键和四向移动。
+
+## 本次范围（v0.3.1，2026-08-27）
+
+- [PR #5](https://github.com/LightyearXizIl/Nexus-Prime/pull/5) 已以 squash 合入 `main`，源码提交与标签目标均为 `399ad359a637ce4b17901d16a1970bd051ba761d`（`v0.3.1`）。它包含鼠标左键与上下左右相对移动；[PR #4](https://github.com/LightyearXizIl/Nexus-Prime/pull/4) 已说明被 #5 包含并关闭。
+- 鼠标操作为非语音键的可选映射，现有方向键默认仍发送键盘方向键。映射卡片中不必开启“录入快捷键”即可设置左键、上、下、左、右；步幅默认 20 像素并限制为 1–100，加速选项只在长按槽位生效。
+- `MouseClick` 与 `MouseMove { dx, dy, step, accelerate }` 已纳入 Rust/TypeScript 配置接口。读取与保存配置会钳制步幅、拒绝非四向移动；鼠标 `SendInput` 必须完整写入才报告成功。长按移动的重复令牌在物理按压仍有效时预留，抬起、配置保存、断开或手势重置都能取消，避免快速抬起后仍持续移动。
+- 已通过 `npm.cmd test`（33 项）、`npm.cmd run build`、`cargo test --workspace`（100 项）、`cargo check --workspace --all-targets`、`git diff --check` 与 `npm.cmd run tauri:build`。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.1_x64-setup.exe`，13,310,065 bytes，SHA-256 `06DA1BF9DF8D75BCE3D7E236C6D5063DA4149FDD7960E4364DBCF0504D04487C`，文件版本与产品版本均为 `0.3.1`，未签名（`NotSigned`）。
+- [GitHub 正式 Release v0.3.1](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.1) 已公开；资产 `Nexus.Prime_0.3.1_x64-setup.exe` 状态为 `uploaded`、大小 13,310,065 bytes、GitHub digest 为 `sha256:06da1bf9df8d75bce3d7e236c6d5063da4149fdd7960e4364dbcf0504d04487c`。已从 Release 下载并复核大小和 SHA-256，`releases/latest` 为 v0.3.1。
+
+### 仍待真实遥控器验收
+
+- 本轮未在活动桌面执行真实鼠标点击或移动，避免影响当前用户操作；也未用实际小米遥控器验证。请在安装 v0.3.1 后验证任意非语音键的左键、四向单击、长按匀速/加速，以及快速抬起、断开连接和保存设置后的立即停止；同时回归原有方向键、语音、音量和返回映射。
+
 ## 本次范围（v0.3.0，2026-08-27）
 
 - 运行日志已改为 `logs/app-YYYY-MM-DD.log` 按日后台写入；设置页可选 1、3、7、14、30 天，默认 7 天。界面、命令、设备、按键注入和语音会话均写语义事件；日志保留实际设备地址、路径、快捷键和配置值。

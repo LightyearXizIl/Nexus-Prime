@@ -120,7 +120,7 @@ describe("XiaomiSettings virtual keyboard repair", () => {
     await virtualKeyboardButton.trigger("click");
     await flushPromises();
 
-    for (const label of ["声卡检测与修复", "修复 ATVV 连接", "重启按键桥接"]) {
+    for (const label of ["修复声卡", "修复语音连接", "重启按键桥接"]) {
       expect((buttonByText(wrapper, label).element as HTMLButtonElement).disabled).toBe(true);
     }
     expect((virtualKeyboardButton.element as HTMLButtonElement).disabled).toBe(true);
@@ -162,5 +162,16 @@ describe("XiaomiSettings injection health", () => {
 
     expect(wrapper.text()).toContain("键盘注入");
     expect(wrapper.text()).toContain("SendInput 兜底已验证");
+  });
+
+  it("uses compact quick-action copy and the shared status-light elements", async () => {
+    const wrapper = await mountView();
+
+    for (const copy of ["修复声卡", "语音没声音时", "修复虚拟键盘", "输入法无响应时", "修复语音连接", "无波形或断连时", "按键失灵时", "管理语音快捷键"]) {
+      expect(wrapper.text()).toContain(copy);
+    }
+    expect(wrapper.findAll(".host-item-state .status-light")).toHaveLength(4);
+    expect(wrapper.find(".live .status-light").exists()).toBe(true);
+    wrapper.unmount();
   });
 });
