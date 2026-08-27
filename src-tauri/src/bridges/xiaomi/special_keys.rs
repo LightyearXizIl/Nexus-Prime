@@ -271,7 +271,9 @@ fn hook_loop() {
 
             if let Some(name) = suppress {
                 if down || up {
-                    log::info!("XIAOMI SPECIAL KEY {name} original_suppressed vk=0x{vk:02X}");
+                    if name != "voice_f5" {
+                        log::info!("XIAOMI SPECIAL KEY {name} original_suppressed vk=0x{vk:02X}");
+                    }
                     return LRESULT(1);
                 }
             }

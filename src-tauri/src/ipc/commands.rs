@@ -762,6 +762,22 @@ pub async fn open_app_log(file_name: Option<String>) -> Result<(), String> {
     crate::logging::open_log_in_editor_for(file_name.as_deref())
 }
 
+/// 删除历史和旧格式运行日志，保留当天日志以便继续排障。
+#[tauri::command]
+pub async fn clear_old_app_logs() -> Result<crate::logging::LogCleanupResult, String> {
+    let result = crate::logging::clear_old_logs()?;
+    crate::logging::append_event(
+        "logs",
+        "clear_old",
+        "success",
+        &format!(
+            "deleted_files={} freed_bytes={}",
+            result.deleted_files, result.freed_bytes
+        ),
+    );
+    Ok(result)
+}
+
 /// 对齐 Python `exit`：真正退出进程（非托盘隐藏）
 #[tauri::command]
 pub async fn quit_application(app: AppHandle) -> Result<(), String> {

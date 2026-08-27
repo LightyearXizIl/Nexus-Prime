@@ -30,6 +30,13 @@ pub struct AppLogFile {
     pub current: bool,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogCleanupResult {
+    pub deleted_files: usize,
+    pub freed_bytes: u64,
+}
+
 fn valid_retention_days(days: usize) -> usize {
     match days {
         1 | 3 | 7 | 14 | 30 => days,
@@ -94,6 +101,37 @@ fn cleanup_logs(dir: &Path, retention_days: usize) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn is_current_day_log(name: &str) -> bool {
+    let prefix = format!("app-{}", chrono::Local::now().format("%Y-%m-%d"));
+    name.starts_with(&prefix) && is_log_file(name)
+}
+
+fn clear_old_logs_in(dir: &Path) -> Result<LogCleanupResult, String> {
+    let mut result = LogCleanupResult {
+        deleted_files: 0,
+        freed_bytes: 0,
+    };
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取日志目录失败: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取日志文件失败: {e}"))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_log_file(&name) || is_current_day_log(&name) {
+            continue;
+        }
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or_default();
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                result.deleted_files += 1;
+                result.freed_bytes = result.freed_bytes.saturating_add(size);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("清理日志 {} 失败: {error}", path.display())),
+        }
+    }
+    Ok(result)
 }
 
 fn start_writer(dir: PathBuf, cleanup_enabled: bool) -> LogWriter {
@@ -224,6 +262,11 @@ pub fn set_retention_days(days: usize) -> usize {
         let _ = cleanup_logs(dir, days);
     }
     days
+}
+
+pub fn clear_old_logs() -> Result<LogCleanupResult, String> {
+    let dir = LOG_DIR.get().ok_or_else(|| "日志尚未初始化".to_string())?;
+    clear_old_logs_in(dir)
 }
 
 pub fn log_path() -> Option<PathBuf> {
@@ -362,5 +405,35 @@ mod tests {
         assert!(is_log_file("app-2026-08-27.2.log"));
         assert!(is_log_file("app.log"));
         assert!(!is_log_file("other.log"));
+    }
+
+    #[test]
+    fn clear_old_logs_keeps_today_and_non_log_files() {
+        let unique = format!(
+            "nexus-prime-log-cleanup-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&dir).unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        fs::write(dir.join(format!("app-{today}.log")), b"today").unwrap();
+        fs::write(dir.join(format!("app-{today}.1.log")), b"segment").unwrap();
+        fs::write(dir.join("app-2000-01-01.log"), b"old").unwrap();
+        fs::write(dir.join("app.log"), b"legacy").unwrap();
+        fs::write(dir.join("notes.txt"), b"keep").unwrap();
+
+        let result = clear_old_logs_in(&dir).unwrap();
+
+        assert_eq!(result.deleted_files, 2);
+        assert_eq!(result.freed_bytes, 9);
+        assert!(dir.join(format!("app-{today}.log")).exists());
+        assert!(dir.join(format!("app-{today}.1.log")).exists());
+        assert!(dir.join("notes.txt").exists());
+        assert!(!dir.join("app-2000-01-01.log").exists());
+        assert!(!dir.join("app.log").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -301,6 +301,7 @@ pub fn run() {
             ipc::commands::open_logs_folder,
             ipc::commands::get_app_log,
             ipc::commands::open_app_log,
+            ipc::commands::clear_old_app_logs,
             ipc::commands::append_app_events,
             ipc::commands::quit_application,
             ipc::commands::get_xiaomi_conflicts,

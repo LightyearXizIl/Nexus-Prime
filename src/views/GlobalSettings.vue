@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { loggedInvoke as invoke } from "../utils/appLogger";
 import { getVersion } from "@tauri-apps/api/app";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
@@ -12,6 +13,7 @@ import type { GlobalSettings, ThemePreference } from "../types";
 import lightYearAuthor from "../assets/light_year_author.jpg";
 
 type SectionId = "general" | "appearance" | "about";
+type LogCleanupResult = { deletedFiles: number; freedBytes: number };
 
 const settings = ref<GlobalSettings>({
   autostart: false,
@@ -33,6 +35,9 @@ const appVersion = ref("v0.1.7");
 const activeSection = ref<SectionId>("general");
 const manualUpdateChecked = ref(false);
 const settingsReady = ref(false);
+const clearingLogs = ref(false);
+const logCleanupFeedback = ref("");
+const logCleanupFailed = ref(false);
 
 const navigation = computed<Array<{ id: SectionId; label: string; caption: string }>>(() => [
   { id: "general", label: t("settings.general"), caption: t("settings.generalHint") },
@@ -108,6 +113,40 @@ async function saveSettings() {
 function onSettingChange() {
   saved.value = false;
   saveError.value = "";
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function clearOldLogs() {
+  if (clearingLogs.value) return;
+  logCleanupFeedback.value = "";
+  logCleanupFailed.value = false;
+  const accepted = await confirm(t("settings.clearLogsConfirm"), {
+    title: t("settings.clearLogs"),
+    kind: "warning",
+    okLabel: t("settings.clearLogs"),
+    cancelLabel: t("common.cancel"),
+  });
+  if (!accepted) return;
+
+  clearingLogs.value = true;
+  try {
+    const result = await invoke<LogCleanupResult>("clear_old_app_logs");
+    logCleanupFeedback.value = t("settings.logsCleared", {
+      count: result.deletedFiles,
+      size: formatBytes(result.freedBytes),
+    });
+  } catch (error) {
+    console.error("Failed to clear old logs:", error);
+    logCleanupFailed.value = true;
+    logCleanupFeedback.value = t("settings.clearLogsFailed");
+  } finally {
+    clearingLogs.value = false;
+  }
 }
 
 async function setTheme(nextPreference: ThemePreference) {
@@ -246,9 +285,17 @@ async function openExternal(url: string) {
                 <strong>{{ t("settings.logRetention") }}</strong>
                 <span>{{ t("settings.logRetentionHint") }}</span>
               </div>
-              <select v-model.number="settings.log_retention_days" class="language-select" :aria-label="t('settings.logRetention')" @change="onSettingChange">
-                <option v-for="days in [1, 3, 7, 14, 30]" :key="days" :value="days">{{ t("settings.logRetentionDays", { days }) }}</option>
-              </select>
+              <div class="log-retention-controls">
+                <select v-model.number="settings.log_retention_days" class="language-select" :aria-label="t('settings.logRetention')" @change="onSettingChange">
+                  <option v-for="days in [1, 3, 7, 14, 30]" :key="days" :value="days">{{ t("settings.logRetentionDays", { days }) }}</option>
+                </select>
+                <button type="button" class="clear-logs-button" :disabled="clearingLogs" @click="clearOldLogs">
+                  {{ clearingLogs ? t("settings.clearingLogs") : t("settings.clearLogs") }}
+                </button>
+                <span v-if="logCleanupFeedback" :class="['log-cleanup-feedback', { error: logCleanupFailed }]" role="status">
+                  {{ logCleanupFeedback }}
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -463,6 +510,12 @@ async function openExternal(url: string) {
 
 .appearance-list { gap: 0; }
 .language-select { min-width: 130px; height: 34px; padding: 0 27px 0 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 12px; }
+.log-retention-controls { display: grid; grid-template-columns: auto auto; justify-items: end; gap: 6px; }
+.clear-logs-button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--danger-text); background: var(--surface-raised); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.clear-logs-button:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-bg); }
+.clear-logs-button:disabled { cursor: wait; opacity: .62; }
+.log-cleanup-feedback { grid-column: 1 / -1; max-width: 250px; color: var(--success-text); font-size: 10px; line-height: 1.35; text-align: right; }
+.log-cleanup-feedback.error { color: var(--danger-text); }
 .theme-preference { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 92px; }
 .theme-copy { display: flex; align-items: center; gap: 12px; }
 .theme-segmented { display: inline-flex; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); }
@@ -535,6 +588,9 @@ async function openExternal(url: string) {
   .settings-header h1 { font-size: 24px; }
   .save-area { justify-content: flex-start; flex-wrap: wrap; }
   .settings-card { padding: 16px; }
+  .log-retention-controls { grid-template-columns: 1fr; justify-items: stretch; }
+  .log-retention-controls .language-select, .clear-logs-button { width: 100%; }
+  .log-cleanup-feedback { max-width: none; text-align: left; }
   .preference-row { grid-template-columns: 32px minmax(0, 1fr); padding: 12px 0; }
   .preference-row > :last-child { grid-column: 2; justify-self: start; margin-top: 2px; }
   .language-row .language-select { min-width: 0; width: 100%; }

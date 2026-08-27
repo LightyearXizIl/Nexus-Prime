@@ -221,7 +221,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <section class="ime-wechat-option">
               <span class="ime-status">旧版</span>
               <strong>左 Ctrl + 左 Win</strong>
-              <p>匹配旧版“启动语音输入”，触发模式：按住</p>
+              <p>匹配旧版“启动语音输入”：按下启动，松开结束</p>
               <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat')">
                 <span>{{ saving ? "正在应用…" : "应用旧版映射" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>

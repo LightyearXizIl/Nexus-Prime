@@ -1140,7 +1140,7 @@ watch(
 </script>
 
 <template>
-  <div class="page">
+  <div :class="['page', { 'dashboard-page': !isMappingPage }]">
     <header v-if="!isMappingPage" class="dashboard-head">
       <div>
         <h1>{{ t("dashboard.title") }}</h1>
@@ -2591,6 +2591,8 @@ watch(
   margin: 0 auto;
 }
 
+.dashboard-page { min-height: 100%; display: flex; flex-direction: column; }
+
 .dashboard-head {
   display: flex;
   align-items: center;
@@ -2614,6 +2616,8 @@ watch(
   gap: 18px;
   margin: 0;
 }
+
+.dashboard-page .overview-row { flex: 1; min-height: 0; }
 
 .overview-left {
   gap: 16px;
@@ -2760,7 +2764,23 @@ watch(
 .activity-footer button { width: 100%; height: 34px; border: 0; border-radius: 8px; color: var(--primary-dark); background: var(--surface-selected); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .activity-footer button:hover { filter: brightness(0.97); }
 
+@media (min-width: 1020px) {
+  .dashboard-page .overview-left {
+    display: grid;
+    grid-template-rows: minmax(178px, 1.35fr) minmax(136px, .825fr) minmax(138px, .825fr);
+    flex: 1;
+    min-height: 0;
+  }
+  .dashboard-page .overview-left > .card { min-height: 0; }
+  .dashboard-page .host-card,
+  .dashboard-page .quick-section { display: flex; flex-direction: column; }
+  .dashboard-page .host-status-row,
+  .dashboard-page .host-actions { margin-top: auto; margin-bottom: auto; }
+}
+
 @media (max-width: 1019px) {
+  .dashboard-page { min-height: 0; display: block; }
+  .dashboard-page .overview-row { flex: 0 0 auto; }
   .overview-row { grid-template-columns: 1fr; }
   .activity-card { min-height: 270px; }
   .device-overview { grid-template-columns: 1fr; gap: 22px; }

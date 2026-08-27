@@ -29,7 +29,7 @@ export const IME_PRESETS: Record<ImePreset, ImePresetDefinition> = {
     shortcutVks: [0xa2, 0x5b],
     voiceHotkey: ["leftctrl", "leftwin"],
     triggerMode: "Hold",
-    applyHint: "已应用：语音键 = 左 Ctrl + 左 Win，触发模式 = 按住",
+    applyHint: "已应用：语音键 = 左 Ctrl + 左 Win，按下启动、松开结束",
     logMessage: "设置建议：已快速应用旧版微信输入法映射（左 Ctrl + 左 Win）",
   },
   "wechat-current": {
