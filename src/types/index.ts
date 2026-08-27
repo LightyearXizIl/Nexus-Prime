@@ -23,10 +23,21 @@ export interface DeviceInfo {
   battery_charging: boolean | null;
 }
 
-export interface KeyAction {
-  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "MouseClick" | "MouseMove" | "None";
-  value: number | number[] | string | null | { dx: number; dy: number; step: number; accelerate: boolean };
-}
+export type MouseMoveValue = {
+  dx: -1 | 0 | 1;
+  dy: -1 | 0 | 1;
+  step: number;
+  accelerate: boolean;
+};
+
+export type KeyAction =
+  | { type: "SingleKey"; value: number }
+  | { type: "ComboKey"; value: number[] }
+  | { type: "TextInput"; value: string }
+  | { type: "LaunchApp"; value: string }
+  | { type: "MouseClick"; value: null }
+  | { type: "MouseMove"; value: MouseMoveValue }
+  | { type: "None"; value: null };
 
 export type TriggerMode = "Toggle" | "Hold";
 /** Toggle=点击型快捷键；Hold=按住型快捷键（传声仍为按住遥控语音键） */
@@ -53,6 +64,7 @@ export interface GlobalSettings {
   minimize_to_tray: boolean;
   auto_check_updates: boolean;
   theme: ThemePreference;
+  log_retention_days: number;
 }
 
 export interface UpdateRelease {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed, ref, nextTick, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { useRoute, useRouter } from "vue-router";
 import { useBridgeStore } from "../stores/bridge";
 import { useConfigStore } from "../stores/config";
@@ -65,6 +65,9 @@ const logText = ref("");
 const logPath = ref("");
 const logLoading = ref(false);
 const logCopyHint = ref("");
+const logFiles = ref<Array<{ name: string; size: number; current: boolean }>>([]);
+const selectedLogFile = ref("");
+const logWriteError = ref("");
 
 type BleMeterState = "idle" | "session" | "receiving";
 interface VoiceMeterSnapshot {
@@ -484,12 +487,16 @@ const servicesSummary = computed(() => {
 });
 
 function hostItemLabel(id: string) {
-  return t(`dashboard.${id === "cable" ? "cable" : id === "audio" ? "route" : "bridge"}`);
+  return t(`dashboard.${id === "cable" ? "cable" : id === "audio" ? "route" : id === "injection" ? "injection" : "bridge"}`);
 }
 
 function hostItemState(item: HostStatusItem) {
   if (item.id === "cable") return t(item.tone === "ok" ? "dashboard.installed" : "common.unknown");
   if (item.id === "audio") return t(item.tone === "ok" ? "dashboard.running" : "dashboard.stopped");
+  if (item.id === "injection") {
+    if (item.state_label.includes("SendInput")) return t("dashboard.sendInputFallback");
+    return t(item.tone === "ok" ? "dashboard.hardwareKeyboard" : "dashboard.inputWaiting");
+  }
   return t(item.tone === "ok" ? "dashboard.listening" : "dashboard.notStarted");
 }
 
@@ -851,16 +858,30 @@ async function repairVirtualKeyboard() {
 async function openLogs() {
   showLogModal.value = true;
   logCopyHint.value = "";
+  selectedLogFile.value = "";
+  await loadLog();
+}
+
+async function loadLog(fileName = selectedLogFile.value) {
   logLoading.value = true;
   try {
-    const result = await invoke<{ path: string; content: string }>("get_app_log");
+    const result = await invoke<{
+      path: string;
+      content: string;
+      files: Array<{ name: string; size: number; current: boolean }>;
+      writeError?: string | null;
+    }>("get_app_log", fileName ? { fileName } : undefined);
     logPath.value = result.path || "";
+    logFiles.value = result.files || [];
+    selectedLogFile.value = fileName || result.files?.find((file) => file.current)?.name || "";
+    logWriteError.value = result.writeError || "";
     logText.value = result.content?.trim()
       ? result.content
       : "（暂无日志）";
   } catch (e) {
     logText.value = `读取日志失败: ${e}`;
     logPath.value = "";
+    logWriteError.value = "";
   } finally {
     logLoading.value = false;
   }
@@ -880,7 +901,7 @@ async function copyLog() {
 
 async function openLogExternally() {
   try {
-    await invoke("open_app_log");
+    await invoke("open_app_log", selectedLogFile.value ? { fileName: selectedLogFile.value } : undefined);
   } catch (e) {
     logCopyHint.value = `打开失败: ${e}`;
   }
@@ -1522,6 +1543,15 @@ watch(
         <div class="voice-modal log-modal" role="dialog" aria-modal="true">
           <h3>运行日志</h3>
           <p v-if="logPath" class="log-path">{{ logPath }}</p>
+          <label v-if="logFiles.length" class="log-file-picker">
+            <span>日志文件</span>
+            <select v-model="selectedLogFile" :disabled="logLoading" @change="loadLog(selectedLogFile)">
+              <option v-for="file in logFiles" :key="file.name" :value="file.name">
+                {{ file.name }}{{ file.current ? "（当前）" : "" }} · {{ Math.ceil(file.size / 1024) }} KB
+              </option>
+            </select>
+          </label>
+          <p v-if="logWriteError" class="save-error" role="alert">日志写入异常：{{ logWriteError }}</p>
           <pre class="log-viewer">{{ logLoading ? "读取中…" : logText }}</pre>
           <div class="log-modal-actions">
             <button class="btn btn-primary" type="button" :disabled="logLoading" @click="copyLog">
@@ -2345,6 +2375,8 @@ watch(
   word-break: break-word;
   font-family: ui-monospace, Consolas, "Courier New", monospace;
 }
+.log-file-picker { display: flex; align-items: center; gap: 8px; margin: 8px 0; color: var(--text-secondary); font-size: 12px; }
+.log-file-picker select { min-width: 0; flex: 1; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; }
 .log-modal-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2670,12 +2702,13 @@ watch(
 .section-title > span { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 
 .host-card { padding: 20px; }
-.host-status-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.host-status-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .host-status-item { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); grid-template-rows: auto auto auto; gap: 6px 10px; min-width: 0; min-height: 112px; padding: 15px; border-radius: 10px; background: var(--surface-soft); }
 .host-status-item::before { grid-row: 1 / span 2; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; color: var(--primary); background: var(--surface-selected); font-size: 17px; font-weight: 700; content: "⌁"; }
 .host-status-item.service-cable::before { content: "▭"; }
 .host-status-item.service-audio::before { content: "◉"; }
 .host-status-item.service-bridge::before { content: "⌘"; }
+.host-status-item.service-injection::before { content: "⌨"; }
 .host-dot { display: none; }
 .host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; color: var(--text); font-size: 14px; font-weight: 700; }
 .host-item-state { grid-column: 2; grid-row: 2; align-self: start; justify-self: start; margin: 0; color: var(--success-text); font-size: 12px; font-weight: 700; }

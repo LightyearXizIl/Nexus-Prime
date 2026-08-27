@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, BridgeType, KeyAction } from "../types";
 

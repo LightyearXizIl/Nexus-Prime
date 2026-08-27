@@ -2,6 +2,13 @@
 
 更新时间：2026-08-27
 
+## 本次范围（v0.3.0，2026-08-27）
+
+- 运行日志已改为 `logs/app-YYYY-MM-DD.log` 按日后台写入；设置页可选 1、3、7、14、30 天，默认 7 天。界面、命令、设备、按键注入和语音会话均写语义事件；日志保留实际设备地址、路径、快捷键和配置值。
+- Click/Hold 均在 `AUDIO_START` 立即发送语音快捷键。语音的纯 Ctrl+Win、Win 或 Alt 组合会先按 F24 中和再释放，避免空按弹出系统菜单。
+- `VoiceChordState` 不会再在释放失败后丢弃原始持键记录；同路由重试三次后，虚拟 HID 会执行仅限本会话键位的 SendInput KEYUP 恢复。普通组合键的 SendInput KEYUP 已逐键发送。
+- 已通过 `cargo test --workspace`（96 项）、`cargo check --workspace --all-targets`、`npm.cmd test`（31 项）、`npm.cmd run build`、PowerShell 脚本语法检查、`git diff --check` 和 `npm.cmd run tauri:build`。本地正式 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.0_x64-setup.exe`，13,298,359 bytes，SHA-256 `ADF18A6692D57C5B65BEAD0D7586C5284902BE1C77F835BF35859C26EFD657FC`，文件版本和产品版本均为 `0.3.0`。源码与标签提交为 `55dd5011317388179e4ed0fac45e4f184877a9c3`（`v0.3.0`）；[GitHub 正式 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.0) 已公开，资产 `Nexus.Prime_0.3.0_x64-setup.exe` 状态为 `uploaded`、大小 13,298,359 bytes、GitHub digest 为 `sha256:adf18a6692d57c5b65bead0d7586c5284902be1c77f835bf35859c26efd657fc`。真机豆包、微信悬浮语音条与 Windows 菜单表现按用户指示暂缓验收。
+
 ## 本次范围（v0.2.9，2026-08-27）
 
 修复已发布 v0.2.8 在真实 Windows 11 中“修复虚拟键盘失败”的根因，并以新的正式版本交付：
@@ -11,6 +18,7 @@
 - **强制修复**：保留 `-Force` 入口；仅删除旧版脚本所产生的“逐字符硬件 ID”WinUHid 根设备，再重新绑定正确节点，不影响其它物理或虚拟设备。安装过程会记录 `install.log`，提升权限子进程失败时把末条原因带回应用日志。
 - **真实 Windows 11 验证**：强制修复返回 0；设备 `ROOT\\WINUHID_VIRTUAL_HID_ENUMERATOR\\0008` 状态为 Started、驱动为 `oem103.inf`、提供方 WinUHid Project；`\\.\\WinUHid` 可打开。`cargo run --example diag_voice_tap` 显示 `WinUHid available=true`，右 Alt、Ctrl+Win、普通按键和连续 20 次点击均已释放，无粘键。
 - **本地正式安装包**：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.2.9_x64-setup.exe`，13,272,757 bytes，SHA-256 `D7406F6B8F7AC68CC20AB9D5236147BA21623E5D39164E7B51AC54BDE26A12DE`；文件版本和产品版本均为 `0.2.9`，构建配置将 WinUHid DLL、证书、INF、CAT、驱动 DLL 和修复脚本作为安装资源打包。
+- **GitHub 正式发布**：[`v0.2.9 Release`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.2.9) 已公开发布；资产 `Nexus.Prime_0.2.9_x64-setup.exe` 状态为 `uploaded`、大小 13,272,757 bytes，GitHub digest 为 `sha256:d7406f6b8f7ac68cc20ab9d5236147ba21623e5d39164e7b51ac54bde26a12de`。
 
 ### 仍待用户输入法验收
 

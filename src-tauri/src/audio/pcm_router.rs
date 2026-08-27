@@ -106,8 +106,8 @@ fn run_router(port: u16) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     eprintln!("AUDIO ROUTER READY pcm=127.0.0.1:{port}");
 
-    // 最多缓存约 60ms@48k，避免堆积导致听写「越说越慢」
-    const MAX_BUFFER_SAMPLES: usize = 2_880;
+    // 最多缓存约 40ms@48k，优先最新语音，避免堆积导致听写「越说越慢」。
+    const MAX_BUFFER_SAMPLES: usize = 1_920;
 
     let mut buf = [0u8; 65536];
     loop {
@@ -153,12 +153,12 @@ fn run_router(port: u16) -> Result<(), String> {
     Ok(())
 }
 
-/// 对齐 Python `latency="low"`：约 10ms 固定缓冲，失败则回退默认
+/// 对齐 Python `latency="low"`：首选约 5ms 固定缓冲，失败则回退默认。
 fn low_latency_stream_config(supported: &cpal::SupportedStreamConfig) -> cpal::StreamConfig {
     use cpal::{BufferSize, SupportedBufferSize};
     let mut cfg = supported.config();
     let rate = cfg.sample_rate.0.max(1);
-    let target = ((rate as f32) * 0.01).round() as u32; // ~10ms
+    let target = ((rate as f32) * 0.005).round() as u32; // ~5ms
     let frames = match supported.buffer_size() {
         SupportedBufferSize::Range { min, max } => target.clamp(*min, *max).max(*min),
         SupportedBufferSize::Unknown => target.clamp(256, 1024),

@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, KeyAction } from "../types";
 import RemoteHotspot from "./RemoteHotspot.vue";
@@ -259,11 +259,11 @@ function actionLabel(action: KeyAction): string {
   }
   if (action.type === "TextInput") return t("mapping.text", { value: action.value });
   if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
-  if (action.type === "MouseClick") return "鼠标左键";
+  if (action.type === "MouseClick") return t("mapping.mouseLeftClick");
   if (action.type === "MouseMove") {
-    const v = action.value as { dx: number; dy: number; step: number; accelerate: boolean };
-    const dir = v.dx === 0 && v.dy < 0 ? "鼠标↑" : v.dx === 0 && v.dy > 0 ? "鼠标↓" : v.dx < 0 ? "鼠标←" : v.dx > 0 ? "鼠标→" : "鼠标移动";
-    return `${dir} ${v.step}px${v.accelerate ? " 加速" : ""}`;
+    const v = action.value;
+    const dir = v.dx === 0 && v.dy < 0 ? "↑" : v.dx === 0 && v.dy > 0 ? "↓" : v.dx < 0 ? "←" : v.dx > 0 ? "→" : "";
+    return `${t("mapping.mouseMove")}${dir} ${v.step}px`;
   }
   return "—";
 }
@@ -644,13 +644,17 @@ async function pickMediaKey(vk: number) {
 const mouseStep = ref(20);
 const mouseAccelerate = ref(true);
 
-/** 鼠标移动：直接设置为 MouseMove 动作 */
-async function pickMouseMove(dx: number, dy: number) {
+function normalizedMouseStep(): number {
+  const step = Number(mouseStep.value);
+  const normalized = Number.isFinite(step) ? Math.min(100, Math.max(1, Math.trunc(step))) : 20;
+  mouseStep.value = normalized;
+  return normalized;
+}
+
+function saveActionToSelectedSlot(action: KeyAction) {
   const buttonId = selectedId.value;
-  if (!buttonId) return;
-  await cancelCapture();
-  const count = isVoiceButton(buttonId) ? 1 : selectedClick(buttonId);
-  const action: KeyAction = { type: "MouseMove", value: { dx, dy, step: mouseStep.value, accelerate: mouseAccelerate.value } };
+  if (!buttonId || isVoiceButton(buttonId)) return;
+  const count = selectedClick(buttonId);
   if (!props.config.button_bindings) {
     (props.config as DeviceConfig).button_bindings = {};
   }
@@ -675,35 +679,21 @@ async function pickMouseMove(dx: number, dy: number) {
   emit("save", next);
 }
 
-/** 鼠标左键：直接设置为 MouseClick 动作 */
-async function pickMouseClick() {
-  const buttonId = selectedId.value;
-  if (!buttonId) return;
-  await cancelCapture();
-  const count = isVoiceButton(buttonId) ? 1 : selectedClick(buttonId);
-  const action: KeyAction = { type: "MouseClick", value: null };
-  if (!props.config.button_bindings) {
-    (props.config as DeviceConfig).button_bindings = {};
-  }
-  if (count === "long") {
-    ensureLongPressBindings();
-    props.config.long_press_bindings![buttonId] = action;
-  } else if (count === 1) {
-    props.config.button_bindings[buttonId] = action;
-  } else {
-    ensureMultiClickBindings();
-    props.config.multi_click_bindings![buttonId] = {
-      ...(props.config.multi_click_bindings![buttonId] || {}),
-      [count]: action,
-    };
-  }
-  const next: DeviceConfig = {
-    ...props.config,
-    button_bindings: { ...props.config.button_bindings },
-    long_press_bindings: { ...(props.config.long_press_bindings || {}) },
-    multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
-  };
-  emit("save", next);
+function pickMouseClick() {
+  saveActionToSelectedSlot({ type: "MouseClick", value: null });
+}
+
+function pickMouseMove(dx: -1 | 0 | 1, dy: -1 | 0 | 1) {
+  const count = selectedId.value ? selectedClick(selectedId.value) : 1;
+  saveActionToSelectedSlot({
+    type: "MouseMove",
+    value: {
+      dx,
+      dy,
+      step: normalizedMouseStep(),
+      accelerate: count === "long" && mouseAccelerate.value,
+    },
+  });
 }
 
 function applyCapturedKeys(buttonId: string, vks: number[]) {
@@ -959,6 +949,29 @@ onUnmounted(() => {
           {{ liveLabels.length ? liveLabels.join(" + ") + " …" : t("mapping.chooseKey") }}
         </p>
         <div
+          v-if="!isVoiceButton(selectedMappingButton.id)"
+          class="mouse-pick"
+          role="group"
+          :aria-label="t('mapping.mouseActions')"
+        >
+          <span class="mouse-pick-label">{{ t("mapping.mouseActions") }}</span>
+          <button type="button" class="selection-action" :disabled="capturing" @click.stop="pickMouseClick">
+            {{ t("mapping.mouseLeftClick") }}
+          </button>
+          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseUp')" @click.stop="pickMouseMove(0, -1)">↑</button>
+          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseLeft')" @click.stop="pickMouseMove(-1, 0)">←</button>
+          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseRight')" @click.stop="pickMouseMove(1, 0)">→</button>
+          <button type="button" class="selection-action" :disabled="capturing" :aria-label="t('mapping.mouseDown')" @click.stop="pickMouseMove(0, 1)">↓</button>
+          <label class="mouse-pick-step">
+            <span>{{ t("mapping.mouseStep") }}</span>
+            <input v-model.number="mouseStep" type="number" min="1" max="100" :disabled="capturing" @change="normalizedMouseStep" />
+          </label>
+          <label v-if="selectedMappingButton.selectedClick === 'long'" class="mouse-pick-accel">
+            <input v-model="mouseAccelerate" type="checkbox" :disabled="capturing" />
+            <span>{{ t("mapping.mouseAccelerate") }}</span>
+          </label>
+        </div>
+        <div
           v-if="capturing && selectedId === selectedMappingButton.id && !isVoiceButton(selectedMappingButton.id)"
           class="media-pick"
           role="group"
@@ -974,26 +987,6 @@ onUnmounted(() => {
           >
             {{ k.label }}
           </button>
-          <button
-            type="button"
-            class="selection-action"
-            @click.stop="pickMouseClick"
-          >
-            鼠标左键
-          </button>
-          <span class="media-pick-label" style="margin-top: 6px;">鼠标移动：</span>
-          <button type="button" class="selection-action" @click.stop="pickMouseMove(0, -1)">↑</button>
-          <button type="button" class="selection-action" @click.stop="pickMouseMove(-1, 0)">←</button>
-          <button type="button" class="selection-action" @click.stop="pickMouseMove(1, 0)">→</button>
-          <button type="button" class="selection-action" @click.stop="pickMouseMove(0, 1)">↓</button>
-          <label class="media-pick-step">
-            <span>步幅</span>
-            <input type="number" min="1" max="100" v-model.number="mouseStep" style="width: 48px;" />
-          </label>
-          <label class="media-pick-accel">
-            <input type="checkbox" v-model="mouseAccelerate" />
-            <span>加速</span>
-          </label>
         </div>
         <p v-if="captureError && selectedId === selectedMappingButton.id" class="capture-err">{{ captureError }}</p>
       </div>
@@ -1861,6 +1854,10 @@ onUnmounted(() => {
 }
 .media-pick { display: flex; width: 100%; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 0; padding-top: 8px; border-top: 1px solid var(--info-border); }
 .media-pick-label { color: var(--text-secondary); font-size: 11px; }
+.mouse-pick { display: flex; width: 100%; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--info-border); }
+.mouse-pick-label { color: var(--text-secondary); font-size: 11px; }
+.mouse-pick-step, .mouse-pick-accel { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 11px; }
+.mouse-pick-step input { width: 52px; min-height: 29px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 11px; }
 .mapping-row.active .mapping-row-keycap { border-color: var(--border); border-color: color-mix(in srgb, var(--primary) 44%, var(--border)); }
 .mapping-search-empty { display: grid; min-height: 220px; place-items: center; color: var(--text-secondary); font-size: 13px; }
 .mapping-list-note { display: flex; align-items: flex-start; gap: 7px; margin: 14px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }

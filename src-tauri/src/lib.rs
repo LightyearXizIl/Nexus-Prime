@@ -101,8 +101,14 @@ pub fn run() {
         .setup(|app| {
             // Initialize configuration + 单文件日志
             let config_manager = config::manager::ConfigManager::new(app.handle().clone())?;
-            let log_path = logging::init(&config_manager.logs_dir());
+            let log_retention_days = config_manager
+                .get_global_settings()
+                .map(|settings| settings.log_retention_days as usize)
+                .unwrap_or(7);
+            let log_path = logging::init(&config_manager.logs_dir(), log_retention_days);
             std::env::set_var("REMOTE_BRIDGE_LOG_PATH", &log_path);
+            std::env::set_var("REMOTE_BRIDGE_LOG_DIR", config_manager.logs_dir());
+            std::env::set_var("REMOTE_BRIDGE_LOG_RETENTION_DAYS", log_retention_days.to_string());
             app.manage(config_manager);
             app.manage(update::UpdateManager::default());
 
@@ -227,6 +233,7 @@ pub fn run() {
             } else {
                 // 路由起来后立刻预热 UDP，避免首句语音才 PING
                 bridges::xiaomi::voice_pcm::warmup_async();
+                bridges::xiaomi::hid_injector::warmup_async();
                 bridges::xiaomi::conflict_guard::check_audio_router_after_spawn(app.handle());
             }
 
@@ -294,6 +301,7 @@ pub fn run() {
             ipc::commands::open_logs_folder,
             ipc::commands::get_app_log,
             ipc::commands::open_app_log,
+            ipc::commands::append_app_events,
             ipc::commands::quit_application,
             ipc::commands::get_xiaomi_conflicts,
             ipc::commands::kill_xiaomi_conflicts,

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import type { DeviceInfo, BridgeType, BridgeStatus } from "../types";
 import { connectionStatusPresentation } from "../utils/connectionStatus";
 

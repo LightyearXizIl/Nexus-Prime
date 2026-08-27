@@ -168,10 +168,24 @@ pub struct GlobalSettings {
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
+    /// 本地运行日志保留天数；旧配置和非法值默认保留最近七天。
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u8,
 }
 
 fn default_auto_check_updates() -> bool {
     true
+}
+
+pub fn default_log_retention_days() -> u8 {
+    7
+}
+
+pub fn normalize_log_retention_days(days: u8) -> u8 {
+    match days {
+        1 | 3 | 7 | 14 | 30 => days,
+        _ => default_log_retention_days(),
+    }
 }
 
 fn is_supported_language(language: &str) -> bool {
@@ -187,6 +201,7 @@ impl Default for GlobalSettings {
             minimize_to_tray: true,
             auto_check_updates: true,
             theme: ThemePreference::System,
+            log_retention_days: default_log_retention_days(),
         }
     }
 }
@@ -244,13 +259,15 @@ impl ConfigManager {
             let mut config: DeviceConfig = serde_json::from_str(&content)
                 .map_err(|e| format!("解析配置失败: {}", e))?;
             if device == "xiaomi" {
-                let removed_voice_gestures = Self::merge_xiaomi_defaults(&mut config);
-                if removed_voice_gestures {
-                    log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
-                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
-                        "voice_gesture_config_removed",
-                    );
-                    crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                let (changed, removed_voice_gestures) = Self::merge_xiaomi_defaults(&mut config);
+                if changed {
+                    if removed_voice_gestures {
+                        log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
+                        crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                            "voice_gesture_config_removed",
+                        );
+                        crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                    }
                     self.write_device_config(device, &config)?;
                 }
             }
@@ -278,24 +295,37 @@ impl ConfigManager {
     }
 
     /// 对齐 Python schema 升级：补齐缺失的默认绑定/别名，不覆盖用户已有项
-    fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> bool {
+    fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> (bool, bool) {
+        let mut changed = false;
         let defaults = Self::default_config_for("xiaomi");
         for (k, v) in defaults.button_aliases {
-            config.button_aliases.entry(k).or_insert(v);
+            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_aliases.entry(k) {
+                entry.insert(v);
+                changed = true;
+            }
         }
         for (k, v) in defaults.button_bindings {
-            config.button_bindings.entry(k).or_insert(v);
+            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_bindings.entry(k) {
+                entry.insert(v);
+                changed = true;
+            }
         }
         if config.voice_hotkey.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
             config.voice_hotkey = defaults.voice_hotkey;
+            changed = true;
         }
-        Self::sanitize_xiaomi_gesture_bindings(config)
+        let (sanitized, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(config);
+        (changed || sanitized, removed_voice_gestures)
     }
 
     /// Returns true when legacy voice gestures were removed. Voice is reserved
     /// for its input-method shortcut and must not enter the general gesture path.
-    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) -> bool {
+    fn sanitize_xiaomi_gesture_bindings(config: &mut DeviceConfig) -> (bool, bool) {
+        let mut changed = false;
         let mut removed_voice_gestures = false;
+        for action in config.button_bindings.values_mut() {
+            changed |= Self::normalize_mouse_action(action);
+        }
         let mut sanitized: HashMap<String, HashMap<u8, KeyAction>> = HashMap::new();
         for (button_id, slots) in std::mem::take(&mut config.multi_click_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
@@ -314,11 +344,14 @@ impl ConfigManager {
             }
             for (count, action) in slots {
                 if !(2..=4).contains(&count) {
+                    changed = true;
                     log::warn!(
                         "XIAOMI CONFIG ignored invalid multi-click count {count} for {button_id}"
                     );
                     continue;
                 }
+                let mut action = action;
+                changed |= Self::normalize_mouse_action(&mut action);
                 if matches!(action, KeyAction::None) {
                     continue;
                 }
@@ -334,16 +367,20 @@ impl ConfigManager {
         for (button_id, action) in std::mem::take(&mut config.long_press_bindings) {
             let canonical = crate::bridges::xiaomi::key_mapping::canonical_button_id(&button_id);
             if canonical == "unknown" {
+                changed = true;
                 log::warn!("XIAOMI CONFIG ignored long-press binding for {button_id}");
                 continue;
             }
             if canonical == "mic" {
+                changed = true;
                 if !matches!(action, KeyAction::None) {
                     removed_voice_gestures = true;
                     log::info!("XIAOMI CONFIG removed long-press binding for dedicated voice key");
                 }
                 continue;
             }
+            let mut action = action;
+            changed |= Self::normalize_mouse_action(&mut action);
             if matches!(action, KeyAction::None) {
                 continue;
             }
@@ -357,8 +394,27 @@ impl ConfigManager {
                 config.multi_click_interval_ms
             );
             config.multi_click_interval_ms = config.multi_click_interval_ms.clamp(150, 800);
+            changed = true;
         }
-        removed_voice_gestures
+        (changed, removed_voice_gestures)
+    }
+
+    fn normalize_mouse_action(action: &mut KeyAction) -> bool {
+        let KeyAction::MouseMove { dx, dy, step, .. } = action else {
+            return false;
+        };
+        if !matches!((*dx, *dy), (0, -1) | (0, 1) | (-1, 0) | (1, 0)) {
+            log::warn!("XIAOMI CONFIG removed invalid mouse direction dx={dx} dy={dy}");
+            *action = KeyAction::None;
+            return true;
+        }
+        let normalized_step = (*step).clamp(1, 100);
+        if normalized_step != *step {
+            log::warn!("XIAOMI CONFIG clamped mouse step {} to {normalized_step}", *step);
+            *step = normalized_step;
+            return true;
+        }
+        false
     }
 
     fn write_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
@@ -385,7 +441,7 @@ impl ConfigManager {
     pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
         let mut config = config.clone();
         if device == "xiaomi" {
-            let removed_voice_gestures = Self::sanitize_xiaomi_gesture_bindings(&mut config);
+            let (_, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(&mut config);
             if removed_voice_gestures {
                 crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
                     "voice_gesture_config_removed",
@@ -409,8 +465,10 @@ impl ConfigManager {
         if path.exists() {
             let content = fs::read_to_string(&path)
                 .map_err(|e| format!("读取设置失败: {}", e))?;
-            serde_json::from_str(&content)
-                .map_err(|e| format!("解析设置失败: {}", e))
+            let mut settings: GlobalSettings = serde_json::from_str(&content)
+                .map_err(|e| format!("解析设置失败: {}", e))?;
+            settings.log_retention_days = normalize_log_retention_days(settings.log_retention_days);
+            Ok(settings)
         } else {
             Ok(GlobalSettings::default())
         }
@@ -420,7 +478,9 @@ impl ConfigManager {
         let path = self.settings_path();
         let tmp_path = path.with_extension("json.tmp");
 
-        let content = serde_json::to_string_pretty(settings)
+        let mut normalized = settings.clone();
+        normalized.log_retention_days = normalize_log_retention_days(normalized.log_retention_days);
+        let content = serde_json::to_string_pretty(&normalized)
             .map_err(|e| format!("序列化设置失败: {}", e))?;
 
         fs::write(&tmp_path, &content)
@@ -652,6 +712,7 @@ mod tests {
         assert!(settings.minimize_to_tray);
         assert!(settings.auto_check_updates);
         assert_eq!(settings.theme, ThemePreference::System);
+        assert_eq!(settings.log_retention_days, 7);
     }
 
     #[test]
@@ -663,6 +724,13 @@ mod tests {
         assert_eq!(settings.theme, ThemePreference::System);
         assert!(settings.auto_check_updates);
         assert!(!settings.autostart_minimized_to_tray);
+        assert_eq!(settings.log_retention_days, 7);
+    }
+
+    #[test]
+    fn invalid_log_retention_defaults_to_seven_days() {
+        assert_eq!(normalize_log_retention_days(2), 7);
+        assert_eq!(normalize_log_retention_days(30), 30);
     }
 
     #[test]
