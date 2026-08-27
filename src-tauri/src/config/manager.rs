@@ -30,6 +30,8 @@ pub enum KeyAction {
     LaunchApp(String),
     /// 鼠标左键点击
     MouseClick,
+    /// 鼠标移动：dx/dy 为方向（-1/0/1），step 为每帧像素数，accelerate 为是否加速
+    MouseMove { dx: i32, dy: i32, step: u32, accelerate: bool },
     /// 无动作
     None,
 }

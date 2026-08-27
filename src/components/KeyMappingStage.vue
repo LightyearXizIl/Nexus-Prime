@@ -260,6 +260,11 @@ function actionLabel(action: KeyAction): string {
   if (action.type === "TextInput") return t("mapping.text", { value: action.value });
   if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
   if (action.type === "MouseClick") return "鼠标左键";
+  if (action.type === "MouseMove") {
+    const v = action.value as { dx: number; dy: number; step: number; accelerate: boolean };
+    const dir = v.dx === 0 && v.dy < 0 ? "鼠标↑" : v.dx === 0 && v.dy > 0 ? "鼠标↓" : v.dx < 0 ? "鼠标←" : v.dx > 0 ? "鼠标→" : "鼠标移动";
+    return `${dir} ${v.step}px${v.accelerate ? " 加速" : ""}`;
+  }
   return "—";
 }
 
@@ -636,6 +641,40 @@ async function pickMediaKey(vk: number) {
   applyCapturedKeys(buttonId, [vk]);
 }
 
+const mouseStep = ref(20);
+const mouseAccelerate = ref(true);
+
+/** 鼠标移动：直接设置为 MouseMove 动作 */
+async function pickMouseMove(dx: number, dy: number) {
+  const buttonId = selectedId.value;
+  if (!buttonId) return;
+  await cancelCapture();
+  const count = isVoiceButton(buttonId) ? 1 : selectedClick(buttonId);
+  const action: KeyAction = { type: "MouseMove", value: { dx, dy, step: mouseStep.value, accelerate: mouseAccelerate.value } };
+  if (!props.config.button_bindings) {
+    (props.config as DeviceConfig).button_bindings = {};
+  }
+  if (count === "long") {
+    ensureLongPressBindings();
+    props.config.long_press_bindings![buttonId] = action;
+  } else if (count === 1) {
+    props.config.button_bindings[buttonId] = action;
+  } else {
+    ensureMultiClickBindings();
+    props.config.multi_click_bindings![buttonId] = {
+      ...(props.config.multi_click_bindings![buttonId] || {}),
+      [count]: action,
+    };
+  }
+  const next: DeviceConfig = {
+    ...props.config,
+    button_bindings: { ...props.config.button_bindings },
+    long_press_bindings: { ...(props.config.long_press_bindings || {}) },
+    multi_click_bindings: { ...(props.config.multi_click_bindings || {}) },
+  };
+  emit("save", next);
+}
+
 /** 鼠标左键：直接设置为 MouseClick 动作 */
 async function pickMouseClick() {
   const buttonId = selectedId.value;
@@ -942,6 +981,19 @@ onUnmounted(() => {
           >
             鼠标左键
           </button>
+          <span class="media-pick-label" style="margin-top: 6px;">鼠标移动：</span>
+          <button type="button" class="selection-action" @click.stop="pickMouseMove(0, -1)">↑</button>
+          <button type="button" class="selection-action" @click.stop="pickMouseMove(-1, 0)">←</button>
+          <button type="button" class="selection-action" @click.stop="pickMouseMove(1, 0)">→</button>
+          <button type="button" class="selection-action" @click.stop="pickMouseMove(0, 1)">↓</button>
+          <label class="media-pick-step">
+            <span>步幅</span>
+            <input type="number" min="1" max="100" v-model.number="mouseStep" style="width: 48px;" />
+          </label>
+          <label class="media-pick-accel">
+            <input type="checkbox" v-model="mouseAccelerate" />
+            <span>加速</span>
+          </label>
         </div>
         <p v-if="captureError && selectedId === selectedMappingButton.id" class="capture-err">{{ captureError }}</p>
       </div>

@@ -735,7 +735,20 @@ fn start_hold_detector(
                                 perform_action(action)
                             }
                         } else {
-                            perform_action(action)
+                            // MouseMove 长按：启动专用循环，按住期间持续移动
+                            if let KeyAction::MouseMove { dx, dy, step, accelerate } = action {
+                                start_mouse_move_loop(
+                                    app.clone(),
+                                    button_id.clone(),
+                                    *dx,
+                                    *dy,
+                                    *step,
+                                    *accelerate,
+                                );
+                                true
+                            } else {
+                                perform_action(action)
+                            }
                         };
                         if triggered {
                             mark_direct_signal(&button_id);
@@ -963,6 +976,10 @@ fn perform_action(action: &KeyAction) -> bool {
             mouse_left_click();
             true
         }
+        KeyAction::MouseMove { dx, dy, step, .. } => {
+            mouse_move_relative(*dx * *step as i32, *dy * *step as i32);
+            true
+        }
     }
 }
 
@@ -988,6 +1005,16 @@ fn action_label(action: &KeyAction) -> String {
         KeyAction::TextInput(text) => format!("文字: {text}"),
         KeyAction::LaunchApp(path) => format!("启动: {path}"),
         KeyAction::MouseClick => "鼠标左键".into(),
+        KeyAction::MouseMove { dx, dy, step, accelerate } => {
+            let dir = match (*dx, *dy) {
+                (0, -1) => "鼠标↑",
+                (0, 1) => "鼠标↓",
+                (-1, 0) => "鼠标←",
+                (1, 0) => "鼠标→",
+                _ => "鼠标移动",
+            };
+            format!("{dir} {step}px{}", if *accelerate { " 加速" } else { "" })
+        }
     }
 }
 
@@ -1758,6 +1785,73 @@ fn mouse_left_click() {
     {
         log::warn!("XIAOMI MAPPING mouse click not supported on this platform");
     }
+}
+
+/// 模拟鼠标相对移动（dx/dy 为像素偏移）
+fn mouse_move_relative(dx: i32, dy: i32) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+        };
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx,
+                    dy,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_MOVE,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let inputs = [input];
+        unsafe {
+            let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        }
+        log::debug!("XIAOMI MAPPING mouse move dx={dx} dy={dy}");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (dx, dy);
+        log::warn!("XIAOMI MAPPING mouse move not supported on this platform");
+    }
+}
+
+/// 长按鼠标移动循环：按住期间持续移动，抬起时由 cancel_repeat 取消 gen 自动停止
+fn start_mouse_move_loop(app: AppHandle, button_id: String, dx: i32, dy: i32, step: u32, accelerate: bool) {
+    let gen = {
+        let mut map = repeats();
+        let e = map.as_mut().unwrap().entry(button_id.clone()).or_insert(0);
+        *e = e.wrapping_add(1);
+        *e
+    };
+    std::thread::Builder::new()
+        .name(format!("xiaomi-mouse-move-{button_id}"))
+        .spawn(move || {
+            let mut frame: u32 = 0;
+            loop {
+                {
+                    let map = repeats();
+                    if map.as_ref().and_then(|m| m.get(&button_id)).copied() != Some(gen) {
+                        break;
+                    }
+                }
+                let speed = if accelerate {
+                    // 加速：从 step 开始，每 10 帧增加 1px，上限 step*4
+                    (step + frame / 10).min(step * 4)
+                } else {
+                    step
+                };
+                mouse_move_relative(dx * speed as i32, dy * speed as i32);
+                frame += 1;
+                std::thread::sleep(Duration::from_millis(16)); // ~60fps
+            }
+            let _ = &app; // 保持 app 引用，确保配置热重载可用
+        })
+        .ok();
 }
 
 #[cfg(test)]

@@ -24,8 +24,8 @@ export interface DeviceInfo {
 }
 
 export interface KeyAction {
-  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "MouseClick" | "None";
-  value: number | number[] | string | null;
+  type: "SingleKey" | "ComboKey" | "TextInput" | "LaunchApp" | "MouseClick" | "MouseMove" | "None";
+  value: number | number[] | string | null | { dx: number; dy: number; step: number; accelerate: boolean };
 }
 
 export type TriggerMode = "Toggle" | "Hold";
