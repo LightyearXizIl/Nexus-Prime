@@ -2,7 +2,22 @@
 
 更新时间：2026-08-27
 
-## 本次范围（v0.3.2，2026-08-27）
+## 本次范围（v0.3.3，2026-08-27）
+
+- 旧版微信 Ctrl + Win 语音映射改为「按下启动、松开结束」的两次独立点按会话：按下时先等待关联 F5 被抑制钩子吃掉，再发送约 120ms 的短脉冲；抬起时按开始时固定的注入路由再发一次结束脉冲。不再全程持有组合键，避免遥控器固件连发的 F5 与 Ctrl + Win 组合被微信再次识别。
+- 点按会话与既有语音持键状态分开管理：`force_release_voice_shortcut` 会先收尾点按会话；`current_voice_route_label` 同时反映两条路径；配置变更、断开连接等 `reset_voice_input_state` 清理仍有效。F24 中和释放路径仅用于其它纯 Win/Alt 快捷键，不再覆盖旧版微信。
+- 全局设置新增「清理旧日志」按钮：确认对话框通过后调用新的 `clear_old_app_logs` 命令删除历史日期与旧格式日志、保留当天，界面显示清理文件数与释放空间；三语言文案同步。
+- 首页在宽屏（≥1020px）下三张卡片纵向弹性铺满窗口，窄屏维持原有滚动布局。
+- 语音 F5 抑制改为一轮会话汇总一条日志（含吞掉的次数），键盘钩子不再逐条输出 voice_f5 抑制日志。
+- 已通过 `npm.cmd test`（37 项）、`npm.cmd run build`、`cargo test --workspace`（106 项）、`cargo check --workspace --all-targets` 和 `git diff --check`。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.3_x64-setup.exe`，13,318,599 bytes，SHA-256 `371466D572893FB0FECDB6056B035F2630181D73C2B1B232CB718ABF4C356BE8`。
+- [GitHub 正式 Release v0.3.3](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.3) 已公开且为 `releases/latest`；标签解引用提交为 `1120e5fad166b5e006c03bfe8797eb4dd4580439`，资产 `Nexus.Prime_0.3.3_x64-setup.exe` 状态为 `uploaded`、大小 13,318,599 bytes、GitHub digest 为 `sha256:371466d572893fb0fecdb6056b035f2630181d73c2b1b232cb718abf4c356be8`，与本地 SHA-256 一致。
+
+### 仍待真实设备验收
+
+- 请在真实遥控器 + 旧版微信上验证：语音键按下弹起一次只出现一次语音窗，再次按住/点击能正常结束；快速连续按压不重复触发、无粘键。同时回归新版微信 Ctrl+Shift+D、右 Alt、普通方向键/音量映射和新增的「清理旧日志」按钮。
+- CHANGELOG.md 中缺失的 [0.3.2] 条目已在本次一并补齐。
+
+## 上次范围（v0.3.2，2026-08-27）
 
 - 首页服务状态卡片压缩为 68px 的扁平四列布局；快捷操作改为短标题与单行说明，信息按钮固定在右上角，简体中文、繁体中文和英文文案同步。
 - 顶部设备、页面连接状态、服务状态、实时提示和动态时间线统一使用 7px 实心圆与 4px 半透明外环的状态灯；不再使用方形提示或闪烁动画。
