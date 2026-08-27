@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { defineStore } from "pinia";
 import { ref } from "vue";

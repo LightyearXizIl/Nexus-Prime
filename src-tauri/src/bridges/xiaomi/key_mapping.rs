@@ -38,6 +38,44 @@ static VOICE_F5_DOWN_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 static INPUT_SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FIRMWARE_VOICE_HELD: AtomicBool = AtomicBool::new(false);
 static VOICE_HOOK_APP: Mutex<Option<AppHandle>> = Mutex::new(None);
+static SEND_INPUT_HEALTH: Mutex<SendInputHealth> = Mutex::new(SendInputHealth {
+    verified: false,
+    last_error: None,
+});
+
+#[derive(Debug, Clone)]
+struct SendInputHealth {
+    verified: bool,
+    last_error: Option<String>,
+}
+
+/// Status of the two keyboard injection layers. A layer is marked verified only
+/// after Windows accepted a real shortcut report/event; this deliberately does
+/// not claim that a third-party IME has opened its dictation UI.
+#[derive(Debug, Clone)]
+pub struct InputInjectionHealth {
+    pub virtual_hid_ready: bool,
+    pub virtual_hid_verified: bool,
+    pub send_input_verified: bool,
+    pub last_error: Option<String>,
+}
+
+pub fn input_injection_health() -> InputInjectionHealth {
+    let virtual_hid = crate::bridges::xiaomi::hid_injector::health();
+    let send_input = SEND_INPUT_HEALTH.lock().clone();
+    InputInjectionHealth {
+        virtual_hid_ready: virtual_hid.ready,
+        virtual_hid_verified: virtual_hid.report_verified,
+        send_input_verified: send_input.verified,
+        last_error: virtual_hid.last_error.or(send_input.last_error),
+    }
+}
+
+fn record_send_input_result(ok: bool, detail: String) {
+    let mut health = SEND_INPUT_HEALTH.lock();
+    health.verified = ok;
+    health.last_error = if ok { None } else { Some(detail) };
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ClickState {
@@ -1026,29 +1064,54 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
 }
 
 /// 点击模式：短按判定为「点按一次」完整 tap（若尚未因长按而 DOWN）
-pub fn voice_shortcut_tap(app: &AppHandle) {
+pub fn voice_shortcut_tap(app: &AppHandle) -> &'static str {
     // 若已经按住 DOWN，先松开再读取当前配置，避免配置读取失败时粘键。
     force_release_voice_shortcut("click_tap");
     let Some(config) = load_xiaomi_config(app) else {
-        return;
+        return "none";
     };
     if !config.voice_shortcut_enabled {
-        return;
+        return "none";
     }
     let vks = resolve_voice_hotkey(&config);
     if vks.is_empty() {
-        return;
+        return "none";
     }
     let hold = if vks.iter().any(|vk| matches!(vk, 0x5B | 0x5C)) {
         120
     } else {
         70
     };
-    let route = tap_voice_shortcut_vks(&vks, hold);
+    let route = press_voice_shortcut(&vks, "click_tap");
+    let route = match route {
+        Some(route) => {
+            std::thread::sleep(Duration::from_millis(hold));
+            let _ = force_release_voice_shortcut("click_tap");
+            route
+        }
+        None => VoiceInjectionRoute::SendInputFallback,
+    };
     log::info!(
         "XIAOMI VOICE SHORTCUT TAP (click) route={} vks={vks:?} hold_ms={hold}",
         voice_injection_route_label(route),
     );
+    voice_injection_route_label(route)
+}
+
+/// Click mode still needs a complete key-down/key-up pair, but the IME is now
+/// activated on AUDIO_START.  Win chords get a slightly longer minimum hold.
+pub fn voice_shortcut_min_hold_ms(app: &AppHandle) -> u64 {
+    let Some(config) = load_xiaomi_config(app) else {
+        return 70;
+    };
+    if resolve_voice_hotkey(&config)
+        .iter()
+        .any(|vk| matches!(vk, 0x5B | 0x5C))
+    {
+        120
+    } else {
+        70
+    }
 }
 
 /// 点击模式：确认已进入长按后补发 DOWN（若尚未 DOWN）
@@ -1091,9 +1154,22 @@ fn press_voice_shortcut(vks: &[u16], reason: &str) -> Option<VoiceInjectionRoute
 /// 释放实际按下的组合键；对同一会话重复调用不产生额外键盘事件。
 pub fn force_release_voice_shortcut(reason: &str) -> bool {
     let mut state = VOICE_HELD_KEYS.lock();
-    let Some((keys, route, released)) = state.release_with(release_voice_shortcut) else {
+    let Some((keys, route, mut released)) = state.release_with(release_voice_shortcut) else {
         return false;
     };
+    if !released && route == VoiceInjectionRoute::VirtualHid {
+        // The virtual device may have disappeared after accepting DOWN.  Drop
+        // that handle, then use KEYUP only as an emergency for keys owned by
+        // this voice session.  The state is cleared only after verification.
+        crate::bridges::xiaomi::hid_injector::reset_and_retry();
+        released = key_chord(&keys, true) && owned_modifiers_released(&keys);
+        if released {
+            state.clear_after_verified_release();
+            log::warn!(
+                "XIAOMI VOICE SHORTCUT UP recovered via emergency SendInput reason={reason} vks={keys:?}"
+            );
+        }
+    }
     if released {
         log::info!(
             "XIAOMI VOICE SHORTCUT UP reason={reason} route={} vks={keys:?}",
@@ -1112,6 +1188,15 @@ fn voice_injection_route_label(route: VoiceInjectionRoute) -> &'static str {
     }
 }
 
+/// Diagnostic-only view of the route fixed for the active voice press.
+pub fn current_voice_route_label() -> &'static str {
+    VOICE_HELD_KEYS
+        .lock()
+        .held_route()
+        .map(voice_injection_route_label)
+        .unwrap_or("none")
+}
+
 /// Voice shortcuts are the only path allowed to bypass the ordinary Alt/Space/media
 /// exclusions. IME global shortcuts such as Doubao's right Alt need hardware origin.
 fn should_try_virtual_hid_for_voice(vks: &[u16]) -> bool {
@@ -1120,15 +1205,16 @@ fn should_try_virtual_hid_for_voice(vks: &[u16]) -> bool {
 
 fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
     if should_try_virtual_hid_for_voice(vks)
-        && crate::bridges::xiaomi::hid_injector::press(vks).is_ok()
+        && crate::bridges::xiaomi::hid_injector::press_ready(vks).is_ok()
     {
         return Some(VoiceInjectionRoute::VirtualHid);
     }
 
-    // A driver write may have partially succeeded before reporting an error.
-    // Clear it before falling back to SendInput so a modifier can never remain held.
-    let _ = crate::bridges::xiaomi::hid_injector::release(vks);
+    // press_ready compensates a failed driver report on its original handle
+    // before disposing it.  Never call release() here: that would synchronously
+    // recreate WinUHid in the same voice-key callback.
     if key_chord(vks, false) {
+        log::warn!("XIAOMI VOICE shortcut primary virtual_hid failed; route=send_input_fallback vks={vks:?}");
         Some(VoiceInjectionRoute::SendInputFallback)
     } else {
         None
@@ -1136,26 +1222,65 @@ fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
 }
 
 fn compensate_voice_shortcut_down(vks: &[u16]) {
-    let _ = crate::bridges::xiaomi::hid_injector::release(vks);
+    let _ = crate::bridges::xiaomi::hid_injector::release_ready(vks);
     let _ = key_chord(vks, true);
 }
 
 fn release_voice_shortcut(vks: &[u16], route: VoiceInjectionRoute) -> bool {
-    match route {
-        VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release(vks).is_ok(),
+    // An unhandled pure Win/Alt shortcut normally opens Start/the system menu
+    // on modifier release.  Mark it as a real chord before the modifier UP,
+    // without changing ordinary custom Win mappings that intentionally invoke
+    // Windows UI.
+    if voice_needs_shell_neutralizer(vks) {
+        let _ = neutralize_voice_shell(vks, route);
+    }
+    let released = match route {
+        VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok(),
         VoiceInjectionRoute::SendInputFallback => key_chord(vks, true),
+    };
+    released && owned_modifiers_released(vks)
+}
+
+fn is_modifier_key(vk: u16) -> bool {
+    matches!(vk, 0x10 | 0x11 | 0x12 | 0xA0..=0xA5 | 0x5B | 0x5C)
+}
+
+fn voice_needs_shell_neutralizer(vks: &[u16]) -> bool {
+    !vks.is_empty()
+        && vks.iter().all(|vk| is_modifier_key(*vk))
+        && vks.iter().any(|vk| matches!(vk, 0x12 | 0xA4 | 0xA5 | 0x5B | 0x5C))
+}
+
+fn neutralize_voice_shell(vks: &[u16], route: VoiceInjectionRoute) -> bool {
+    const VK_F24: u16 = 0x87;
+    match route {
+        VoiceInjectionRoute::VirtualHid => {
+            let mut chord = vks.to_vec();
+            chord.push(VK_F24);
+            crate::bridges::xiaomi::hid_injector::press_ready(&chord).is_ok()
+                && crate::bridges::xiaomi::hid_injector::press_ready(vks).is_ok()
+        }
+        VoiceInjectionRoute::SendInputFallback => {
+            key_chord(&[VK_F24], false) && key_chord(&[VK_F24], true)
+        }
     }
 }
 
-fn tap_voice_shortcut_vks(vks: &[u16], hold_ms: u64) -> VoiceInjectionRoute {
-    if should_try_virtual_hid_for_voice(vks)
-        && crate::bridges::xiaomi::hid_injector::tap_vks(vks, hold_ms)
+fn owned_modifiers_released(vks: &[u16]) -> bool {
+    #[cfg(target_os = "windows")]
     {
-        let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
-        return VoiceInjectionRoute::VirtualHid;
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+        // GetAsyncKeyState reports the high bit while a key is down.  Only
+        // check modifiers this application injected; normal letters can be
+        // physically held by the user and must not block cleanup.
+        for &vk in vks.iter().filter(|vk| is_modifier_key(**vk)) {
+            if unsafe { GetAsyncKeyState(vk as i32) } < 0 {
+                log::warn!("XIAOMI VOICE modifier still down vk=0x{vk:02X}");
+                return false;
+            }
+        }
     }
-    tap_vks_fallback(vks, hold_ms);
-    VoiceInjectionRoute::SendInputFallback
+    true
 }
 
 /// ATVV opcode 路径调用（对齐 VoiceShortcut.press/release/tap）
@@ -1428,8 +1553,18 @@ fn action_virtual_keys(action: &KeyAction) -> Option<Vec<u16>> {
 }
 
 fn release_held_keys(vks: &[u16], reason: &str) {
-    key_chord(vks, true);
-    log::info!("XIAOMI MAPPING held keys release keys={vks:?} reason={reason}");
+    let mut released = false;
+    for _ in 0..3 {
+        if key_chord(vks, true) {
+            released = true;
+            break;
+        }
+    }
+    if released {
+        log::info!("XIAOMI MAPPING held keys release keys={vks:?} reason={reason}");
+    } else {
+        log::error!("XIAOMI MAPPING held keys release failed keys={vks:?} reason={reason}");
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1460,10 +1595,20 @@ fn should_try_virtual_hid(vks: &[u16]) -> bool {
     !bypass_virtual_hid
 }
 
-fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) {
-    key_chord(vks, false);
+fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) -> bool {
+    let down = key_chord(vks, false);
     std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-    key_chord(vks, true);
+    let mut up = false;
+    for _ in 0..3 {
+        if key_chord(vks, true) {
+            up = true;
+            break;
+        }
+    }
+    if !up {
+        log::error!("XIAOMI MAPPING SendInput chord release exhausted retries vks={vks:?}");
+    }
+    down && up
 }
 
 pub fn tap_vks(vks: &[u16], hold_ms: u64) {
@@ -1474,7 +1619,23 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) {
     // Alt+Tab 走未武装拦截标记的系统 SendInput，其余 Alt 组合走窗口消息。
     let try_virtual_hid = should_try_virtual_hid(vks);
     if try_virtual_hid {
-        if crate::bridges::xiaomi::hid_injector::tap_vks(vks, hold_ms) {
+        if crate::bridges::xiaomi::hid_injector::press(vks).is_ok() {
+            std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
+            let mut released = false;
+            for _ in 0..3 {
+                if crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok() {
+                    released = true;
+                    break;
+                }
+            }
+            if !released {
+                // Do not send a second DOWN through SendInput.  First destroy
+                // the stale virtual device and issue KEYUP only for the chord
+                // this call owns.
+                crate::bridges::xiaomi::hid_injector::reset_and_retry();
+                let _ = key_chord(vks, true);
+                log::error!("XIAOMI MAPPING virtual chord release recovery vks={vks:?}");
+            }
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
             return;
         }
@@ -1691,19 +1852,50 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
         if inputs.is_empty() {
             return true;
         }
+        // Release modifiers one by one.  A partial SendInput batch used to
+        // leave LWin/RWin behind while reporting only a generic failure.  With
+        // individual KEYUP records every owned key receives its own retry.
+        if key_up {
+            let mut released = true;
+            for (index, input) in inputs.iter().enumerate() {
+                let sent = unsafe {
+                    SendInput(std::slice::from_ref(input), std::mem::size_of::<INPUT>() as i32)
+                } as usize;
+                if sent != 1 {
+                    released = false;
+                    let vk = vks[vks.len() - 1 - index];
+                    log::warn!(
+                        "XIAOMI MAPPING SendInput KEYUP failed vk=0x{vk:02X} vks={vks:?}"
+                    );
+                }
+            }
+            if released {
+                record_send_input_result(true, String::new());
+            } else {
+                record_send_input_result(false, format!("SendInput KEYUP incomplete vks={vks:?}"));
+            }
+            return released;
+        }
+
         let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
         if sent != inputs.len() {
-            log::warn!(
-                "XIAOMI MAPPING SendInput incomplete sent={sent} expected={} key_up={key_up} vks={vks:?}",
+            let detail = format!(
+                "SendInput incomplete sent={sent} expected={} key_up={key_up} vks={vks:?}",
                 inputs.len()
+            );
+            record_send_input_result(false, detail.clone());
+            log::warn!(
+                "XIAOMI MAPPING {detail}"
             );
             return false;
         }
+        record_send_input_result(true, String::new());
         true
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (vks, key_up);
+        record_send_input_result(true, String::new());
         true
     }
 }
@@ -1854,6 +2046,15 @@ mod gesture_tests {
         assert!(should_try_virtual_hid_for_voice(&[0xA2, 0x5B]));
         assert!(should_try_virtual_hid_for_voice(&[0xA2, 0xA0, 0x44]));
         assert!(!should_try_virtual_hid_for_voice(&[]));
+    }
+
+    #[test]
+    fn voice_only_win_or_alt_chords_are_neutralized_before_release() {
+        assert!(voice_needs_shell_neutralizer(&[0xA5]));
+        assert!(voice_needs_shell_neutralizer(&[0xA2, 0x5B]));
+        assert!(voice_needs_shell_neutralizer(&[0x5C]));
+        assert!(!voice_needs_shell_neutralizer(&[0xA2, 0xA0, 0x44]));
+        assert!(!voice_needs_shell_neutralizer(&[0x5B, 0x44]));
     }
 
     #[test]

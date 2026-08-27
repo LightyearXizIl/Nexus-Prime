@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use std::collections::VecDeque;
 
 use crate::audio::pcm_router::DEFAULT_PCM_PORT;
 
@@ -21,6 +22,33 @@ struct Client {
 static CLIENT: Mutex<Option<Client>> = Mutex::new(None);
 /// 热路径快速判断，避免每帧进 ensure_started / 抢锁探测
 static READY: AtomicBool = AtomicBool::new(false);
+static STARTING: AtomicBool = AtomicBool::new(false);
+static INPUT_GATE_CLOSED: AtomicBool = AtomicBool::new(false);
+static SEND_LOCK: Mutex<()> = Mutex::new(());
+static FIRST_SEND_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+const MAX_PRE_ROLL_MS: u64 = 250;
+
+struct PendingFrame {
+    samples: Vec<i16>,
+    source_rate_hz: u32,
+    duration_ms: u64,
+}
+
+#[derive(Default)]
+struct PendingFrames {
+    frames: VecDeque<PendingFrame>,
+    duration_ms: u64,
+    peak_duration_ms: u64,
+    dropped_ms: u64,
+}
+
+static PENDING: Mutex<PendingFrames> = Mutex::new(PendingFrames {
+    frames: VecDeque::new(),
+    duration_ms: 0,
+    peak_duration_ms: 0,
+    dropped_ms: 0,
+});
 
 fn pcm_port() -> u16 {
     std::env::var("REMOTE_BRIDGE_PCM_PORT")
@@ -38,6 +66,18 @@ pub fn ensure_started() -> Result<(), String> {
     if READY.load(Ordering::Acquire) {
         return Ok(());
     }
+    if STARTING.swap(true, Ordering::AcqRel) {
+        return Err("audio router warmup already in progress".into());
+    }
+    let result = ensure_started_inner();
+    STARTING.store(false, Ordering::Release);
+    if result.is_ok() {
+        flush_pending();
+    }
+    result
+}
+
+fn ensure_started_inner() -> Result<(), String> {
     {
         let g = CLIENT.lock();
         if g.is_some() {
@@ -81,7 +121,7 @@ pub fn ensure_started() -> Result<(), String> {
 
 /// 后台预热：应用启动 / 连上遥控后尽早 PING，避免首句说话才建连
 pub fn warmup_async() {
-    if READY.load(Ordering::Acquire) {
+    if READY.load(Ordering::Acquire) || STARTING.load(Ordering::Acquire) {
         return;
     }
     std::thread::Builder::new()
@@ -106,6 +146,43 @@ pub fn warmup_async() {
 
 pub fn is_ready() -> bool {
     READY.load(Ordering::Acquire)
+}
+
+/// A new remote voice press begins with the audio gate closed.  Audio is
+/// decoded immediately but held briefly until the input-method shortcut has
+/// actually been delivered.
+pub fn begin_session() {
+    INPUT_GATE_CLOSED.store(true, Ordering::Release);
+    let mut pending = PENDING.lock();
+    pending.frames.clear();
+    pending.duration_ms = 0;
+    pending.peak_duration_ms = 0;
+    pending.dropped_ms = 0;
+    drop(pending);
+    *FIRST_SEND_AT.lock() = None;
+    clear();
+}
+
+/// Open the session's input gate after the shortcut path is ready, then flush
+/// the earliest complete audio frames in FIFO order.
+pub fn release_input_gate() {
+    INPUT_GATE_CLOSED.store(false, Ordering::Release);
+    flush_pending();
+}
+
+pub fn discard_pending() {
+    let mut pending = PENDING.lock();
+    pending.frames.clear();
+    pending.duration_ms = 0;
+}
+
+pub fn pre_roll_stats() -> (u64, u64) {
+    let pending = PENDING.lock();
+    (pending.peak_duration_ms, pending.dropped_ms)
+}
+
+pub fn first_send_at() -> Option<Instant> {
+    *FIRST_SEND_AT.lock()
 }
 
 pub fn clear() {
@@ -138,12 +215,67 @@ pub fn push_pcm(samples: &[i16], source_rate_hz: u32) {
             return;
         }
     };
-    if !READY.load(Ordering::Acquire) && ensure_started().is_err() {
+    if INPUT_GATE_CLOSED.load(Ordering::Acquire) || !READY.load(Ordering::Acquire) {
+        enqueue_pending(samples, source_rate_hz);
+        if !READY.load(Ordering::Acquire) {
+            warmup_async();
+        }
         return;
     }
+    let _send = SEND_LOCK.lock();
+    flush_pending_locked();
+    send_pcm_now(samples, source_rate_hz, ratio);
+}
+
+fn enqueue_pending(samples: &[i16], source_rate_hz: u32) {
+    let duration_ms = ((samples.len() as u64) * 1000 / source_rate_hz.max(1) as u64).max(1);
+    let mut pending = PENDING.lock();
+    while pending.duration_ms + duration_ms > MAX_PRE_ROLL_MS {
+        let Some(old) = pending.frames.pop_front() else { break };
+        pending.duration_ms = pending.duration_ms.saturating_sub(old.duration_ms);
+        pending.dropped_ms += old.duration_ms;
+    }
+    pending.duration_ms += duration_ms;
+    pending.peak_duration_ms = pending.peak_duration_ms.max(pending.duration_ms);
+    pending.frames.push_back(PendingFrame {
+        samples: samples.to_vec(),
+        source_rate_hz,
+        duration_ms,
+    });
+}
+
+fn flush_pending() {
+    if INPUT_GATE_CLOSED.load(Ordering::Acquire) || !READY.load(Ordering::Acquire) {
+        return;
+    }
+    let _send = SEND_LOCK.lock();
+    flush_pending_locked();
+}
+
+fn flush_pending_locked() {
+    if INPUT_GATE_CLOSED.load(Ordering::Acquire) || !READY.load(Ordering::Acquire) {
+        return;
+    }
+    let frames = {
+        let mut pending = PENDING.lock();
+        pending.duration_ms = 0;
+        pending.frames.drain(..).collect::<Vec<_>>()
+    };
+    for frame in frames {
+        let ratio = match frame.source_rate_hz {
+            8_000 => 6,
+            16_000 => 3,
+            _ => continue,
+        };
+        send_pcm_now(&frame.samples, frame.source_rate_hz, ratio);
+    }
+}
+
+fn send_pcm_now(samples: &[i16], source_rate_hz: u32, ratio: usize) {
     let mut guard = CLIENT.lock();
     let Some(c) = guard.as_mut() else {
         READY.store(false, Ordering::Release);
+        enqueue_pending(samples, source_rate_hz);
         return;
     };
     if c.source_rate_hz != Some(source_rate_hz) {
@@ -171,6 +303,7 @@ pub fn push_pcm(samples: &[i16], source_rate_hz: u32) {
     let udp_ok = match c.sock.send_to(&out, peer) {
         Ok(_) => {
             c.sent.fetch_add(1, Ordering::Relaxed);
+            FIRST_SEND_AT.lock().get_or_insert_with(Instant::now);
             true
         }
         Err(_) => {
@@ -189,6 +322,9 @@ pub fn push_16k(samples: &[i16]) {
 
 pub fn stop() {
     READY.store(false, Ordering::Release);
+    STARTING.store(false, Ordering::Release);
+    INPUT_GATE_CLOSED.store(false, Ordering::Release);
+    discard_pending();
     if let Some(c) = CLIENT.lock().take() {
         let _ = c.sock.send_to(b"CLEAR", c.peer);
     }
@@ -207,9 +343,27 @@ pub fn stats() -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn source_rates_have_expected_48k_ratios() {
         assert_eq!(48_000 / 8_000, 6);
         assert_eq!(48_000 / 16_000, 3);
+    }
+
+    #[test]
+    fn pre_roll_is_bounded_and_drops_oldest_audio() {
+        begin_session();
+        // 1600 samples @ 16 kHz = 100 ms.  The third frame must evict the
+        // oldest one because a voice shortcut may only hold 250 ms of audio.
+        enqueue_pending(&vec![0; 1600], 16_000);
+        enqueue_pending(&vec![0; 1600], 16_000);
+        enqueue_pending(&vec![0; 1600], 16_000);
+        let (queued_ms, dropped_ms) = pre_roll_stats();
+        assert!(queued_ms <= MAX_PRE_ROLL_MS);
+        assert_eq!(queued_ms, 200);
+        assert_eq!(dropped_ms, 100);
+        discard_pending();
+        INPUT_GATE_CLOSED.store(false, Ordering::Release);
     }
 }

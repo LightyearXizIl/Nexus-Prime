@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import type { DeviceConfig, BridgeType, KeyAction } from "../types";
 import { normalizeVoiceShortcutConfig } from "../utils/voiceShortcut";
 

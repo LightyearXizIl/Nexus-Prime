@@ -7,7 +7,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, KeyAction } from "../types";
 import RemoteHotspot from "./RemoteHotspot.vue";

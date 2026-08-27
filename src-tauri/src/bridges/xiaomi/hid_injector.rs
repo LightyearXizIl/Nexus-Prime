@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const KEYBOARD_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25,
@@ -76,12 +76,101 @@ unsafe impl Send for Devices {}
 
 static INIT_TRIED: AtomicBool = AtomicBool::new(false);
 static DEVICES: Mutex<Option<Devices>> = Mutex::new(None);
+static LAST_REPORT_OK: AtomicBool = AtomicBool::new(false);
+static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// A bad driver handle must never make the next voice press block on another
+/// DLL/device probe.  The hot path uses SendInput until the background retry
+/// has had a chance to recreate the virtual devices.
+static RETRY_AFTER: Mutex<Option<Instant>> = Mutex::new(None);
+static RECOVERY_QUEUED: AtomicBool = AtomicBool::new(false);
+const RECOVERY_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// Live health of the primary virtual-HID layer. `report_verified` becomes true
+/// only after a real report was accepted by the driver in this process.
+#[derive(Clone, Debug)]
+pub struct VirtualHidHealth {
+    pub ready: bool,
+    pub report_verified: bool,
+    pub last_error: Option<String>,
+}
+
+pub fn health() -> VirtualHidHealth {
+    VirtualHidHealth {
+        ready: is_available(),
+        report_verified: LAST_REPORT_OK.load(Ordering::Acquire),
+        last_error: LAST_ERROR.lock().clone(),
+    }
+}
+
+fn record_success() {
+    LAST_REPORT_OK.store(true, Ordering::Release);
+    *LAST_ERROR.lock() = None;
+    *RETRY_AFTER.lock() = None;
+}
+
+/// A failed report means the handle cannot be trusted for the next shortcut.
+/// Destroy it immediately so the next shortcut re-probes WinUHid and can fall
+/// back to SendInput instead of repeatedly using a stale virtual device.
+fn record_failure(error: &str) {
+    LAST_REPORT_OK.store(false, Ordering::Release);
+    *LAST_ERROR.lock() = Some(error.to_string());
+    *DEVICES.lock() = None;
+    INIT_TRIED.store(false, Ordering::Release);
+    *RETRY_AFTER.lock() = Some(Instant::now() + RECOVERY_COOLDOWN);
+    schedule_recovery();
+}
+
+fn retry_is_blocked() -> bool {
+    RETRY_AFTER
+        .lock()
+        .as_ref()
+        .is_some_and(|deadline| Instant::now() < *deadline)
+}
+
+/// Re-probe once, outside the keyboard/ATVV notification callback.  A later
+/// real failure may schedule a fresh attempt; a continuously missing driver
+/// never creates a retry storm.
+fn schedule_recovery() {
+    if RECOVERY_QUEUED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("xiaomi-winuhid-recovery".into())
+        .spawn(|| {
+            std::thread::sleep(RECOVERY_COOLDOWN);
+            *RETRY_AFTER.lock() = None;
+            INIT_TRIED.store(false, Ordering::Release);
+            let _ = ensure_init();
+            RECOVERY_QUEUED.store(false, Ordering::Release);
+        });
+}
+
+/// Start initialization before the user presses the voice key.  Failure is
+/// intentionally silent to callers: SendInput remains the immediate route.
+pub fn warmup_async() {
+    if DEVICES.lock().is_some() || RECOVERY_QUEUED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("xiaomi-winuhid-warmup".into())
+        .spawn(|| {
+            *RETRY_AFTER.lock() = None;
+            INIT_TRIED.store(false, Ordering::Release);
+            let ready = ensure_init();
+            RECOVERY_QUEUED.store(false, Ordering::Release);
+            if !ready {
+                schedule_recovery();
+            }
+        });
+}
 
 /// The bundled driver can become available after the process has already
 /// attempted initialization. Clear the one-shot probe state before retrying.
 pub fn reset_and_retry() {
     *DEVICES.lock() = None;
     INIT_TRIED.store(false, Ordering::SeqCst);
+    *RETRY_AFTER.lock() = None;
+    RECOVERY_QUEUED.store(false, Ordering::Release);
     let _ = ensure_init();
 }
 
@@ -165,6 +254,10 @@ fn vk_usage(vk: u16) -> Option<u8> {
         0x2E => 0x4C,
         0x5D => 0x65,
         0x70..=0x7B => (vk - 0x70 + 0x3A) as u8,
+        // F13-F24 live in the second HID function-key range.  F24 is used as
+        // a neutral companion before releasing a voice-only Win/Alt chord so
+        // Windows does not open Start/the system menu for an unhandled hotkey.
+        0x7C..=0x87 => (vk - 0x7C + 0x68) as u8,
         0x41..=0x5A => (vk - 0x41 + 0x04) as u8,
         0x31..=0x39 => (vk - 0x31 + 0x1E) as u8,
         0x30 => 0x27,
@@ -203,6 +296,9 @@ pub fn ensure_init() -> bool {
     if DEVICES.lock().is_some() {
         return true;
     }
+    if retry_is_blocked() {
+        return false;
+    }
     if INIT_TRIED.swap(true, Ordering::SeqCst) {
         return DEVICES.lock().is_some();
     }
@@ -211,10 +307,13 @@ pub fn ensure_init() -> bool {
         match windows_init() {
             Ok(dev) => {
                 *DEVICES.lock() = Some(dev);
+                *LAST_ERROR.lock() = None;
                 log::info!("WinUHid ready (keyboard+consumer)");
                 true
             }
             Err(e) => {
+                LAST_REPORT_OK.store(false, Ordering::Release);
+                *LAST_ERROR.lock() = Some(e.clone());
                 log::warn!("WinUHid unavailable, SendInput fallback: {e}");
                 false
             }
@@ -248,33 +347,91 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) -> bool {
     true
 }
 
-pub fn press(vks: &[u16]) -> Result<(), String> {
-    ensure_init();
-    let guard = DEVICES.lock();
-    let Some(dev) = guard.as_ref() else {
-        return Err("WinUHid not open".into());
-    };
-    if let Some(usage_vk) = vks.iter().copied().find(|vk| consumer_usage(*vk).is_some()) {
-        if vks.len() != 1 {
-            return Err("Consumer Control keys cannot be combined".into());
-        }
-        let report = consumer_usage(usage_vk).unwrap().to_le_bytes();
-        return submit(dev, dev.consumer, &report);
+/// Hot-path counterpart for voice shortcuts.  It never loads the DLL or
+/// creates devices; the caller can immediately use SendInput when not warm.
+pub fn tap_vks_ready(vks: &[u16], hold_ms: u64) -> bool {
+    if vks.is_empty() || DEVICES.lock().is_none() {
+        return false;
     }
-    let report = build_keyboard_report(vks)?;
-    submit(dev, dev.keyboard, &report)
+    let hold = hold_ms.clamp(20, 1000);
+    if press_ready(vks).is_err() {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(hold));
+    release_ready(vks).is_ok()
+}
+
+pub fn press(vks: &[u16]) -> Result<(), String> {
+    if !ensure_init() {
+        return Err("WinUHid not open".into());
+    }
+    press_ready(vks)
+}
+
+/// Submit a press only when a pre-warmed virtual device exists.
+pub fn press_ready(vks: &[u16]) -> Result<(), String> {
+    let result = {
+        let guard = DEVICES.lock();
+        match guard.as_ref() {
+            None => Err("WinUHid not open".into()),
+            Some(dev) => if let Some(usage_vk) = vks.iter().copied().find(|vk| consumer_usage(*vk).is_some()) {
+                if vks.len() != 1 {
+                    Err("Consumer Control keys cannot be combined".into())
+                } else {
+                    let report = consumer_usage(usage_vk).unwrap().to_le_bytes();
+                    submit(dev, dev.consumer, &report)
+                }
+            } else {
+                match build_keyboard_report(vks) {
+                    Ok(report) => submit(dev, dev.keyboard, &report),
+                    Err(error) => Err(error),
+                }
+            },
+        }
+    };
+    match &result {
+        Ok(()) => record_success(),
+        Err(error) => {
+            // The same failed handle gets one best-effort neutral report before
+            // being dropped.  Do not call release(), which could reinitialize
+            // WinUHid in this very voice-key callback.
+            if let Some(dev) = DEVICES.lock().as_ref() {
+                let _ = if vks.iter().any(|vk| consumer_usage(*vk).is_some()) {
+                    submit(dev, dev.consumer, &[0, 0])
+                } else {
+                    submit(dev, dev.keyboard, &[0u8; 8])
+                };
+            }
+            record_failure(error)
+        }
+    }
+    result
 }
 
 pub fn release(vks: &[u16]) -> Result<(), String> {
-    ensure_init();
-    let guard = DEVICES.lock();
-    let Some(dev) = guard.as_ref() else {
+    if !ensure_init() {
         return Err("WinUHid not open".into());
-    };
-    if vks.iter().any(|vk| consumer_usage(*vk).is_some()) {
-        return submit(dev, dev.consumer, &[0, 0]);
     }
-    submit(dev, dev.keyboard, &[0u8; 8])
+    release_ready(vks)
+}
+
+pub fn release_ready(vks: &[u16]) -> Result<(), String> {
+    let result = {
+        let guard = DEVICES.lock();
+        match guard.as_ref() {
+            None => Err("WinUHid not open".into()),
+            Some(dev) => if vks.iter().any(|vk| consumer_usage(*vk).is_some()) {
+                submit(dev, dev.consumer, &[0, 0])
+            } else {
+                submit(dev, dev.keyboard, &[0u8; 8])
+            },
+        }
+    };
+    match &result {
+        Ok(()) => record_success(),
+        Err(error) => record_failure(error),
+    }
+    result
 }
 
 fn submit(dev: &Devices, handle: *mut c_void, report: &[u8]) -> Result<(), String> {
@@ -458,5 +615,11 @@ mod tests {
     #[test]
     fn consumer_volume() {
         assert_eq!(consumer_usage(0xAF), Some(0xE9));
+    }
+
+    #[test]
+    fn keyboard_report_f24() {
+        let r = build_keyboard_report(&[0x87]).unwrap();
+        assert_eq!(r[2], 0x73);
     }
 }

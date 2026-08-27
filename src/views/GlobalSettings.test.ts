@@ -22,6 +22,7 @@ const defaultSettings: GlobalSettings = {
   minimize_to_tray: true,
   auto_check_updates: true,
   theme: "system",
+  log_retention_days: 7,
 };
 
 async function mountSettings(settings = defaultSettings) {

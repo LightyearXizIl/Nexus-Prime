@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { RouterView, useRouter } from "vue-router";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "./utils/appLogger";
 import SideNav from "./components/SideNav.vue";
 import UpdateDialog from "./components/UpdateDialog.vue";
 import { useUpdateStore } from "./stores/update";

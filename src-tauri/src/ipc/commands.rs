@@ -3,7 +3,7 @@
 use crate::bridges::xiaomi::connect::{self, XiaomiRuntime};
 use crate::bridges::{BridgeState, BridgeStatus, BridgeType, DeviceInfo};
 use crate::config::manager::{
-    ConfigManager, DeviceConfig, GlobalSettings, KeyAction, ThemePreference,
+    normalize_log_retention_days, ConfigManager, DeviceConfig, GlobalSettings, KeyAction, ThemePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -347,7 +347,15 @@ pub async fn save_global_settings(
     // 再读一遍注册表，把真实结果写回配置文件
     let mut synced = settings;
     synced.autostart = crate::bridges::xiaomi::autostart::is_autostart_enabled();
+    synced.log_retention_days = normalize_log_retention_days(synced.log_retention_days);
     config_manager.save_global_settings(&synced)?;
+    crate::logging::set_retention_days(synced.log_retention_days as usize);
+    crate::logging::append_event(
+        "settings",
+        "save_global_settings",
+        "success",
+        &format!("log_retention_days={}", synced.log_retention_days),
+    );
     Ok(())
 }
 
@@ -418,6 +426,21 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         || crate::audio::pcm_router::audio_router_process_alive();
     let cable_ready = crate::audio::vb_cable::voice_env_status_cached().ready;
     let atvv_ok = crate::bridges::xiaomi::connect::atvv_subscribed();
+    let injection = crate::bridges::xiaomi::key_mapping::input_injection_health();
+    let (injection_state, injection_tone) = if injection.virtual_hid_ready {
+        (
+            if injection.virtual_hid_verified {
+                "硬件键盘已验证"
+            } else {
+                "硬件键盘就绪"
+            },
+            "ok",
+        )
+    } else if injection.send_input_verified {
+        ("SendInput 兜底已验证", "warn")
+    } else {
+        ("等待键盘事件验证", "warn")
+    };
 
     let items = vec![
         XiaomiHostStatusItem {
@@ -462,9 +485,15 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
                 "error".into()
             },
         },
+        XiaomiHostStatusItem {
+            id: "injection".into(),
+            label: "键盘注入".into(),
+            state_label: injection_state.into(),
+            tone: injection_tone.into(),
+        },
     ];
 
-    let (status_text, detail, tone) = if bridge_alive && audio_alive && cable_ready && atvv_ok {
+    let (status_text, detail, tone) = if bridge_alive && audio_alive && cable_ready && atvv_ok && injection.virtual_hid_ready {
         (
             "运行正常".into(),
             String::new(),
@@ -493,6 +522,18 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
             "桥接未运行".into(),
             "可点「重启桥接」或打开日志检查。".into(),
             "error".into(),
+        )
+    } else if injection.send_input_verified {
+        (
+            "键盘注入使用兜底".into(),
+            "WinUHid 当前未就绪，但最近一次 SendInput 快捷键已被 Windows 完整接收。豆包、微信等可能仍会过滤模拟输入；可点「修复虚拟键盘」恢复硬件键盘路径。".into(),
+            "warn".into(),
+        )
+    } else if !injection.virtual_hid_ready {
+        (
+            "键盘注入待验证".into(),
+            injection.last_error.unwrap_or_else(|| "WinUHid 未就绪，且 SendInput 尚未发送过完整快捷键。请按一次遥控器按键或修复虚拟键盘。".into()),
+            "warn".into(),
         )
     } else {
         (
@@ -554,6 +595,7 @@ pub fn restart_xiaomi_bridge_inner(
             append_host_log(config_manager, &format!("audio respawn failed: {e}"));
         } else {
             crate::bridges::xiaomi::voice_pcm::warmup_async();
+            crate::bridges::xiaomi::hid_injector::warmup_async();
         }
     }
 
@@ -650,22 +692,74 @@ pub async fn open_logs_folder(config_manager: State<'_, ConfigManager>) -> Resul
 pub struct AppLogPayload {
     pub path: String,
     pub content: String,
+    pub files: Vec<crate::logging::AppLogFile>,
+    pub write_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppLogEvent {
+    pub category: String,
+    pub action: String,
+    #[serde(default = "default_log_outcome")]
+    pub outcome: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub details: serde_json::Value,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+fn default_log_outcome() -> String {
+    "success".into()
+}
+
+/// 前端批量语义日志。高频采样由调用方聚合，避免占用 BLE/音频热路径。
+#[tauri::command]
+pub async fn append_app_events(events: Vec<AppLogEvent>) -> Result<(), String> {
+    for event in events.into_iter().take(500) {
+        let details = serde_json::to_string(&event.details).unwrap_or_else(|_| "null".into());
+        crate::logging::append_event(
+            &event.category,
+            &event.action,
+            &event.outcome,
+            &format!(
+                "target={} duration_ms={} session_id={} details={details}",
+                event.target.unwrap_or_default(),
+                event.duration_ms.map(|value| value.to_string()).unwrap_or_default(),
+                event.session_id.unwrap_or_default(),
+            ),
+        );
+    }
+    Ok(())
 }
 
 /// 读取运行日志（末尾一段，供界面展示/复制）
 #[tauri::command]
-pub async fn get_app_log() -> Result<AppLogPayload, String> {
-    let path = crate::logging::log_path()
-        .map(|p| p.to_string_lossy().into_owned())
+pub async fn get_app_log(file_name: Option<String>) -> Result<AppLogPayload, String> {
+    let content = crate::logging::read_log_text_for(file_name.as_deref(), 80_000)?;
+    let files = crate::logging::list_log_files();
+    let path = file_name
+        .as_deref()
+        .and_then(|name| files.iter().find(|file| file.name == name))
+        .map(|file| file.name.clone())
+        .or_else(|| crate::logging::log_path().map(|path| path.to_string_lossy().into_owned()))
         .unwrap_or_default();
-    let content = crate::logging::read_log_text(80_000)?;
-    Ok(AppLogPayload { path, content })
+    Ok(AppLogPayload {
+        path,
+        content,
+        files,
+        write_error: crate::logging::last_write_error(),
+    })
 }
 
 /// 用系统默认程序打开 app.log
 #[tauri::command]
-pub async fn open_app_log() -> Result<(), String> {
-    crate::logging::open_log_in_editor()
+pub async fn open_app_log(file_name: Option<String>) -> Result<(), String> {
+    crate::logging::open_log_in_editor_for(file_name.as_deref())
 }
 
 /// 对齐 Python `exit`：真正退出进程（非托盘隐藏）

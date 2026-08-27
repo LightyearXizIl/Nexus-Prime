@@ -1,7 +1,7 @@
 //! 与平台无关的语音组合键状态机。
 //!
 //! Windows 注入层提供一个实际路由（虚拟 HID 或 SendInput）；此处保证记录实际
-//! DOWN 的键位与路由、DOWN 失败立即补偿，以及 KEYUP 至多重试一次。
+//! DOWN 的键位与路由、DOWN 失败立即补偿，以及 KEYUP 可重试而不丢失持键记录。
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VoiceInjectionRoute {
@@ -32,6 +32,10 @@ impl VoiceChordState {
 
     pub(crate) fn held_route(&self) -> Option<VoiceInjectionRoute> {
         self.held.as_ref().map(|held| held.route)
+    }
+
+    pub(crate) fn clear_after_verified_release(&mut self) {
+        self.held.take();
     }
 
     pub(crate) fn press_with<F, C>(
@@ -67,9 +71,19 @@ impl VoiceChordState {
     where
         F: FnMut(&[u16], VoiceInjectionRoute) -> bool,
     {
-        let held = self.held.take()?;
-        let released = inject(&held.keys, held.route) || inject(&held.keys, held.route);
-        Some((held.keys, held.route, released))
+        // Do not `take()` before a verified release.  A failed Win/Alt KEYUP
+        // must remain owned by this state so a disconnect, repair, or the next
+        // explicit cleanup can retry it instead of leaving a sticky modifier.
+        let held = self.held.as_ref()?;
+        let keys = held.keys.clone();
+        let route = held.route;
+        for _ in 0..3 {
+            if inject(&keys, route) {
+                self.held.take();
+                return Some((keys, route, true));
+            }
+        }
+        Some((keys, route, false))
     }
 }
 
@@ -107,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn release_retries_once() {
+    fn release_retries_and_retains_state_when_all_attempts_fail() {
         let mut state = VoiceChordState::default();
         assert!(state.press_with(
             &[0xA2, 0x5B],
@@ -119,11 +133,12 @@ mod tests {
             state.release_with(|_keys, route| {
                 assert_eq!(route, VoiceInjectionRoute::SendInputFallback);
                 attempts += 1;
-                attempts == 2
+                false
             }),
-            Some((vec![0xA2, 0x5B], VoiceInjectionRoute::SendInputFallback, true))
+            Some((vec![0xA2, 0x5B], VoiceInjectionRoute::SendInputFallback, false))
         );
-        assert_eq!(attempts, 2);
+        assert_eq!(attempts, 3);
+        assert!(state.is_held());
     }
 
     #[test]

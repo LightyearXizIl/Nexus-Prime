@@ -53,6 +53,7 @@ export interface GlobalSettings {
   minimize_to_tray: boolean;
   auto_check_updates: boolean;
   theme: ThemePreference;
+  log_retention_days: number;
 }
 
 export interface UpdateRelease {

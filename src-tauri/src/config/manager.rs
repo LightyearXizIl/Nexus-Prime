@@ -164,10 +164,24 @@ pub struct GlobalSettings {
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
+    /// 本地运行日志保留天数；旧配置和非法值默认保留最近七天。
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u8,
 }
 
 fn default_auto_check_updates() -> bool {
     true
+}
+
+pub fn default_log_retention_days() -> u8 {
+    7
+}
+
+pub fn normalize_log_retention_days(days: u8) -> u8 {
+    match days {
+        1 | 3 | 7 | 14 | 30 => days,
+        _ => default_log_retention_days(),
+    }
 }
 
 fn is_supported_language(language: &str) -> bool {
@@ -183,6 +197,7 @@ impl Default for GlobalSettings {
             minimize_to_tray: true,
             auto_check_updates: true,
             theme: ThemePreference::System,
+            log_retention_days: default_log_retention_days(),
         }
     }
 }
@@ -405,8 +420,10 @@ impl ConfigManager {
         if path.exists() {
             let content = fs::read_to_string(&path)
                 .map_err(|e| format!("读取设置失败: {}", e))?;
-            serde_json::from_str(&content)
-                .map_err(|e| format!("解析设置失败: {}", e))
+            let mut settings: GlobalSettings = serde_json::from_str(&content)
+                .map_err(|e| format!("解析设置失败: {}", e))?;
+            settings.log_retention_days = normalize_log_retention_days(settings.log_retention_days);
+            Ok(settings)
         } else {
             Ok(GlobalSettings::default())
         }
@@ -416,7 +433,9 @@ impl ConfigManager {
         let path = self.settings_path();
         let tmp_path = path.with_extension("json.tmp");
 
-        let content = serde_json::to_string_pretty(settings)
+        let mut normalized = settings.clone();
+        normalized.log_retention_days = normalize_log_retention_days(normalized.log_retention_days);
+        let content = serde_json::to_string_pretty(&normalized)
             .map_err(|e| format!("序列化设置失败: {}", e))?;
 
         fs::write(&tmp_path, &content)
@@ -648,6 +667,7 @@ mod tests {
         assert!(settings.minimize_to_tray);
         assert!(settings.auto_check_updates);
         assert_eq!(settings.theme, ThemePreference::System);
+        assert_eq!(settings.log_retention_days, 7);
     }
 
     #[test]
@@ -659,6 +679,13 @@ mod tests {
         assert_eq!(settings.theme, ThemePreference::System);
         assert!(settings.auto_check_updates);
         assert!(!settings.autostart_minimized_to_tray);
+        assert_eq!(settings.log_retention_days, 7);
+    }
+
+    #[test]
+    fn invalid_log_retention_defaults_to_seven_days() {
+        assert_eq!(normalize_log_retention_days(2), 7);
+        assert_eq!(normalize_log_retention_days(30), 30);
     }
 
     #[test]

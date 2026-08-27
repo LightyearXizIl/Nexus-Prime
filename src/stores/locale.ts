@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { i18n, isAppLocale, type AppLocale } from "../i18n";
 import type { GlobalSettings } from "../types";
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { getVersion } from "@tauri-apps/api/app";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useThemeStore } from "../stores/theme";
@@ -20,6 +20,7 @@ const settings = ref<GlobalSettings>({
   minimize_to_tray: true,
   auto_check_updates: true,
   theme: "system",
+  log_retention_days: 7,
 });
 const theme = useThemeStore();
 const update = useUpdateStore();
@@ -238,6 +239,16 @@ async function openExternal(url: string) {
                 <input v-model="settings.auto_check_updates" type="checkbox" :aria-label="t('settings.updates')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
+            </div>
+            <div class="preference-row">
+              <div class="preference-icon" aria-hidden="true">▤</div>
+              <div class="preference-copy">
+                <strong>{{ t("settings.logRetention") }}</strong>
+                <span>{{ t("settings.logRetentionHint") }}</span>
+              </div>
+              <select v-model.number="settings.log_retention_days" class="language-select" :aria-label="t('settings.logRetention')" @change="onSettingChange">
+                <option v-for="days in [1, 3, 7, 14, 30]" :key="days" :value="days">{{ t("settings.logRetentionDays", { days }) }}</option>
+              </select>
             </div>
           </div>
         </section>

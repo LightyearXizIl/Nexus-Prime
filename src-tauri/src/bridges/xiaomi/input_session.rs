@@ -62,6 +62,10 @@ impl BatteryChargingState {
 
 const GET_CAPS_V10: [u8; 6] = [0x0A, 0x01, 0x00, 0x00, 0x03, 0x03];
 
+fn disconnect_confirmed(initial: bool, after_500ms: bool, after_750ms: bool) -> bool {
+    initial && after_500ms && after_750ms
+}
+
 /// 解析 RC003 HID 报告（对齐 Python `handle_direct_hid_report` / `decode_rc003_ioctl_output`）
 pub fn parse_hid_usages(payload: &[u8]) -> HashSet<u16> {
     let mut usages = HashSet::new();
@@ -121,9 +125,9 @@ fn windows_run_input_session(
     session_id: u64,
     gate: Arc<KeyEmitGate>,
 ) -> Result<(), String> {
-    use windows::core::GUID;
+    use windows::core::{GUID, HSTRING};
     use windows::Devices::Bluetooth::GenericAttributeProfile::{
-        GattCharacteristic, GattCommunicationStatus, GattDeviceService,
+        GattCharacteristic, GattCommunicationStatus, GattDeviceService, GattSession,
     };
     use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice};
     use windows::Foundation::TypedEventHandler;
@@ -153,49 +157,138 @@ fn windows_run_input_session(
         .map(|c| c.tv_action_ready_delay)
         .unwrap_or(2.0);
 
-    let device = BluetoothLEDevice::FromBluetoothAddressAsync(address_u64)
-        .map_err(|e| format!("input session open: {e}"))?
-        .get()
-        .map_err(|e| format!("input session get: {e}"))?;
+    // The discovery phase has already opened the ATVV service by interface
+    // ID.  Reuse that ID for the input-session device instead of creating a
+    // fresh address-only object, which can sit disconnected until Windows
+    // times out its separate GATT connection attempt.
+    let device = if atvv_interface_id.is_empty() {
+        BluetoothLEDevice::FromBluetoothAddressAsync(address_u64)
+            .map_err(|e| format!("input session address open: {e}"))?
+            .get()
+            .map_err(|e| format!("input session address get: {e}"))?
+    } else {
+        let id = HSTRING::from(atvv_interface_id.as_str());
+        BluetoothLEDevice::FromIdAsync(&id)
+            .map_err(|e| format!("input session FromId open: {e}"))?
+            .get()
+            .map_err(|e| format!("input session FromId get: {e}"))?
+    };
 
-    match device.ConnectionStatus() {
-        Ok(status) if status == BluetoothConnectionStatus::Disconnected => {
-            return Err("遥控器已断开连接".into());
+    // Keep a Windows GATT session alive for the entire input session.  This
+    // asks the Bluetooth stack to establish the link when the remote wakes,
+    // rather than relying on a one-off discovery request with a short timeout.
+    let gatt_session = device
+        .BluetoothDeviceId()
+        .ok()
+        .and_then(|id| GattSession::FromDeviceIdAsync(&id).ok())
+        .and_then(|op| op.get().ok());
+    if let Some(session) = gatt_session.as_ref() {
+        match session.CanMaintainConnection() {
+            Ok(true) => match session.SetMaintainConnection(true) {
+                Ok(()) => log::info!("XIAOMI GATT maintain-connection enabled"),
+                Err(error) => log::warn!("XIAOMI GATT maintain-connection failed: {error}"),
+            },
+            Ok(false) => log::info!("XIAOMI GATT maintain-connection unsupported"),
+            Err(error) => log::warn!("XIAOMI GATT maintain-connection unavailable: {error}"),
         }
-        Ok(_) => {}
-        Err(e) => return Err(format!("读取连接状态失败: {e}")),
+    } else {
+        log::warn!("XIAOMI GATT session unavailable; using operation-triggered connection");
     }
 
+    let mut tokens: Vec<(
+        GattCharacteristic,
+        windows::Foundation::EventRegistrationToken,
+    )> = Vec::new();
+    // The ATVV service interface was successfully opened during discovery.
+    // Subscribe through it before asking Windows to enumerate every GATT
+    // service again.  Some adapters report the broad enumeration as
+    // Unreachable even while this exact ATVV interface is usable.
+    let mut atvv_ok = false;
+    let mut last_atvv_fail: Option<AtvvFailReason> = None;
+    if !atvv_interface_id.is_empty() {
+        match subscribe_atvv_from_interface(
+            &app,
+            &atvv_interface_id,
+            &gate,
+            &mut tokens,
+            gain_db,
+        ) {
+            Ok(true) => {
+                atvv_ok = true;
+                emit_message(&app, "ATVV 语音键/音频已订阅（FromId）");
+            }
+            Ok(false) => {
+                last_atvv_fail = Some(AtvvFailReason::chars_incomplete());
+            }
+            Err(error) => {
+                last_atvv_fail = Some(AtvvFailReason::from_error(&error));
+                log::warn!("ATVV pre-subscribe FromId failed: {error}");
+            }
+        }
+    }
+
+    // FromBluetoothAddressAsync only creates a WinRT object; it does not
+    // necessarily establish a BLE link.  Do not treat its initial
+    // ConnectionStatus as authoritative before uncached GATT discovery.
+    let services_result = device
+        .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+    let services_status = services_result.Status().ok();
+    let services = if services_status == Some(GattCommunicationStatus::Success) {
+        Some(services_result.Services().map_err(|e| e.to_string())?)
+    } else if atvv_ok || gatt_session.is_some() {
+        log::warn!(
+            "GATT full discovery unavailable: {}; keeping the GATT session alive and retrying ATVV",
+            describe_gatt_comm_status(services_status)
+        );
+        None
+    } else {
+        return Err(format!(
+            "GATT 服务发现失败: {}",
+            describe_gatt_comm_status(services_status)
+        ));
+    };
+
+    // GATT discovery above is the session's connection proof.  After that,
+    // debounce a disconnect event so Windows' transient status transition
+    // cannot tear down a freshly subscribed ATVV session.
     let runtime_conn = Arc::clone(&runtime);
     let conn_token = device
         .ConnectionStatusChanged(&TypedEventHandler::new(
             move |sender: &Option<BluetoothLEDevice>, _args| {
-                if let Some(dev) = sender {
-                    if let Ok(status) = dev.ConnectionStatus() {
-                        if status == BluetoothConnectionStatus::Disconnected {
-                            log::warn!("Xiaomi remote disconnected (input session={session_id})");
-                            crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
-                                "remote_disconnected",
-                            );
-                            runtime_conn.end_session(session_id, "remote_disconnected");
-                        }
-                    }
+                let Some(dev) = sender else {
+                    return Ok(());
+                };
+                let initially_disconnected = dev.ConnectionStatus().ok()
+                    == Some(BluetoothConnectionStatus::Disconnected);
+                if !initially_disconnected {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(500));
+                let after_500ms = dev.ConnectionStatus().ok()
+                    == Some(BluetoothConnectionStatus::Disconnected);
+                if !after_500ms {
+                    log::info!("Xiaomi disconnect transition recovered id={session_id}");
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(250));
+                if disconnect_confirmed(
+                    initially_disconnected,
+                    after_500ms,
+                    dev.ConnectionStatus().ok() == Some(BluetoothConnectionStatus::Disconnected),
+                ) {
+                    log::warn!("Xiaomi remote disconnected confirmed id={session_id}");
+                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
+                        "remote_disconnected",
+                    );
+                    runtime_conn.end_session(session_id, "remote_disconnected");
                 }
                 Ok(())
             },
         ))
         .map_err(|e| format!("ConnectionStatusChanged: {e}"))?;
-
-    let services = device
-        .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    if services.Status().ok() != Some(GattCommunicationStatus::Success) {
-        return Err("GATT 服务发现失败".into());
-    }
-    let services = services.Services().map_err(|e| e.to_string())?;
-    let count = services.Size().map_err(|e| e.to_string())?;
 
     let hid_guid = GUID::from_u128(HID_SERVICE);
     let atvv_guid = GUID::from_u128(ATVV_SERVICE);
@@ -208,25 +301,23 @@ fn windows_run_input_session(
     let mut hid_service: Option<GattDeviceService> = None;
     let mut atvv_service: Option<GattDeviceService> = None;
     let mut battery_service: Option<GattDeviceService> = None;
-    for i in 0..count {
-        let svc = services.GetAt(i).map_err(|e| e.to_string())?;
-        let uuid = svc.Uuid().map_err(|e| e.to_string())?;
-        if uuid == hid_guid {
-            hid_service = Some(svc);
-        } else if uuid == atvv_guid {
-            atvv_service = Some(svc);
-        } else if uuid == battery_guid {
-            battery_service = Some(svc);
+    if let Some(services) = services {
+        let count = services.Size().map_err(|e| e.to_string())?;
+        for i in 0..count {
+            let svc = services.GetAt(i).map_err(|e| e.to_string())?;
+            let uuid = svc.Uuid().map_err(|e| e.to_string())?;
+            if uuid == hid_guid {
+                hid_service = Some(svc);
+            } else if uuid == atvv_guid {
+                atvv_service = Some(svc);
+            } else if uuid == battery_guid {
+                battery_service = Some(svc);
+            }
         }
     }
 
     let active_usages: Arc<Mutex<HashSet<u16>>> = Arc::new(Mutex::new(HashSet::new()));
-    let mut tokens: Vec<(
-        GattCharacteristic,
-        windows::Foundation::EventRegistrationToken,
-    )> = Vec::new();
     let mut hid_ok = false;
-    let mut atvv_ok = false;
 
     // 默认跳过 GATT HID：Windows Microsoft HID 独占时 Open/CCCD 会抢占设备，
     // 导致原生音量失效且又收不到报告。生产路径用 HID Tap（对齐 Python 注释）。
@@ -264,7 +355,6 @@ fn windows_run_input_session(
     }
 
     // ---- ATVV Control：语音键（对齐 v1.3.3：FromId 优先，再地址路径）----
-    let mut last_atvv_fail: Option<AtvvFailReason> = None;
     for attempt in 0..8 {
         if !runtime.session_active(session_id) {
             break;
@@ -391,13 +481,13 @@ fn windows_run_input_session(
         // 通知 key_logger：ATVV 首轮诊断失败，HID Tap 附着需等待后台重试窗口，
         // 避免在语音通道未就绪时注入 DLL 抢占 WUDFHost。
         crate::bridges::xiaomi::connect::mark_atvv_diagnosed_failed();
-        if battery_ch.is_none() {
+        if battery_ch.is_none() && gatt_session.is_none() {
             tv_gate::reset();
             return Err(
                 "无法订阅 ATVV 通知（语音键依赖 ATVV；返回/音量依赖 HID Tap）".into(),
             );
         }
-        log::warn!("ATVV subscribe failed; continuing for battery monitor");
+        log::warn!("ATVV subscribe failed; keeping session alive for retry");
         let reason = last_atvv_fail.unwrap_or_else(AtvvFailReason::unknown);
         log::warn!(
             "ATVV FAIL code={} recoverable={} hint={}",
@@ -408,7 +498,7 @@ fn windows_run_input_session(
         emit_message(
             &app,
             &format!(
-                "ATVV 不可用：{}（{}；电量仍会刷新；{}）",
+                "ATVV 不可用：{}（{}；将保持连接并自动重试；{}）",
                 reason.label,
                 reason.code,
                 if reason.recoverable {
@@ -440,15 +530,10 @@ fn windows_run_input_session(
     );
     if atvv_ok {
         tv_gate::mark_ready(Duration::from_secs_f32(tv_delay.max(0.0)));
-        // 同步预热一次；失败则后台继续重试
-        if let Err(e) = voice_pcm::ensure_started() {
-            log::warn!("VB-CABLE PCM not ready yet: {e}");
-            emit_message(
-                &app,
-                &format!("语音音频：VB-CABLE 未就绪（{e}）；快捷键仍可用"),
-            );
-            voice_pcm::warmup_async();
-        }
+        crate::bridges::xiaomi::hid_injector::warmup_async();
+        // Never wait for the router on the BLE session thread.  The first
+        // complete frames are held by voice_pcm until this warmup succeeds.
+        voice_pcm::warmup_async();
     } else if battery_ch.is_some() {
         tv_gate::mark_ready(Duration::from_secs_f32(tv_delay.max(0.0)));
     }
@@ -463,32 +548,33 @@ fn windows_run_input_session(
         std::thread::sleep(Duration::from_millis(200));
         if !atvv_ok && since_atvv_retry.elapsed() >= Duration::from_secs(3) {
             since_atvv_retry = Instant::now();
-            if let Some(atvv) = atvv_service.as_ref() {
-                match subscribe_atvv_service(&app, atvv, &gate, &mut tokens, gain_db) {
-                    Ok(true) => {
-                        atvv_ok = true;
-                        mark_atvv_subscribed(true);
-                        emit_message(&app, "ATVV 语音键/音频已订阅（后台重试成功）");
-                        log::info!("ATVV subscribe recovered on periodic retry");
-                        tv_gate::mark_ready(Duration::from_secs_f32(tv_delay.max(0.0)));
-                        if let Err(e) = voice_pcm::ensure_started() {
-                            log::warn!("VB-CABLE PCM not ready after ATVV retry: {e}");
-                            voice_pcm::warmup_async();
-                        }
-                    }
-                    Ok(false) => {
-                        log::debug!(
-                            "ATVV periodic retry: {}",
-                            AtvvFailReason::chars_incomplete().code
-                        );
-                    }
-                    Err(e) => {
-                        let reason = AtvvFailReason::from_error(&e);
-                        log::debug!(
-                            "ATVV periodic retry still failing code={} raw={e}",
-                            reason.code
-                        );
-                    }
+            let retry = if !atvv_interface_id.is_empty() {
+                subscribe_atvv_from_interface(&app, &atvv_interface_id, &gate, &mut tokens, gain_db)
+            } else if let Some(atvv) = atvv_service.as_ref() {
+                subscribe_atvv_service(&app, atvv, &gate, &mut tokens, gain_db)
+            } else {
+                Ok(false)
+            };
+            match retry {
+                Ok(true) => {
+                    atvv_ok = true;
+                    mark_atvv_subscribed(true);
+                    emit_message(&app, "ATVV 语音键/音频已订阅（后台重试成功）");
+                    log::info!("ATVV subscribe recovered on periodic retry");
+                    tv_gate::mark_ready(Duration::from_secs_f32(tv_delay.max(0.0)));
+                    crate::bridges::xiaomi::hid_injector::warmup_async();
+                    voice_pcm::warmup_async();
+                }
+                Ok(false) => log::debug!(
+                    "ATVV periodic retry: {}",
+                    AtvvFailReason::chars_incomplete().code
+                ),
+                Err(e) => {
+                    let reason = AtvvFailReason::from_error(&e);
+                    log::debug!(
+                        "ATVV periodic retry still failing code={} raw={e}",
+                        reason.code
+                    );
                 }
             }
         }
@@ -535,6 +621,10 @@ fn windows_run_input_session(
     tv_gate::reset();
     mark_atvv_subscribed(false);
     let _ = device.RemoveConnectionStatusChanged(conn_token);
+    if let Some(session) = gatt_session {
+        let _ = session.SetMaintainConnection(false);
+        let _ = session.Close();
+    }
     runtime.end_session(session_id, "input_session_cleanup");
     log::info!("XIAOMI INPUT SESSION cleanup id={session_id}");
     for (ch, token) in tokens {
@@ -1238,10 +1328,18 @@ struct AtvvVoiceState {
     remote_pressed: bool,
     /// 按下时刻（点击模式区分短按/长按）
     press_at: Option<Instant>,
-    /// 点击模式：已超过阈值并已对映射键 DOWN
+    /// 已发出语音快捷键 DOWN；保留字段以兼容现有会话诊断。
     hold_chord_armed: bool,
+    /// AUDIO_START 时固定的 Click 最短按住时间，配置变化不得影响本次释放。
+    minimum_press_ms: u64,
     /// 取消过期的「长按判定」定时器
     press_gen: u64,
+    /// Monotonic per-session timing, emitted once on AUDIO_STOP.
+    audio_start_at: Option<Instant>,
+    shortcut_ready_at: Option<Instant>,
+    injection_route: String,
+    first_audio_at: Option<Instant>,
+    first_decoded_at: Option<Instant>,
 }
 
 const ATVV_LEGACY_SAMPLE_RATE_HZ: u32 = 16_000;
@@ -1310,9 +1408,6 @@ fn atvv_write_tx(
     }
 }
 
-/// 短于此时长抬起 → 视为「点击」；达到此时长仍按住 → 视为「按住」
-const CLICK_HOLD_THRESHOLD_MS: u64 = 200;
-
 fn notify_voice_phase(app: &AppHandle, gate: &KeyEmitGate, pressed: bool) {
     if pressed {
         let _ = gate.try_emit("mic");
@@ -1330,15 +1425,53 @@ fn reset_pcm_session(state: &Arc<Mutex<AtvvVoiceState>>, clear_frames: bool) {
         st.last_mic_off = None;
         if clear_frames {
             st.frames = 0;
+            st.audio_start_at = Some(Instant::now());
+            st.shortcut_ready_at = None;
+            st.injection_route.clear();
+            st.first_audio_at = None;
+            st.first_decoded_at = None;
         }
     }
-    voice_pcm::clear();
+    voice_pcm::begin_session();
+}
+
+fn mark_voice_shortcut_ready(state: &Arc<Mutex<AtvvVoiceState>>, route: Option<&str>) {
+    let route = match route {
+        Some(route) => route,
+        None => key_mapping::current_voice_route_label(),
+    };
+    if let Ok(mut st) = state.lock() {
+        st.shortcut_ready_at.get_or_insert_with(Instant::now);
+        st.injection_route = route.to_string();
+    }
+    crate::bridges::xiaomi::voice_pcm::release_input_gate();
+}
+
+fn log_voice_timing(state: &Arc<Mutex<AtvvVoiceState>>, phase: &str) {
+    let Ok(st) = state.lock() else { return };
+    let Some(start) = st.audio_start_at else { return };
+    let ms = |at: Option<Instant>| at.map(|at| at.duration_since(start).as_millis());
+    let (pre_roll_ms, dropped_ms) = crate::bridges::xiaomi::voice_pcm::pre_roll_stats();
+    let sent = crate::bridges::xiaomi::voice_pcm::first_send_at()
+        .map(|at| at.duration_since(start).as_millis());
+    log::info!(
+        "XIAOMI VOICE LATENCY phase={phase} route={} key_ms={:?} first_audio_ms={:?} first_decode_ms={:?} first_udp_ms={sent:?} preroll_ms={pre_roll_ms} dropped_preroll_ms={dropped_ms}",
+        st.injection_route,
+        ms(st.shortcut_ready_at),
+        ms(st.first_audio_at),
+        ms(st.first_decoded_at),
+    );
 }
 
 /// 遥控语音键按下：传声 + 按模式注入快捷键
 fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     let toggle = voice_trigger_is_toggle(app);
-    let gen = {
+    let minimum_press_ms = if toggle {
+        key_mapping::voice_shortcut_min_hold_ms(app)
+    } else {
+        0
+    };
+    {
         let Ok(mut st) = state.lock() else {
             return;
         };
@@ -1347,10 +1480,10 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
         }
         st.remote_pressed = true;
         st.press_at = Some(Instant::now());
-        st.hold_chord_armed = false;
+        st.hold_chord_armed = true;
+        st.minimum_press_ms = minimum_press_ms;
         st.press_gen = st.press_gen.wrapping_add(1);
-        st.press_gen
-    };
+    }
 
     reset_pcm_session(state, true);
     notify_voice_phase(app, gate, true);
@@ -1359,38 +1492,22 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
     }
     crate::bridges::xiaomi::voice_meter::set_session(true);
 
-    if toggle {
-        // 点击模式：短按抬起再 TAP；长按阈值到再 DOWN
-        let app2 = app.clone();
-        let state2 = Arc::clone(state);
-        std::thread::Builder::new()
-            .name("xiaomi-voice-click-hold".into())
-            .spawn(move || {
-                std::thread::sleep(Duration::from_millis(CLICK_HOLD_THRESHOLD_MS));
-                let Ok(mut st) = state2.lock() else {
-                    return;
-                };
-                if st.press_gen != gen || !st.remote_pressed || st.hold_chord_armed {
-                    return;
-                }
-                st.hold_chord_armed = true;
-                drop(st);
-                key_mapping::voice_shortcut_ensure_down(&app2);
-                log::info!("XIAOMI ATVV click-mode → HOLD chord (threshold reached)");
-            })
-            .ok();
-        log::info!("XIAOMI ATVV AUDIO_START click-mode (await click vs hold)");
-    } else {
-        key_mapping::on_remote_button(app, "mic", true);
-        log::info!("XIAOMI ATVV AUDIO_START hold-mode → shortcut DOWN");
-    }
+    // Both modes must activate the IME as soon as AUDIO_START arrives.  Click
+    // keeps a minimum press duration on release; it no longer delays the
+    // floating voice bar until the remote button is released.
+    key_mapping::on_remote_button(app, "mic", true);
+    mark_voice_shortcut_ready(state, None);
+    log::info!(
+        "XIAOMI ATVV AUDIO_START mode={} → shortcut DOWN immediately",
+        if toggle { "click" } else { "hold" }
+    );
 }
 
 /// 遥控语音键抬起：结束传声 + 短按 TAP / 长按 UP
 fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
     use crate::bridges::xiaomi::voice_pcm;
     let toggle = voice_trigger_is_toggle(app);
-    let (was_pressed, hold_armed, press_ms) = {
+    let (was_pressed, press_ms, minimum_press_ms) = {
         let Ok(mut st) = state.lock() else {
             return;
         };
@@ -1401,7 +1518,6 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
             .press_at
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
-        let hold_armed = st.hold_chord_armed;
         st.remote_pressed = false;
         st.press_at = None;
         st.hold_chord_armed = false;
@@ -1409,29 +1525,28 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
         st.streaming = false;
         st.last_mic_off = Some(Instant::now());
         st.pending.clear();
-        (true, hold_armed, ms)
+        (true, ms, st.minimum_press_ms)
     };
     if !was_pressed {
         return;
     }
 
-    std::thread::sleep(Duration::from_millis(40));
-    voice_pcm::end_session();
-
     notify_voice_phase(app, gate, false);
 
     if toggle {
-        if hold_armed || press_ms >= CLICK_HOLD_THRESHOLD_MS {
-            key_mapping::on_remote_button(app, "mic", false);
-            log::info!("XIAOMI ATVV AUDIO_STOP click-mode HOLD release ms={press_ms}");
-        } else {
-            key_mapping::voice_shortcut_tap(app);
-            log::info!("XIAOMI ATVV AUDIO_STOP click-mode CLICK tap ms={press_ms}");
+        if press_ms < minimum_press_ms {
+            std::thread::sleep(Duration::from_millis(minimum_press_ms - press_ms));
         }
-    } else {
-        key_mapping::on_remote_button(app, "mic", false);
-        log::info!("XIAOMI ATVV AUDIO_STOP hold-mode → shortcut UP");
     }
+    std::thread::sleep(Duration::from_millis(40));
+    voice_pcm::end_session();
+    key_mapping::on_remote_button(app, "mic", false);
+    log::info!(
+        "XIAOMI ATVV AUDIO_STOP mode={} release ms={press_ms}",
+        if toggle { "click" } else { "hold" }
+    );
+
+    log_voice_timing(state, if toggle { "click" } else { "hold" });
 
     crate::bridges::xiaomi::key_mapping::disarm_voice_native_suppress();
     crate::bridges::xiaomi::voice_meter::set_session(false);
@@ -1533,7 +1648,13 @@ fn subscribe_atvv_service(
         remote_pressed: false,
         press_at: None,
         hold_chord_armed: false,
+        minimum_press_ms: 0,
         press_gen: 0,
+        audio_start_at: None,
+        shortcut_ready_at: None,
+        injection_route: String::new(),
+        first_audio_at: None,
+        first_decoded_at: None,
     }));
 
     let app2 = app.clone();
@@ -1645,51 +1766,59 @@ fn handle_atvv_audio(state: &Arc<Mutex<AtvvVoiceState>>, payload: &[u8]) {
     use crate::bridges::xiaomi::adpcm_decoder::postprocess;
     use crate::bridges::xiaomi::voice_pcm;
 
-    let Ok(mut st) = state.lock() else {
-        return;
-    };
-    if !st.codec_supported {
-        return;
-    }
-    if !st.streaming {
-        // 按键已按下但 streaming 尚未置位时，音频首帧可直接入流
-        if st.remote_pressed {
-            st.streaming = true;
-            st.pending.clear();
-        } else if let Some(t) = st.last_mic_off {
-            if t.elapsed() < Duration::from_millis(300) {
-                return;
+    // Keep decoder mutation and frame assembly serialized, but move gain,
+    // resampling and UDP work outside this lock so an AUDIO_STOP/AUDIO_START
+    // control packet is never queued behind PCM processing.
+    let decoded = {
+        let Ok(mut st) = state.lock() else {
+            return;
+        };
+        if !st.codec_supported {
+            return;
+        }
+        st.first_audio_at.get_or_insert_with(Instant::now);
+        if !st.streaming {
+            // 按键已按下但 streaming 尚未置位时，音频首帧可直接入流
+            if st.remote_pressed {
+                st.streaming = true;
+                st.pending.clear();
+            } else if let Some(t) = st.last_mic_off {
+                if t.elapsed() < Duration::from_millis(300) {
+                    return;
+                }
+                st.streaming = true;
+                st.pending.clear();
+                voice_pcm::clear();
+                log::info!("XIAOMI ATVV MIC ON session=implicit_audio_race");
+            } else {
+                st.streaming = true;
+                st.pending.clear();
+                voice_pcm::clear();
+                log::info!("XIAOMI ATVV MIC ON session=implicit_audio_race");
             }
-            st.streaming = true;
-            st.pending.clear();
-            voice_pcm::clear();
-            log::info!("XIAOMI ATVV MIC ON session=implicit_audio_race");
-        } else {
-            st.streaming = true;
-            st.pending.clear();
-            voice_pcm::clear();
-            log::info!("XIAOMI ATVV MIC ON session=implicit_audio_race");
         }
-    }
-    st.pending.extend_from_slice(payload);
-    while st.pending.len() >= st.frame_size {
-        let frame_size = st.frame_size;
-        let frame: Vec<u8> = st.pending.drain(..frame_size).collect();
-        if let Some((pred, idx)) = st.pending_sync.take() {
-            st.decoder.reset_with(pred, idx);
+        st.pending.extend_from_slice(payload);
+        let mut out = Vec::new();
+        while st.pending.len() >= st.frame_size {
+            let frame_size = st.frame_size;
+            let frame: Vec<u8> = st.pending.drain(..frame_size).collect();
+            if let Some((pred, idx)) = st.pending_sync.take() {
+                st.decoder.reset_with(pred, idx);
+            }
+            let samples = st.decoder.decode_bytes(&frame);
+            st.first_decoded_at.get_or_insert_with(Instant::now);
+            st.frames += 1;
+            out.push((samples, st.gain_db, st.sample_rate_hz, st.frames));
         }
-        let samples = st.decoder.decode_bytes(&frame);
-        let samples = postprocess(&samples, st.gain_db);
-        voice_pcm::push_pcm(&samples, st.sample_rate_hz);
-        st.frames += 1;
-        if st.frames == 1 || st.frames == 10 || st.frames % 200 == 0 {
+        out
+    };
+
+    for (samples, gain_db, sample_rate_hz, frames) in decoded {
+        let samples = postprocess(&samples, gain_db);
+        voice_pcm::push_pcm(&samples, sample_rate_hz);
+        if frames == 1 || frames == 10 || frames % 200 == 0 {
             let (sent, drop) = voice_pcm::stats();
-            log::debug!(
-                "XIAOMI ATVV AUDIO frames={} sent={} drop={}",
-                st.frames,
-                sent,
-                drop
-            );
+            log::debug!("XIAOMI ATVV AUDIO frames={frames} sent={sent} drop={drop}");
         }
     }
 }
@@ -1865,7 +1994,7 @@ fn handle_hid_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        atvv_codec_sample_rate, parse_battery_charging_state, parse_hid_usages,
+        atvv_codec_sample_rate, disconnect_confirmed, parse_battery_charging_state, parse_hid_usages,
         BatteryChargingState,
     };
 
@@ -1929,5 +2058,12 @@ mod tests {
     #[test]
     fn rejects_truncated_battery_level_status() {
         assert_eq!(parse_battery_charging_state(&[0x00, 0x20]), None);
+    }
+
+    #[test]
+    fn disconnect_requires_all_debounced_checks() {
+        assert!(disconnect_confirmed(true, true, true));
+        assert!(!disconnect_confirmed(true, false, true));
+        assert!(!disconnect_confirmed(true, true, false));
     }
 }
