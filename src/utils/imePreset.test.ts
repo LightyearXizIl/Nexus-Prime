@@ -33,6 +33,7 @@ describe("applyImePresetConfig", () => {
         voice: { type: "ComboKey", value: [0xa2, 0x5b] },
       },
       voice_hotkey: ["leftctrl", "leftwin"],
+      voice_input_profile: "wechat",
       voice_shortcut_enabled: true,
       trigger_mode: "Toggle",
       long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },
@@ -49,6 +50,7 @@ describe("applyImePresetConfig", () => {
         voice: { type: "ComboKey", value: [0xa2, 0xa0, 0x44] },
       },
       voice_hotkey: ["leftctrl", "leftshift", "d"],
+      voice_input_profile: "wechat-current",
       voice_shortcut_enabled: true,
       trigger_mode: "Hold",
       long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },
@@ -65,10 +67,26 @@ describe("applyImePresetConfig", () => {
         voice: { type: "SingleKey", value: 0xa5 },
       },
       voice_hotkey: ["rightalt"],
+      voice_input_profile: "doubao-hold",
       voice_shortcut_enabled: true,
       trigger_mode: "Hold",
       long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },
       multi_click_bindings: { menu: { 2: { type: "SingleKey", value: 0x41 } } },
+    });
+  });
+
+  it("configures Qianwen with the direct right-Alt voice profile", () => {
+    const next = applyImePresetConfig(configWithLegacyVoiceGestures(), "qianwen");
+
+    expect(next).toMatchObject({
+      button_bindings: {
+        mic: { type: "SingleKey", value: 0xa5 },
+        voice: { type: "SingleKey", value: 0xa5 },
+      },
+      voice_hotkey: ["rightalt"],
+      voice_input_profile: "qianwen",
+      voice_shortcut_enabled: true,
+      trigger_mode: "Hold",
     });
   });
 
@@ -81,6 +99,7 @@ describe("applyImePresetConfig", () => {
         voice: { type: "ComboKey", value: [0xa5, 0x20] },
       },
       voice_hotkey: ["rightalt", "space"],
+      voice_input_profile: "doubao-hands-free",
       voice_shortcut_enabled: true,
       trigger_mode: "Toggle",
       long_press_bindings: { menu: { type: "SingleKey", value: 0x20 } },

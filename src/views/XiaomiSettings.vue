@@ -563,6 +563,12 @@ async function persistVoiceSettings() {
   await configStore.saveConfig(type, normalizeVoiceShortcutConfig(config.value));
 }
 
+async function onTriggerModeChanged() {
+  if (!config.value) return;
+  config.value.voice_input_profile = null;
+  await persistVoiceSettings();
+}
+
 async function applyImePreset(preset: ImePreset) {
   if (!config.value) return;
   const definition = IME_PRESETS[preset];
@@ -1726,7 +1732,7 @@ watch(
             <select
               v-model="config.trigger_mode"
               class="form-select voice-toolbar-select"
-              @change="persistVoiceSettings"
+              @change="onTriggerModeChanged"
             >
               <option value="Toggle">点击</option>
               <option value="Hold">按住</option>

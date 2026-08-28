@@ -58,6 +58,40 @@ impl Default for TriggerMode {
     }
 }
 
+/// 输入法预设来源。缺失时表示用户自定义快捷键，保留既有释放策略。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum VoiceInputProfile {
+    Codex,
+    Wechat,
+    WechatCurrent,
+    Qianwen,
+    DoubaoHold,
+    DoubaoHandsFree,
+}
+
+impl VoiceInputProfile {
+    pub(crate) fn matches_voice_binding(
+        self,
+        action: &KeyAction,
+        trigger_mode: &TriggerMode,
+    ) -> bool {
+        let (keys, mode) = match self {
+            Self::Codex => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
+            Self::Wechat => (&[0xA2, 0x5B][..], TriggerMode::Toggle),
+            Self::WechatCurrent => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
+            Self::Qianwen | Self::DoubaoHold => (&[0xA5][..], TriggerMode::Hold),
+            Self::DoubaoHandsFree => (&[0xA5, 0x20][..], TriggerMode::Toggle),
+        };
+        let actual = match action {
+            KeyAction::SingleKey(vk) => vec![*vk],
+            KeyAction::ComboKey(vks) => vks.clone(),
+            _ => return false,
+        };
+        actual == keys && *trigger_mode == mode
+    }
+}
+
 /// 设备配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
@@ -77,6 +111,9 @@ pub struct DeviceConfig {
     /// 语音触发模式
     #[serde(default)]
     pub trigger_mode: TriggerMode,
+    /// 由输入法预设写入；旧配置缺失时按自定义快捷键兼容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_input_profile: Option<VoiceInputProfile>,
     /// 蓝牙地址（仅小米）
     pub bluetooth_address: Option<String>,
     /// 语音增益 dB（对齐 Python gain_db）
@@ -125,6 +162,7 @@ impl DeviceConfig {
             multi_click_interval_ms: default_multi_click_interval_ms(),
             voice_hotkey: Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()]),
             trigger_mode: TriggerMode::Hold,
+            voice_input_profile: None,
             bluetooth_address: None,
             gain_db: default_gain_db(),
             retry_delay: default_retry_delay(),
@@ -542,6 +580,7 @@ impl ConfigManager {
                 multi_click_interval_ms: default_multi_click_interval_ms(),
                 voice_hotkey: Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()]),
                 trigger_mode: TriggerMode::Hold,
+                voice_input_profile: None,
                 bluetooth_address: None,
                 gain_db: 10.0,
                 retry_delay: 3.0,
@@ -660,6 +699,20 @@ mod tests {
         assert!(config.long_press_bindings.is_empty());
         assert!(config.multi_click_bindings.is_empty());
         assert_eq!(config.multi_click_interval_ms, 300);
+        assert_eq!(config.voice_input_profile, None);
+    }
+
+    #[test]
+    fn voice_input_profile_round_trips_and_rejects_a_manual_mismatch() {
+        let profile = VoiceInputProfile::Qianwen;
+        assert_eq!(
+            serde_json::from_str::<VoiceInputProfile>(&serde_json::to_string(&profile).unwrap())
+                .unwrap(),
+            profile
+        );
+        assert!(profile.matches_voice_binding(&KeyAction::SingleKey(0xA5), &TriggerMode::Hold));
+        assert!(!profile.matches_voice_binding(&KeyAction::SingleKey(0xA5), &TriggerMode::Toggle));
+        assert!(!profile.matches_voice_binding(&KeyAction::SingleKey(0xA4), &TriggerMode::Hold));
     }
 
     #[test]

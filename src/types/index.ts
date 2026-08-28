@@ -42,6 +42,15 @@ export type KeyAction =
 export type TriggerMode = "Toggle" | "Hold";
 /** Toggle=点击型快捷键；Hold=按住型快捷键（传声仍为按住遥控语音键） */
 
+/** 输入法预设来源；缺失或 null 表示用户自定义快捷键。 */
+export type VoiceInputProfile =
+  | "codex"
+  | "wechat"
+  | "wechat-current"
+  | "qianwen"
+  | "doubao-hold"
+  | "doubao-hands-free";
+
 export interface DeviceConfig {
   button_aliases: Record<string, string>;
   button_bindings: Record<string, KeyAction>;
@@ -50,6 +59,7 @@ export interface DeviceConfig {
   multi_click_interval_ms?: number;
   voice_hotkey: string[] | null;
   trigger_mode: TriggerMode;
+  voice_input_profile?: VoiceInputProfile | null;
   bluetooth_address: string | null;
   /** 麦克风增益 dB（对齐 Python gain_db，默认 10） */
   gain_db?: number;

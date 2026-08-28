@@ -195,6 +195,27 @@ fn hook_loop() {
                 return CallNextHookEx(hook, code, wparam, lparam);
             }
 
+            // ATVV 语音固件会在首个 F5 前带出左 Ctrl+左 Win。只在短关联窗口
+            // 内吞掉这两个物理修饰键，避免污染后续要注入的输入法快捷键。
+            if (down || up)
+                && crate::bridges::xiaomi::key_mapping::should_swallow_voice_firmware_modifier(
+                    vk as u16,
+                    down,
+                )
+            {
+                return LRESULT(1);
+            }
+
+            // 按住期间，已被过滤的固件修饰键抬起不能清掉虚拟 HID 持有的同族键；
+            // 应用自身释放时会打开短放行窗口。
+            if up
+                && crate::bridges::xiaomi::key_mapping::should_swallow_voice_chord_modifier_up(
+                    vk as u16,
+                )
+            {
+                return LRESULT(1);
+            }
+
             let scan = info.scanCode;
             let tap_ready = HID_TAP_READY.load(Ordering::Acquire);
 

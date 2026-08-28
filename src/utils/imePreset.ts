@@ -1,13 +1,7 @@
-import type { DeviceConfig, KeyAction, TriggerMode } from "../types";
+import type { DeviceConfig, KeyAction, TriggerMode, VoiceInputProfile } from "../types";
 import { normalizeVoiceShortcutConfig } from "./voiceShortcut";
 
-export type ImePreset =
-  | "codex"
-  | "wechat"
-  | "wechat-current"
-  | "qianwen"
-  | "doubao-hold"
-  | "doubao-hands-free";
+export type ImePreset = VoiceInputProfile;
 
 export interface ImePresetDefinition {
   shortcutVks: number[];
@@ -84,5 +78,6 @@ export function applyImePresetConfig(config: DeviceConfig, preset: ImePreset): D
     voice_hotkey: [...definition.voiceHotkey],
     voice_shortcut_enabled: true,
     trigger_mode: definition.triggerMode,
+    voice_input_profile: preset,
   });
 }

@@ -281,6 +281,7 @@ function applyCapturedKeys(buttonId: string, vks: number[]) {
     next.button_bindings.mic = action;
     next.button_bindings.voice = action;
     next.voice_hotkey = vksToHotkeyNames(vks);
+    next.voice_input_profile = null;
   }
   emit("save", next);
 }
@@ -295,6 +296,7 @@ function clearBinding(buttonId: string) {
     next.button_bindings.mic = { type: "None", value: null };
     next.button_bindings.voice = { type: "None", value: null };
     next.voice_hotkey = [];
+    next.voice_input_profile = null;
   }
   emit("save", next);
   captureStatus.value = "已清除绑定";
