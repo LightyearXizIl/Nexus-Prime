@@ -4,7 +4,7 @@
 
 ## 本次范围（v0.3.6，2026-08-28）
 
-- 在安全仓库 `Nexus Prime-repo` 修复输入法与普通键注入链路；没有在已损坏的原目录执行 Git 写操作，也没有推送、打标签或创建远端发布。
+- 在安全仓库 `Nexus Prime-repo` 修复输入法与普通键注入链路；没有在已损坏的原目录执行 Git 写操作。应后续明确授权，已推送 `main`、`v0.3.5` 与 `v0.3.6`，并创建两个 GitHub 正式 Release。
 - 普通 Enter、上、下、左、右改走带应用标记的 SendInput，特殊键钩子因此放行应用注入，同时仍吞掉遥控器原始重复事件。鼠标移动、鼠标点击和长按 generation 未改路由。
 - ATVV 语音事件会短暂过滤遥控器固件泄漏的非注入左 Ctrl、左 Win，F5 关联后立即停止按下过滤；语音释放窗口只放行本应用虚拟 HID 抬键，超时、重置和异常路径都会清理过滤状态。
 - 输入法预设新增可选 `voice_input_profile`（旧配置缺失时保持兼容）。应用预设会写入 profile，手动改语音快捷键或触发模式会清空；按住会锁定 profile、快捷键与注入路由。千问右 Alt 使用直接释放，不再插入 F24、Enter 或 Space；豆包和其他纯修饰键预设保留原有防系统菜单释放策略。
@@ -17,6 +17,7 @@
 - `npm.cmd run build`、`cargo check --workspace --all-targets`、`git diff --check` 和 `npm.cmd run tauri:build`：已通过。
 - 本地新构建 NSIS 安装包：`src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.6_x64-setup.exe`，13,317,579 bytes，SHA-256 `5C5290A5636C40A211975793798879ED955FCEC54DA55F176CA3505B3594F1F2`；安装包及主程序的文件版本、产品版本均为 `0.3.6`，未签名（`NotSigned`）。
 - 已在覆盖前备份 `%APPDATA%\\com.lightyear.nexusprime` 到 `C:\\Users\\16054\\AppData\\Roaming\\com.lightyear.nexusprime.backup-20260828-103555`。安装包以静默覆盖方式安装至 `D:\\Software\\Nexus Prime`，退出码 `0`；重启后的主程序和音频路由进程均来自该目录。当前配置已恢复并显式标记为 `wechat-current`（左 Ctrl + 左 Shift + D、Hold）。
+- GitHub 发布复核：[`v0.3.5`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.5) 资产 `Nexus.Prime_0.3.5_x64-setup.exe` 状态 `uploaded`、大小 13,317,199 bytes、digest `sha256:f1efdb0b19fcfc67f83797c3a7836e6d9b7f71c0861ff8e473f2a929a9e0a383`；[`v0.3.6`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.6) 资产 `Nexus.Prime_0.3.6_x64-setup.exe` 状态 `uploaded`、大小 13,317,579 bytes、digest `sha256:5c5290a5636c40a211975793798879ed955fcec54da55f176ca3505b3594f1f2`。两个 digest 均与本地 SHA-256 一致。
 
 ### 仍待真实设备验收（不得标为已修复）
 
