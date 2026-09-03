@@ -71,9 +71,13 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 - NSIS：`Nexus.Prime_0.3.8_x64-setup.exe`
 
+当前正式版：[v0.3.8 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.8)。
+
 从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
 
 应用内自动更新会优先读取 GitHub Release 随包发布的 `latest.json`，避免 GitHub API 的匿名请求额度影响检查；仓库清单和 GitHub API 仅作为兼容回退。发布新版本时请使用 `vX.Y.Z` 标签，并上传唯一的 `Nexus.Prime_X.Y.Z_x64-setup.exe` 安装包及其 `latest.json`；清单提供安装包 SHA-256，下载完成后仍会校验完整性。
+
+若 v0.3.6 或 v0.3.7 的“检查更新”提示 GitHub `403` 或“检查失败”，请直接下载安装 v0.3.8；旧版没有清单优先与限流恢复机制，重启应用不会修复 GitHub 的匿名请求额度。v0.3.8 在“自动检查更新”开启时会在启动、每 6 小时、窗口恢复且到期时检查；限流响应含恢复时间时会提前自动重试。
 
 详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

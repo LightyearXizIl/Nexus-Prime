@@ -60,6 +60,10 @@ npm run tauri -- build --debug --no-bundle
 - [ ] 未包含凭据、个人数据或真实设备标识；
 - [ ] 第三方代码与资源的许可证已核对。
 
+## Windows Release 清单
+
+发布 Windows 版本时，除版本号、更新日志、安装包和 GitHub Release 外，还必须同步根目录 `latest.json`：其中的版本、安装包文件名、字节大小、SHA-256 和 GitHub 下载地址必须来自本次实际构建产物。将同一份 `latest.json` 作为 Release 资产上传，并确认 Release 清单端点、`main/latest.json` 和安装包公开下载均可访问；不要将仅本地计算的摘要写成已发布状态。
+
 ## 许可证
 
 向本项目提交贡献即表示你同意以 [MIT License](./LICENSE) 发布你的贡献。第三方组件仍受各自许可证约束。
