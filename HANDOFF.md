@@ -2,7 +2,7 @@
 
 更新时间：2026-09-03
 
-## 本次范围（v0.3.9，待发布，2026-09-03）
+## 本次范围（v0.3.9，已发布，2026-09-03）
 
 - 已按本机微信输入法 2.1.3.18 的真实“语音输入”设置恢复两个可选项：“启动语音输入”对应左 Ctrl + 左 Win 点击触发；“按住说话”对应左 Ctrl + 左 Shift + D 按住触发。Nexus Prime 同一时间只应用其中一种，并在界面标明当前模式。
 - 删除 v0.3.7/v0.3.8 界面和 README 中错误的 F5 + 左 Ctrl + 左 Win 指引。已发布版本的历史记录保留，但其操作说明由本节和最新 README 取代。
@@ -16,7 +16,10 @@
 - `cargo test --workspace --manifest-path src-tauri/Cargo.toml`：120/120 通过。
 - `cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml`：通过。
 - `npm.cmd run tauri:build`：通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.9_x64-setup.exe`，13,336,223 bytes，SHA-256 `76D74270324AD02E8F60DFAA77494F6BB7601BD819A8D1DD6D7AAC2A559A3DC5`；主程序文件版本与产品版本均为 `0.3.9`，安装包未签名。
-- `git diff --check`：通过。GitHub Release 上传与公开下载复核待本轮发布完成；本轮未修改微信输入法自身设置。
+- `git diff --check`：通过。本轮未修改微信输入法自身设置。
+- GitHub 正式 Release：[`v0.3.9`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.9) 已公开；标签解引用提交为 `cdfcafa`。
+- 资产 `Nexus.Prime_0.3.9_x64-setup.exe` 状态为 `uploaded`、大小 13,336,223 bytes、GitHub digest 为 `sha256:76d74270324ad02e8f60dfaa77494f6bb7601bd819a8d1dd6d7aac2a559a3dc5`，与本地 SHA-256 一致；公开下载返回 HTTP 200 与相同长度。
+- `latest.json` 同时作为 Release 资产和 `main/latest.json` 提供，资产 SHA-256 为 `74b07e647a6b09e5de4b27890e56fd6f24217c1c0db8e96c666c664cbd57df92`，两个公开清单端点均返回 v0.3.9 元数据。
 
 ### 仍待真实设备验收
 

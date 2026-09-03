@@ -10,7 +10,7 @@
 
 ### 验证边界
 
-- 前端 47/47、Rust 120/120、前端生产构建、Cargo workspace 全目标检查和 Windows Tauri 打包通过；GitHub Release 上传与公开下载复核待本轮发布完成。微信两个模式仍需在真实遥控器和微信输入法中分别验收。
+- 前端 47/47、Rust 120/120、前端生产构建、Cargo workspace 全目标检查和 Windows Tauri 打包通过；GitHub 正式 Release `v0.3.9` 已公开，NSIS 安装包及 `latest.json` 均已上传，远端摘要、清单端点和公开下载复核通过。微信两个模式仍需在真实遥控器和微信输入法中分别验收。
 
 ## [0.3.8] - 2026-09-03
 
