@@ -24,6 +24,27 @@ function configWithLegacyVoiceGestures(): DeviceConfig {
 }
 
 describe("applyImePresetConfig", () => {
+  it("migrates only after the user applies the visible WeChat hold preset", () => {
+    const legacy = {
+      ...configWithLegacyVoiceGestures(),
+      voice_input_profile: "wechat" as const,
+      trigger_mode: "Toggle" as const,
+    };
+    // Reading a legacy config does not mutate it; only this explicit action changes the profile.
+    const next = applyImePresetConfig(legacy, "wechat-hold");
+
+    expect(next).toMatchObject({
+      button_bindings: {
+        mic: { type: "ComboKey", value: [0xa2, 0x5b] },
+        voice: { type: "ComboKey", value: [0xa2, 0x5b] },
+      },
+      voice_hotkey: ["leftctrl", "leftwin"],
+      voice_input_profile: "wechat-hold",
+      trigger_mode: "Hold",
+    });
+    expect(legacy.voice_input_profile).toBe("wechat");
+  });
+
   it("preserves the legacy WeChat shortcut and removes legacy voice gestures", () => {
     const next = applyImePresetConfig(configWithLegacyVoiceGestures(), "wechat");
 

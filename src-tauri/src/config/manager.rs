@@ -63,7 +63,10 @@ impl Default for TriggerMode {
 #[serde(rename_all = "kebab-case")]
 pub enum VoiceInputProfile {
     Codex,
+    WechatHold,
+    /// Historical profile kept only for persisted configuration compatibility.
     Wechat,
+    /// Historical profile kept only for persisted configuration compatibility.
     WechatCurrent,
     Qianwen,
     DoubaoHold,
@@ -78,6 +81,7 @@ impl VoiceInputProfile {
     ) -> bool {
         let (keys, mode) = match self {
             Self::Codex => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
+            Self::WechatHold => (&[0xA2, 0x5B][..], TriggerMode::Hold),
             Self::Wechat => (&[0xA2, 0x5B][..], TriggerMode::Toggle),
             Self::WechatCurrent => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
             Self::Qianwen | Self::DoubaoHold => (&[0xA5][..], TriggerMode::Hold),

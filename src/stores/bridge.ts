@@ -36,6 +36,11 @@ export const useBridgeStore = defineStore("bridge", () => {
     await refreshStatus("xiaomi");
   }
 
+  /** Backend snapshots are authoritative; replacing is idempotent and preserves no stale battery fields. */
+  function applyDeviceStatus(info: DeviceInfo) {
+    devices.value[info.bridge_type] = info;
+  }
+
   async function startBridge(type: BridgeType) {
     loading.value[type] = true;
     devices.value[type].status = "Connecting";
@@ -88,6 +93,7 @@ export const useBridgeStore = defineStore("bridge", () => {
     loading,
     refreshStatus,
     refreshAll,
+    applyDeviceStatus,
     startBridge,
     stopBridge,
     statusLabel,

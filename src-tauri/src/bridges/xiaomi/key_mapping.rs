@@ -10,6 +10,7 @@ use crate::config::manager::{ConfigManager, DeviceConfig, KeyAction, VoiceInputP
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
@@ -38,10 +39,16 @@ static VOICE_NATIVE_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static VOICE_NATIVE_DEADLINE: Mutex<Option<Instant>> = Mutex::new(None);
 /// 对齐 Python `voice_f5_down_suppressed`：一次语音按压周期内吞掉 F5 连发/typematic
 static VOICE_F5_DOWN_SUPPRESSED: AtomicBool = AtomicBool::new(false);
+/// 如果 F5 DOWN 已经放行给 Windows，配对的 UP 也必须放行；否则会造成实体键盘
+/// F5 看似被“粘住”。这个标记只覆盖当前一组 F5 边沿。
+static VOICE_F5_DOWN_REACHED_OS: AtomicBool = AtomicBool::new(false);
 static VOICE_F5_SUPPRESSED_COUNT: AtomicU64 = AtomicU64::new(0);
 static INPUT_SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FIRMWARE_VOICE_HELD: AtomicBool = AtomicBool::new(false);
 static VOICE_HOOK_APP: Mutex<Option<AppHandle>> = Mutex::new(None);
+/// LL keyboard hook 回调只负责入队；真正的事件、等待和注入均由这个串行 worker
+/// 执行，避免阻塞系统键盘钩子并保持 F5 DOWN/UP 的顺序。
+static FIRMWARE_VOICE_DISPATCH: OnceLock<mpsc::Sender<(AppHandle, bool)>> = OnceLock::new();
 /// 当前非旧版微信语音会话持有的快捷键修饰键。固件 Ctrl/Win 的抬起不能中断它。
 static VOICE_HELD_CHORD_MODIFIERS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 /// 应用自身释放虚拟 HID 和弦时的短放行窗口。
@@ -201,6 +208,7 @@ pub fn reset_voice_input_state(reason: &str) {
     FIRMWARE_VOICE_HELD.store(false, Ordering::Release);
     disarm_voice_native_suppress();
     VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
+    VOICE_F5_DOWN_REACHED_OS.store(false, Ordering::Release);
     VOICE_F5_SUPPRESSED_COUNT.store(0, Ordering::Release);
     crate::bridges::xiaomi::voice_pcm::end_session();
     crate::bridges::xiaomi::voice_meter::set_session(false);
@@ -259,6 +267,23 @@ pub fn on_firmware_voice_key(pressed: bool) {
     let Some(app) = VOICE_HOOK_APP.lock().clone() else {
         return;
     };
+    let sender = FIRMWARE_VOICE_DISPATCH.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<(AppHandle, bool)>();
+        let _ = std::thread::Builder::new()
+            .name("xiaomi-firmware-voice".into())
+            .spawn(move || {
+                while let Ok((app, pressed)) = receiver.recv() {
+                    process_firmware_voice_key(app, pressed);
+                }
+            });
+        sender
+    });
+    if sender.send((app, pressed)).is_err() {
+        log::warn!("XIAOMI VOICE firmware dispatch worker unavailable");
+    }
+}
+
+fn process_firmware_voice_key(app: AppHandle, pressed: bool) {
     if pressed {
         if FIRMWARE_VOICE_HELD.swap(true, Ordering::SeqCst) {
             return;
@@ -401,6 +426,13 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
         return false;
     }
     if up {
+        // DOWN 没被我们吞掉时，绝不能仅因语音会话还在线而吞它的 UP。
+        // 这也让普通实体键盘 F5 在 BLE 会话存活期间保持正常。
+        if VOICE_F5_DOWN_REACHED_OS.swap(false, Ordering::AcqRel) {
+            VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
+            VOICE_F5_SUPPRESSED_COUNT.store(0, Ordering::Release);
+            return false;
+        }
         let suppressed = VOICE_F5_DOWN_SUPPRESSED.swap(false, Ordering::AcqRel);
         if suppressed {
             let count = VOICE_F5_SUPPRESSED_COUNT.swap(0, Ordering::AcqRel);
@@ -434,6 +466,12 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
         }
     }
     suppressed
+}
+
+/// special key hook 在决定放行 F5 DOWN 时调用。与 `should_suppress_voice_f5`
+/// 配对，确保随后 F5 UP 不会被语音尾窗误吞。
+pub fn note_passthrough_f5_down() {
+    VOICE_F5_DOWN_REACHED_OS.store(true, Ordering::Release);
 }
 
 static ATVV_F5_TOAST_LAST: Mutex<Option<Instant>> = Mutex::new(None);
@@ -1204,7 +1242,7 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     let profile = config.voice_input_profile;
     arm_voice_firmware_modifier_filter();
     wait_for_clean_voice_modifier_window();
-    if is_legacy_wechat_toggle_shortcut(&vks) {
+    if is_legacy_wechat_toggle_shortcut(&vks, profile) {
         if let Some(route) = start_legacy_wechat_tap_session(&vks, profile) {
             log::info!(
                 "XIAOMI VOICE legacy WeChat start tap route={} vks={vks:?}",
@@ -1426,8 +1464,11 @@ fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
     }
 }
 
-fn is_legacy_wechat_toggle_shortcut(vks: &[u16]) -> bool {
-    matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
+fn is_legacy_wechat_toggle_shortcut(vks: &[u16], profile: Option<VoiceInputProfile>) -> bool {
+    // Ctrl+Win 本身不是旧协议；只有旧的 wechat 配置才保持“分两次点按”的
+    // 兼容行为。新的 wechat-hold 必须落入正常的真实 Hold 注入路径。
+    matches!(profile, Some(VoiceInputProfile::Wechat))
+        && matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
 }
 
 fn arm_voice_firmware_modifier_filter() {
@@ -2744,10 +2785,26 @@ mod gesture_tests {
 
     #[test]
     fn legacy_wechat_ctrl_win_uses_the_separate_tap_session_policy() {
-        assert!(is_legacy_wechat_toggle_shortcut(&[0xA2, 0x5B]));
-        assert!(is_legacy_wechat_toggle_shortcut(&[0x5B, 0xA2]));
-        assert!(!is_legacy_wechat_toggle_shortcut(&[0xA2, 0xA0, 0x44]));
-        assert!(!is_legacy_wechat_toggle_shortcut(&[0xA5]));
+        assert!(is_legacy_wechat_toggle_shortcut(
+            &[0xA2, 0x5B],
+            Some(VoiceInputProfile::Wechat)
+        ));
+        assert!(is_legacy_wechat_toggle_shortcut(
+            &[0x5B, 0xA2],
+            Some(VoiceInputProfile::Wechat)
+        ));
+        assert!(!is_legacy_wechat_toggle_shortcut(
+            &[0xA2, 0x5B],
+            Some(VoiceInputProfile::WechatHold)
+        ));
+        assert!(!is_legacy_wechat_toggle_shortcut(
+            &[0xA2, 0xA0, 0x44],
+            Some(VoiceInputProfile::Wechat)
+        ));
+        assert!(!is_legacy_wechat_toggle_shortcut(
+            &[0xA5],
+            Some(VoiceInputProfile::Wechat)
+        ));
         assert_eq!(
             legacy_wechat_tap_steps(&[0xA2, 0x5B]),
             vec![

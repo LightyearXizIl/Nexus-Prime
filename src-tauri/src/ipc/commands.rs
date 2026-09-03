@@ -658,6 +658,18 @@ pub async fn repair_xiaomi_voice_env(
     .map_err(|e| format!("voice repair task: {e}"))?
 }
 
+/// 将官方 VB-CABLE Pack45 下载到用户通过另存为选择的位置；下载线程只在
+/// 长度、ZIP 头和固定 SHA-256 全部通过后才替换目标文件。
+#[tauri::command]
+pub fn download_xiaomi_vbcable_zip(app: tauri::AppHandle, dest_path: String) -> Result<(), String> {
+    crate::audio::vbcable_download::start(app, std::path::PathBuf::from(dest_path))
+}
+
+#[tauri::command]
+pub fn cancel_xiaomi_vbcable_zip_download() -> bool {
+    crate::audio::vbcable_download::cancel()
+}
+
 /// 重新部署并安装包内 WinUHid 虚拟键盘，用于输入法忽略快捷键时的手动修复。
 #[tauri::command]
 pub async fn repair_xiaomi_virtual_keyboard(

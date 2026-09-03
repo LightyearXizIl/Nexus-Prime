@@ -12,21 +12,21 @@ function mountDialog() {
 describe("InputMethodSettingsDialog", () => {
   beforeEach(() => window.localStorage.clear());
 
-  it("applies both WeChat versions and both Doubao voice modes", async () => {
+  it("shows only the new WeChat hold preset and both Doubao voice modes", async () => {
     const wrapper = mountDialog();
     const tabs = wrapper.findAll('[role="tab"]');
     expect(tabs).toHaveLength(4);
 
     await tabs[1].trigger("click");
     const wechatButtons = wrapper.findAll(".ime-wechat-option button");
-    expect(wechatButtons).toHaveLength(2);
+    expect(wechatButtons).toHaveLength(1);
+    expect(wrapper.text()).toContain("F5 + 左 Ctrl + 左 Win");
     await wechatButtons[0].trigger("click");
-    await wechatButtons[1].trigger("click");
-    expect(wrapper.emitted("apply")).toEqual([["wechat-current"], ["wechat"]]);
+    expect(wrapper.emitted("apply")).toEqual([["wechat-hold"]]);
 
     await tabs[2].trigger("click");
     await wrapper.get("button.ime-button--primary").trigger("click");
-    expect(wrapper.emitted("apply")).toEqual([["wechat-current"], ["wechat"], ["qianwen"]]);
+    expect(wrapper.emitted("apply")).toEqual([["wechat-hold"], ["qianwen"]]);
 
     await tabs[3].trigger("click");
     expect(wrapper.text()).toContain("电脑麦克风");
@@ -35,24 +35,21 @@ describe("InputMethodSettingsDialog", () => {
     await doubaoButtons[0].trigger("click");
     await doubaoButtons[1].trigger("click");
     expect(wrapper.emitted("apply")).toEqual([
-      ["wechat-current"],
-      ["wechat"],
+      ["wechat-hold"],
       ["qianwen"],
       ["doubao-hold"],
       ["doubao-hands-free"],
     ]);
   });
 
-  it("disables both WeChat version actions while saving and scopes the success hint to the selected version", async () => {
+  it("disables the sole WeChat migration action while saving", async () => {
     const wrapper = mountDialog();
     await wrapper.findAll('[role="tab"]')[1].trigger("click");
     await wrapper.setProps({ saving: true });
-    expect(wrapper.findAll(".ime-wechat-option button:disabled")).toHaveLength(2);
+    expect(wrapper.findAll(".ime-wechat-option button:disabled")).toHaveLength(1);
 
-    await wrapper.setProps({ saving: false, applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D" });
+    await wrapper.setProps({ saving: false, applyHint: "已应用：微信按住说话" });
     await wrapper.findAll(".ime-wechat-option button")[0].trigger("click");
-    expect(wrapper.findAll(".ime-wechat-option .ime-apply-hint")).toHaveLength(1);
-    await wrapper.findAll(".ime-wechat-option button")[1].trigger("click");
     expect(wrapper.findAll(".ime-wechat-option .ime-apply-hint")).toHaveLength(1);
   });
 

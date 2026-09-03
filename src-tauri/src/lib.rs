@@ -297,6 +297,8 @@ pub fn run() {
             ipc::commands::check_xiaomi_voice_env,
             ipc::commands::get_xiaomi_voice_env_status,
             ipc::commands::repair_xiaomi_voice_env,
+            ipc::commands::download_xiaomi_vbcable_zip,
+            ipc::commands::cancel_xiaomi_vbcable_zip_download,
             ipc::commands::repair_xiaomi_virtual_keyboard,
             ipc::commands::open_logs_folder,
             ipc::commands::get_app_log,

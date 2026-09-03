@@ -643,6 +643,7 @@ fn publish_battery(app: &AppHandle, level: u8, last: &mut Option<u8>, force_log:
     if let Some(state) = app.try_state::<BridgeState>() {
         state.update_device_info(BridgeType::Xiaomi, None, None, Some(level));
     }
+    crate::bridges::emit_device_status(app, BridgeType::Xiaomi);
     if force_log || changed {
         emit_message(app, &format!("电量 {level}%"));
         log::info!("XIAOMI BATTERY level={level}%");
@@ -751,6 +752,10 @@ fn setup_battery_monitor(
                                         Some(level),
                                     );
                                 }
+                                crate::bridges::emit_device_status(
+                                    &app2,
+                                    crate::bridges::BridgeType::Xiaomi,
+                                );
                                 emit_message(&app2, &format!("电量 {level}%"));
                                 log::info!("XIAOMI BATTERY notify level={level}%");
                             }
@@ -823,6 +828,10 @@ fn subscribe_battery_status_notify(
                                         charging.is_charging(),
                                     );
                                 }
+                                crate::bridges::emit_device_status(
+                                    &app2,
+                                    crate::bridges::BridgeType::Xiaomi,
+                                );
                                 log::info!(
                                     "XIAOMI BATTERY charge_state notify={}",
                                     charging.label()
@@ -909,6 +918,7 @@ fn publish_battery_charging(
             charging.is_charging(),
         );
     }
+    crate::bridges::emit_device_status(app, crate::bridges::BridgeType::Xiaomi);
     if force_log || changed {
         log::info!("XIAOMI BATTERY charge_state={}", charging.label());
     }

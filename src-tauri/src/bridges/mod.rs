@@ -147,6 +147,19 @@ impl BridgeState {
     }
 }
 
+/// 将已写入的完整设备快照推送给前端。电量通知、轮询和充电状态都走此处，
+/// 以免页面维护一套与 `BridgeState` 脱节的局部电量状态。
+pub fn emit_device_status(app: &tauri::AppHandle, bridge_type: BridgeType) {
+    use tauri::{Emitter, Manager};
+
+    let Some(state) = app.try_state::<BridgeState>() else {
+        return;
+    };
+    if let Err(error) = app.emit("xiaomi-device-status", state.get_info(bridge_type)) {
+        log::debug!("XIAOMI device status event emit failed: {error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,7 +3,8 @@
 //! 仅在「刚收到同键 HID direct / ATVV 信号」时吞掉 Windows 翻译的原 VK。
 
 use crate::bridges::xiaomi::key_mapping::{
-    direct_signal_recent, on_uncorrelated_f5_down, should_suppress_voice_f5, EXTRA_INFO,
+    direct_signal_recent, note_passthrough_f5_down, on_uncorrelated_f5_down,
+    should_suppress_voice_f5, EXTRA_INFO,
 };
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
@@ -282,6 +283,7 @@ fn hook_loop() {
                         Some("voice_f5")
                     } else {
                         if down {
+                            note_passthrough_f5_down();
                             on_uncorrelated_f5_down();
                         }
                         None

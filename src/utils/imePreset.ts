@@ -19,6 +19,14 @@ export const IME_PRESETS: Record<ImePreset, ImePresetDefinition> = {
     applyHint: "已应用：语音键 = 左 Ctrl + 左 Shift + D，触发模式 = 按住",
     logMessage: "设置建议：已快速应用 Codex 按住听写映射（左 Ctrl + 左 Shift + D）",
   },
+  "wechat-hold": {
+    shortcutVks: [0xa2, 0x5b],
+    voiceHotkey: ["leftctrl", "leftwin"],
+    triggerMode: "Hold",
+    applyHint: "已应用：本软件按住左 Ctrl + 左 Win；请在微信输入法设为 F5 + 左 Ctrl + 左 Win",
+    logMessage: "设置建议：已快速应用微信输入法按住说话（本软件：左 Ctrl + 左 Win；微信：F5 + 左 Ctrl + 左 Win）",
+  },
+  // Historical configurations remain readable, but the dialog exposes only wechat-hold.
   wechat: {
     shortcutVks: [0xa2, 0x5b],
     voiceHotkey: ["leftctrl", "leftwin"],

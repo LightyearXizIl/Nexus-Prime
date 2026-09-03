@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, computed, ref, nextTick, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { loggedInvoke as invoke } from "../utils/appLogger";
 import { useRoute, useRouter } from "vue-router";
 import { useBridgeStore } from "../stores/bridge";
@@ -17,6 +18,7 @@ import InputMethodSettingsDialog, {
   type ImePreset,
 } from "../components/InputMethodSettingsDialog.vue";
 import { applyImePresetConfig, IME_PRESETS } from "../utils/imePreset";
+import { batteryTone, displayBatteryLevel } from "../utils/battery";
 import remoteProductImage from "../assets/xiaomi-remote-cutout.png";
 import { useI18n } from "vue-i18n";
 
@@ -58,6 +60,9 @@ const repairBusy = computed(
 );
 const showVoiceChoice = ref(false);
 const voiceChoiceMsg = ref("");
+const cableDownloadPhase = ref<"idle" | "downloading" | "complete" | "error">("idle");
+const cableDownloadProgress = ref<number | null>(null);
+const cableDownloadMessage = ref("");
 const showLogModal = ref(false);
 const showSetupTips = ref(false);
 const setupApplyHint = ref("");
@@ -470,7 +475,14 @@ const deviceModelLabel = computed(() => {
   return t(connectionPresentation.value.labelKey);
 });
 const batteryLabel = computed(() =>
-  device.value.battery_level != null ? `${device.value.battery_level}%` : "—"
+  displayBatteryLevel(device.value.battery_level) != null
+    ? `${displayBatteryLevel(device.value.battery_level)}%`
+    : "—"
+);
+const batteryLevel = computed(() => displayBatteryLevel(device.value.battery_level));
+const batteryColorTone = computed(() => batteryTone(device.value.battery_level));
+const batteryIsCharging = computed(
+  () => batteryLevel.value != null && device.value.battery_charging === true,
 );
 const audioSignalLabel = computed(() => {
   if (!isDeviceConnected.value) return "—";
@@ -600,9 +612,13 @@ interface LogEntry {
 const logs = ref<LogEntry[]>([]);
 let logSeq = 0;
 let unlistenKey: UnlistenFn | null = null;
+let unlistenDeviceStatus: UnlistenFn | null = null;
 let unlistenMeter: UnlistenFn | null = null;
 let unlistenAtvvRepair: UnlistenFn | null = null;
 let unlistenAtvvCancel: UnlistenFn | null = null;
+let unlistenCableProgress: UnlistenFn | null = null;
+let unlistenCableComplete: UnlistenFn | null = null;
+let unlistenCableError: UnlistenFn | null = null;
 
 function formatTime(d = new Date()): string {
   return d.toLocaleTimeString("zh-CN", { hour12: false });
@@ -959,7 +975,7 @@ async function voiceDetectAndRepair() {
   }
 }
 
-async function chooseVoiceSource(source: "embedded" | "download_page" | "download_zip") {
+async function chooseVoiceSource(source: "embedded" | "download_page") {
   if (repairBusy.value && !voiceRepairing.value) return;
   voiceRepairing.value = true;
   showVoiceChoice.value = false;
@@ -983,6 +999,34 @@ async function chooseVoiceSource(source: "embedded" | "download_page" | "downloa
   }
 }
 
+async function startCableZipDownload() {
+  if (cableDownloadPhase.value === "downloading") return;
+  const path = await save({
+    defaultPath: "VBCABLE_Driver_Pack45.zip",
+    filters: [{ name: "ZIP 压缩包", extensions: ["zip"] }],
+  });
+  if (!path) return;
+  cableDownloadPhase.value = "downloading";
+  cableDownloadProgress.value = 0;
+  cableDownloadMessage.value = "正在校验并下载 VB-Audio 官方驱动包…";
+  try {
+    await invoke("download_xiaomi_vbcable_zip", { destPath: path });
+  } catch (e) {
+    cableDownloadPhase.value = "error";
+    cableDownloadMessage.value = `无法开始下载：${e}`;
+  }
+}
+
+async function cancelCableZipDownload() {
+  try {
+    await invoke("cancel_xiaomi_vbcable_zip_download");
+    cableDownloadMessage.value = "正在停止下载…";
+  } catch (e) {
+    cableDownloadPhase.value = "error";
+    cableDownloadMessage.value = `停止下载失败：${e}`;
+  }
+}
+
 onMounted(async () => {
   prependLog("日志区准备就绪");
   await Promise.all([
@@ -1000,6 +1044,41 @@ onMounted(async () => {
   }, 1500);
   window.addEventListener("resize", onViewportChange);
   window.addEventListener("scroll", onViewportChange, true);
+
+  try {
+    unlistenDeviceStatus = await listen<typeof device.value>("xiaomi-device-status", (event) => {
+      bridge.applyDeviceStatus(event.payload);
+    });
+  } catch (e) {
+    console.warn("listen xiaomi-device-status failed:", e);
+  }
+
+  try {
+    unlistenCableProgress = await listen<{
+      downloadedBytes: number;
+      totalBytes: number | null;
+      percent: number | null;
+    }>("vbcable-download-progress", (event) => {
+      cableDownloadPhase.value = "downloading";
+      cableDownloadProgress.value = event.payload.percent;
+      cableDownloadMessage.value = event.payload.percent == null
+        ? `已下载 ${Math.round(event.payload.downloadedBytes / 1024)} KiB`
+        : `正在下载：${event.payload.percent}%`;
+    });
+    unlistenCableComplete = await listen<{ finalPath: string }>("vbcable-download-complete", (event) => {
+      cableDownloadPhase.value = "complete";
+      cableDownloadProgress.value = 100;
+      cableDownloadMessage.value = `下载已完成：${event.payload.finalPath}。请手动解压并安装，完成后再执行检测。`;
+      prependLog(cableDownloadMessage.value);
+    });
+    unlistenCableError = await listen<{ message: string }>("vbcable-download-error", (event) => {
+      cableDownloadPhase.value = "error";
+      cableDownloadMessage.value = event.payload.message;
+      prependLog(`VB-CABLE 下载失败：${event.payload.message}`);
+    });
+  } catch (e) {
+    console.warn("listen vbcable download failed:", e);
+  }
 
   try {
     unlistenKey = await listen<{
@@ -1076,9 +1155,13 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlistenKey?.();
+  unlistenDeviceStatus?.();
   unlistenMeter?.();
   unlistenAtvvRepair?.();
   unlistenAtvvCancel?.();
+  unlistenCableProgress?.();
+  unlistenCableComplete?.();
+  unlistenCableError?.();
   if (hostPollTimer) clearInterval(hostPollTimer);
   if (devicePollTimer) clearInterval(devicePollTimer);
   if (voiceTipCloseTimer) clearTimeout(voiceTipCloseTimer);
@@ -1184,8 +1267,12 @@ watch(
             <div class="data-item">
               <span class="label">{{ t("dashboard.battery") }}</span>
               <strong>
-                <span class="battery" :class="{ 'is-charging': device.battery_charging === true }">
-                  <span class="battery-fill" :style="{ width: `${device.battery_level ?? 0}%` }" />
+                <span
+                  class="battery"
+                  :class="[`is-${batteryColorTone}`, { 'is-charging': batteryIsCharging }]"
+                  aria-hidden="true"
+                >
+                  <span class="battery-fill" :style="{ width: `${batteryLevel ?? 0}%` }" />
                   <span class="battery-flow" aria-hidden="true" />
                   <svg class="battery-bolt" viewBox="0 0 10 14" aria-hidden="true">
                     <path d="M5.9.7 1.2 7h3L3.7 13.3 8.9 6.4H5.7L5.9.7Z" />
@@ -1600,10 +1687,18 @@ watch(
             <button
               class="btn btn-secondary"
               type="button"
-              :disabled="voiceRepairing"
-              @click="chooseVoiceSource('download_zip')"
+              :disabled="cableDownloadPhase === 'downloading'"
+              @click="startCableZipDownload"
             >
-              下载最新驱动包
+              {{ cableDownloadPhase === "error" ? "重试下载官方驱动包" : "下载官方驱动包" }}
+            </button>
+            <button
+              v-if="cableDownloadPhase === 'downloading'"
+              class="btn btn-secondary"
+              type="button"
+              @click="cancelCableZipDownload"
+            >
+              停止下载
             </button>
             <button
               class="btn btn-secondary"
@@ -1617,8 +1712,11 @@ watch(
               取消
             </button>
           </div>
+          <p v-if="cableDownloadMessage" class="voice-modal-download" aria-live="polite">
+            {{ cableDownloadMessage }}
+          </p>
           <p class="voice-modal-note">
-            内嵌为已校验的 VB-CABLE 4.5；安装时会弹出 Windows 管理员确认。官网下载适合需要更新版本时。
+            内嵌包安装与签名检查保持不变。官方下载完成后不会自动安装或提权；请手动解压安装。官网也提供 Donationware/分发说明。
           </p>
         </div>
       </div>
@@ -2362,6 +2460,7 @@ watch(
   font-size: 12px !important;
   color: var(--text-secondary) !important;
 }
+.voice-modal-download { margin-top: 14px !important; margin-bottom: 0 !important; color: var(--text) !important; }
 
 .log-modal {
   width: min(720px, 100%);
@@ -2705,13 +2804,17 @@ watch(
 .data-item { min-width: 0; }
 .data-item .label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
 .data-item strong { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; isolation: isolate; border: 1.5px solid var(--text-secondary); border-radius: 3px; }
-.battery::after { position: absolute; top: 2px; right: -4px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: var(--text-secondary); content: ""; }
-.battery-fill { position: relative; z-index: 0; display: block; height: 100%; border-radius: 1px; background: var(--success); }
+.battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; isolation: isolate; color: var(--text-secondary); border: 1.5px solid currentColor; border-radius: 3px; }
+.battery::after { position: absolute; top: 2px; right: -4px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: currentColor; content: ""; }
+.battery-fill { position: relative; z-index: 0; display: block; height: 100%; border-radius: 1px; background: currentColor; }
+.battery.is-green { color: var(--success); }
+.battery.is-yellow { color: var(--warning); }
+.battery.is-red { color: var(--danger); }
+.battery.is-unknown { color: var(--text-secondary); }
 .battery-flow, .battery-bolt { display: none; }
-.battery.is-charging { border-color: var(--success); box-shadow: 0 0 0 1px rgb(var(--success-rgb) / 18%); box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 18%, transparent); }
+.battery.is-charging { box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent); }
 .battery.is-charging .battery-flow { position: absolute; z-index: 1; top: 1px; bottom: 1px; left: 0; display: block; width: 11px; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18) 28%, rgba(255, 255, 255, .88) 50%, rgba(255, 255, 255, .18) 72%, transparent); filter: blur(.25px); transform: translateX(-14px); animation: battery-charge-flow 1.15s cubic-bezier(.37, 0, .21, 1) infinite; }
-.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px rgb(var(--success-rgb) / 85%)); filter: drop-shadow(0 0 1.5px color-mix(in srgb, var(--success) 85%, #fff)); }
+.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px color-mix(in srgb, currentColor 85%, #fff)); }
 @keyframes battery-charge-flow { from { transform: translateX(-14px); opacity: .2; } 18% { opacity: 1; } 82% { opacity: 1; } to { transform: translateX(23px); opacity: .2; } }
 @media (prefers-reduced-motion: reduce) { .battery.is-charging .battery-flow { animation: none; transform: translateX(5px); opacity: .42; } }
 .data-item-audio.is-atvv-error strong { color: var(--danger); }
