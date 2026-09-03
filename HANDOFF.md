@@ -13,7 +13,8 @@
 ### 本轮自动化验证
 
 - `npm.cmd test`：41/41 通过；`npm.cmd run build`：通过；`cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml`：通过。
-- `npm.cmd run tauri:build`：`0.3.7` 已通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.7_x64-setup.exe`，13,334,604 bytes，SHA-256 `6B191A10FF4298F3CC34D0AA1FBA165E914E1102FB8E49234D38F2FC4CC00EDF`；文件版本和产品版本均为 `0.3.7`。发布、标签与远端资产复核待完成。
+- `npm.cmd run tauri:build`：`0.3.7` 已通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.7_x64-setup.exe`，13,334,604 bytes，SHA-256 `6B191A10FF4298F3CC34D0AA1FBA165E914E1102FB8E49234D38F2FC4CC00EDF`；文件版本和产品版本均为 `0.3.7`。
+- GitHub 正式 Release：[`v0.3.7`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.7) 已公开。标签指向 `262cd77`；资产 `Nexus.Prime_0.3.7_x64-setup.exe` 状态 `uploaded`、大小 13,334,604 bytes、GitHub digest `sha256:6b191a10ff4298f3cc34d0aa1fba165e914e1102fb8e49234d38f2fc4cc00edf`，与本地 SHA-256 一致。为保留远端 README 提交，`main` 随后合并至 `607a11b`。
 
 ### 仍待真实设备验收（不得标为微信已完全修复）
 
