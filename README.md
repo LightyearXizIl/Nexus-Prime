@@ -2,7 +2,7 @@
 
 Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具。它通过蓝牙读取遥控器按键与 ATVV 语音数据，把按键转换为可自定义的键盘快捷键，并将语音路由到虚拟声卡，供输入法或其他语音软件使用。
 
-当前版本：**v0.3.9**
+当前版本：**v0.4.0**
 
 技术栈：**Rust · Tauri 2 · Vue 3 · TypeScript**
 
@@ -255,11 +255,11 @@ npm run tauri:dev
 
 这通常表示输入法过滤了普通模拟键盘事件。先确认首页音频信号正常、输入法麦克风为 `CABLE Output`，并核对实际听写快捷键；随后在首页点击“修复虚拟键盘”，接受管理员确认。修复完成后使用遥控器语音键重新测试。若提示“待重启”，重启 Windows 后再试。
 
-WinUHid 不可用时，程序会保留原有的 SendInput 回退路径；日志中可用 `route=virtual_hid` 或 `route=send_input_fallback` 判断实际使用的发送方式。
+WinUHid 不可用时，程序会保留原有的 SendInput 回退路径；日志中可用 `route=virtual_hid` 或 `route=send_input_fallback` 判断实际使用的发送方式。千问等可能过滤软件模拟按键的输入法，只有 `route=virtual_hid` 才能作为已送达硬件快捷键的依据；出现降级提示时，请先修复虚拟键盘。
 
 如果按一次遥控器语音键出现两个微信语音面板，请在 Nexus Prime 的“输入法设置 → 微信”重新应用所需模式。旧版 `wechat-hold` 配置会自动迁移到推荐的“按住说话”（`左 Ctrl + 左 Shift + D`），避免把微信的 Ctrl+Win 启动快捷键当成长按组合持续发送。
 
-包含 Win 或 Alt 的纯修饰键语音快捷键会在释放前发送中和键，避免输入法未接管时弹出开始菜单或系统菜单；若日志出现 `modifier still down` 或 `release recovery`，请保留当天日志用于排查。
+语音键每次按压只会建立一个会话：微信 Ctrl+Win 在 DOWN 完成一次短脉冲，微信 Ctrl+Shift+D 和千问右 Alt 在 UP 按原路径释放。F5、Ctrl、Win 的固件泄漏仅在本次语音周期内被处理；若日志出现 `hook bump timed out`、`modifier recovery` 或 `release recovery`，请保留当天日志用于排查。
 
 ### 显示“ATVV 未连接”
 

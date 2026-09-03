@@ -1,6 +1,23 @@
 # 交接记录
 
-更新时间：2026-09-03
+更新时间：2026-09-04
+
+## 本次范围（v0.4.0，2026-09-04）
+
+- 本机复现证据：微信输入法 2.1.3.18 的“启动语音输入”仍为左 Ctrl + 左 Win、“按住说话”仍为左 Ctrl + 左 Shift + D，两个开关均已启用；千问输入法配置仍启用右 Alt 唤醒。因此失效不是输入法快捷键设置被改动。
+- v0.3.9 日志确认微信启动模式在同一次遥控器按压中先记录 `start-voice tap`，松开又记录 `start-voice stop tap`。第二次 Ctrl+Win 会立即关闭刚打开的微信语音面板；v0.4.0 用 `VoicePressSession` 统一记录 Tap/Hold、原始组合键、预设和实际注入路由，UP 不会再次发微信 Ctrl+Win。
+- 选择性参考 `mwlt/Voice_VibeCoding` 提交 `c76056d597c9fb2e504f79313a8cbffd8d648535`：语音 DOWN 固定为“认领边沿 → F5 周期 → 确保/置顶 LL 钩子（最多 8ms）→ 等待固件前置信号最多 80ms、关闭捕获并受控修复已捕获 Ctrl/Win → 锁定注入后端 → 快捷键 DOWN → PCM/界面”。未引入其 F5+微信映射或界面方案；MIT 来源已记入 `THIRD_PARTY_NOTICES.md`。
+- F5 改为完整配对状态：关联窗 120ms、前置信号等待最多 80ms、松开尾窗 3 秒、sticky 空闲上限 10 秒。若 F5 DOWN 已放行至系统，对应 UP 必须放行；固件 Ctrl/Win 只在钩子实际捕获的语音周期内补 KEYUP。捕获在 WinUHid 注入前关闭，避免虚拟 Ctrl/Win 被误吞；不再采用旧的 20ms 收尾等待或全局异步键态探测。
+- 千问和豆包预设在右 Alt / 右 Alt + 空格注入前，额外检查本次已确认 F5 周期中仍按下的固件左 Ctrl/左 Win 并只对这两个已知泄漏键发送 KEYUP，避免输入法收到错误的 Ctrl+Win+Alt 组合。微信两条路径不调用该清理。
+- WinUHid 在 DOWN 前优先选定并在 Hold 会话中锁定；只有不可用才降级 SendInput。千问右 Alt 的降级路径会明确提示修复虚拟键盘，不把软件模拟键成功当作千问已唤醒。
+- 版本号按“末位满十进一”规则由 v0.3.9 进位到 v0.4.0，不使用 v0.3.10。当前未修改用户的 Nexus Prime 配置、微信输入法设置或千问输入法设置。千问 0.8.0.27 升级后其语音服务停滞，重启该输入法的维护服务和语音服务器后，实体右 Alt 已由用户确认恢复；这项恢复不依赖 Nexus Prime 改动。
+
+### 当前验证
+
+- 当前代码验证：Rust workspace 测试 127/127、前端测试 47/47、前端生产构建、Cargo workspace 全目标检查和 `git diff --check` 均通过；新增覆盖 Tap/Hold 会话、固定后端、原始键位释放、钩子置顶确认和 F5 配对/泄漏/尾窗。
+- Windows Tauri 打包通过。NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.4.0_x64-setup.exe`，13,339,277 bytes，SHA-256 `7F0EE7750E029A74708793228A11653580B4091C6C0694C226BA0AA30D225B18`；文件和产品版本均为 `0.4.0`。该包包含“WinUHid 自身 Ctrl/Win 不再被固件过滤器吞掉”以及“千问/豆包右 Alt 清理已确认固件 Ctrl/Win”的修复。MSI 未随本次发布重打。
+- GitHub 正式 Release [`v0.4.0`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.4.0) 已发布。资产 `Nexus.Prime_0.4.0_x64-setup.exe` 状态为 `uploaded`、大小 13,339,277 bytes、GitHub 摘要为 `sha256:7f0ee7750e029a74708793228a11653580b4091c6c0694c226ba0aa30d225b18`，与本地一致；Release `latest.json` 与标签原始清单均为 v0.4.0。
+- 千问实体右 Alt 已在重启输入法服务后确认恢复；微信两种模式、豆包和完整的 10 次遥控器回归仍是发布后的待验证项。重点检查单面板、自动上屏但不发送 Enter、无开始菜单/F5 串入/粘键，以及快速连按、断连和配置切换。
 
 ## 本次范围（v0.3.9，已发布，2026-09-03）
 

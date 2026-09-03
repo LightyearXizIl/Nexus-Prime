@@ -26,6 +26,7 @@ impl VoiceChordState {
         Self { held: None }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_held(&self) -> bool {
         self.held.is_some()
     }

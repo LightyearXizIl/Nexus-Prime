@@ -30,6 +30,15 @@ VB-CABLE 是 Donationware。仓库中的驱动包应保持供应商原始 ZIP �
 - 来源：用户指定的原版 [Voice VibeCoding](https://github.com/mwlt/Voice_VibeCoding) 仓库，其中的 WinUHid 实现基于 [cgutman/WinUHid](https://github.com/cgutman/WinUHid)。
 - 安装：首次启动会经 UAC 安装该包内的虚拟键盘驱动，供豆包、微信等输入法快捷键按硬件 HID 路径发送。
 
+## Voice VibeCoding 语音按键实现参考
+
+- 来源：[mwlt/Voice_VibeCoding](https://github.com/mwlt/Voice_VibeCoding)
+- 固定提交：`c76056d597c9fb2e504f79313a8cbffd8d648535`
+- 参考范围：语音按压顺序、低级键盘钩子置顶确认、F5 配对抑制、WinUHid/SendInput 后端锁定和受控修饰键释放。
+- 许可证：MIT License，Copyright (c) 2026 mwlt。
+
+本项目只选择性改写并适配上述机制，未合并上游的微信 F5 映射或界面方案。上游 MIT 许可证文本及版权声明应随任何实质性复用或再分发一并保留。
+
 ## 商标
 
 VB-Audio、Frida、小米、Windows 等名称和商标归各自权利人所有。项目对这些名称的使用仅用于说明兼容性和第三方来源。

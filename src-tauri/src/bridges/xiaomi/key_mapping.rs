@@ -17,12 +17,9 @@ use tauri::{AppHandle, Manager};
 /// 与 Python `EXTRA_INFO = 0x584D4952` ('XMIR') 一致，供 LL hook 放行虚拟键
 pub const EXTRA_INFO: usize = 0x584D_4952;
 
-/// 实际已通过 SendInput 按下的语音组合键。必须保留原始键位，不能在抬起时
-/// 重新读配置，否则配置变更/连接断开会导致 Ctrl、Win 等修饰键粘住。
-static VOICE_HELD_KEYS: Mutex<VoiceChordState> = Mutex::new(VoiceChordState::empty());
-/// 旧版微信的 Ctrl+Win 是两次独立点按：按下启动、松开结束。它不能复用持续持键
-/// 状态，否则遥控器固件持续产生的 F5 会与 Ctrl+Win 组合，被微信再次识别。
-static VOICE_WECHAT_TAP_SESSION: Mutex<Option<VoiceTapSession>> = Mutex::new(None);
+/// 每次遥控器语音按压只允许一个会话。它保留按下时解析出的原始键位、注入
+/// 后端和模式，抬起时绝不重新读配置，避免切换预设或断连造成粘键/双发。
+static VOICE_SESSION: Mutex<VoicePressSession> = Mutex::new(VoicePressSession::empty());
 static DIRECT_MARKS: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 static REPEAT_GEN: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
 static CLICK_GEN: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
@@ -43,13 +40,16 @@ static VOICE_F5_DOWN_SUPPRESSED: AtomicBool = AtomicBool::new(false);
 /// F5 看似被“粘住”。这个标记只覆盖当前一组 F5 边沿。
 static VOICE_F5_DOWN_REACHED_OS: AtomicBool = AtomicBool::new(false);
 static VOICE_F5_SUPPRESSED_COUNT: AtomicU64 = AtomicU64::new(0);
+static VOICE_F5_LAST_EVENT: Mutex<Option<Instant>> = Mutex::new(None);
+static VOICE_F5_POST_TAIL_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+static VOICE_PERIOD_ACTIVE: AtomicBool = AtomicBool::new(false);
 static INPUT_SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FIRMWARE_VOICE_HELD: AtomicBool = AtomicBool::new(false);
 static VOICE_HOOK_APP: Mutex<Option<AppHandle>> = Mutex::new(None);
 /// LL keyboard hook 回调只负责入队；真正的事件、等待和注入均由这个串行 worker
 /// 执行，避免阻塞系统键盘钩子并保持 F5 DOWN/UP 的顺序。
 static FIRMWARE_VOICE_DISPATCH: OnceLock<mpsc::Sender<(AppHandle, bool)>> = OnceLock::new();
-/// 当前非旧版微信语音会话持有的快捷键修饰键。固件 Ctrl/Win 的抬起不能中断它。
+/// 当前按住型语音会话持有的快捷键修饰键。固件 Ctrl/Win 的抬起不能中断它。
 static VOICE_HELD_CHORD_MODIFIERS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 /// 应用自身释放虚拟 HID 和弦时的短放行窗口。
 static VOICE_CHORD_RELEASE_PASS_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
@@ -57,8 +57,6 @@ static VOICE_CHORD_GUARD_LOGGED: AtomicBool = AtomicBool::new(false);
 /// ATVV 语音开始后短暂拦截固件冒出的左 Ctrl/左 Win，避免污染目标快捷键。
 static VOICE_FIRMWARE_MODIFIER_FILTER: Mutex<FirmwareVoiceModifierFilter> =
     Mutex::new(FirmwareVoiceModifierFilter::empty());
-/// 语音 DOWN 时锁定的预设；释放时不重新读取配置。
-static VOICE_HELD_PROFILE: Mutex<Option<VoiceInputProfile>> = Mutex::new(None);
 static SEND_INPUT_HEALTH: Mutex<SendInputHealth> = Mutex::new(SendInputHealth {
     verified: false,
     last_error: None,
@@ -70,15 +68,131 @@ struct SendInputHealth {
     last_error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct VoiceTapSession {
-    keys: Vec<u16>,
-    route: VoiceInjectionRoute,
-    profile: Option<VoiceInputProfile>,
-}
-
 /// 固件语音报文会泄漏的修饰键（HID 0x05：左 Ctrl + 左 Win）。
 pub(crate) const VOICE_FIRMWARE_LEAK_MODIFIER_VKS: [u16; 2] = [0xA2, 0x5B];
+
+/// 与上游 F5 关联状态机对齐的时间边界。窗口之外的实体键盘 F5 必须正常放行。
+pub const VOICE_F5_CORRELATE_MS: u64 = 120;
+pub const VOICE_F5_CORRELATE_WAIT_MS: u64 = 80;
+pub const VOICE_F5_POST_TAIL_MS: u64 = 3_000;
+pub const VOICE_F5_STICKY_MAX_IDLE_MS: u64 = 10_000;
+pub const VOICE_HOOK_BUMP_SETTLE_MS: u64 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VoiceActivationKind {
+    Tap,
+    Hold,
+}
+
+/// 统一语音按压状态：Tap 会话只占用一个 DOWN 边沿，Hold 会话由
+/// `VoiceChordState` 保存实际注入的键和后端并负责可重试释放。
+#[derive(Debug)]
+struct VoicePressSession {
+    sequence: u64,
+    active: bool,
+    activation: Option<VoiceActivationKind>,
+    profile: Option<VoiceInputProfile>,
+    tap_route: Option<VoiceInjectionRoute>,
+    chord: VoiceChordState,
+}
+
+impl VoicePressSession {
+    const fn empty() -> Self {
+        Self {
+            sequence: 0,
+            active: false,
+            activation: None,
+            profile: None,
+            tap_route: None,
+            chord: VoiceChordState::empty(),
+        }
+    }
+
+    fn begin_tap(&mut self, profile: Option<VoiceInputProfile>) -> bool {
+        if self.active {
+            return false;
+        }
+        self.sequence = self.sequence.wrapping_add(1);
+        self.active = true;
+        self.activation = Some(VoiceActivationKind::Tap);
+        self.profile = profile;
+        self.tap_route = None;
+        true
+    }
+
+    fn begin_hold<F, C>(
+        &mut self,
+        keys: &[u16],
+        profile: Option<VoiceInputProfile>,
+        inject_down: F,
+        compensate: C,
+    ) -> Option<VoiceInjectionRoute>
+    where
+        F: FnMut(&[u16]) -> Option<VoiceInjectionRoute>,
+        C: FnMut(&[u16]),
+    {
+        if self.active || !self.chord.press_with(keys, inject_down, compensate) {
+            return None;
+        }
+        self.sequence = self.sequence.wrapping_add(1);
+        self.active = true;
+        self.activation = Some(VoiceActivationKind::Hold);
+        self.profile = profile;
+        self.tap_route = None;
+        self.chord.held_route()
+    }
+
+    fn record_tap_route(&mut self, route: VoiceInjectionRoute) {
+        if self.active && self.activation == Some(VoiceActivationKind::Tap) {
+            self.tap_route = Some(route);
+        }
+    }
+
+    fn finish_tap(&mut self) -> bool {
+        if self.active && self.activation == Some(VoiceActivationKind::Tap) {
+            self.active = false;
+            self.activation = None;
+            self.profile = None;
+            self.tap_route = None;
+            return true;
+        }
+        false
+    }
+
+    fn release_hold<F>(&mut self, mut inject: F) -> Option<(Vec<u16>, VoiceInjectionRoute, bool)>
+    where
+        F: FnMut(&[u16], VoiceInjectionRoute, Option<VoiceInputProfile>) -> bool,
+    {
+        if self.activation != Some(VoiceActivationKind::Hold) {
+            return None;
+        }
+        let profile = self.profile;
+        let released = self.chord.release_with(|keys, route| inject(keys, route, profile));
+        if released.as_ref().is_some_and(|(_, _, ok)| *ok) {
+            self.active = false;
+            self.activation = None;
+            self.profile = None;
+            self.tap_route = None;
+        }
+        released
+    }
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn held_route(&self) -> Option<VoiceInjectionRoute> {
+        self.chord.held_route().or(self.tap_route)
+    }
+
+    fn clear_after_verified_release(&mut self) {
+        self.chord.clear_after_verified_release();
+        self.active = false;
+        self.activation = None;
+        self.profile = None;
+        self.tap_route = None;
+    }
+}
 
 #[derive(Debug, Default)]
 struct FirmwareVoiceModifierFilter {
@@ -114,11 +228,18 @@ impl FirmwareVoiceModifierFilter {
 
     fn note_f5_suppressed(&mut self) {
         self.correlated_f5 = true;
-        self.finish_capture();
+    }
+
+    fn captured_modifiers(&self) -> Vec<u16> {
+        self.suppressed_modifiers.clone()
+    }
+
+    fn has_captured_modifiers(&self) -> bool {
+        !self.suppressed_modifiers.is_empty()
     }
 
     fn capture_active(&self, now: Instant) -> bool {
-        !self.correlated_f5 && self.capture_until.is_some_and(|until| now <= until)
+        self.capture_until.is_some_and(|until| now <= until)
     }
 
     fn should_swallow(&mut self, vk: u16, down: bool, release_pass_open: bool) -> bool {
@@ -206,10 +327,13 @@ pub fn reset_voice_input_state(reason: &str) {
     force_release_voice_shortcut(reason);
     clear_voice_chord_guards();
     FIRMWARE_VOICE_HELD.store(false, Ordering::Release);
+    end_voice_period(reason);
     disarm_voice_native_suppress();
     VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
     VOICE_F5_DOWN_REACHED_OS.store(false, Ordering::Release);
     VOICE_F5_SUPPRESSED_COUNT.store(0, Ordering::Release);
+    *VOICE_F5_LAST_EVENT.lock() = None;
+    *VOICE_F5_POST_TAIL_UNTIL.lock() = None;
     crate::bridges::xiaomi::voice_pcm::end_session();
     crate::bridges::xiaomi::voice_meter::set_session(false);
 }
@@ -307,6 +431,43 @@ fn process_firmware_voice_key(app: AppHandle, pressed: bool) {
 
 /// 与 special_keys F5 抑制策略对齐（测试/文档）
 pub const VOICE_F5_SUPPRESS_DEADLINE_MS: u64 = 3_000;
+
+/// ATVV 或固件回退收到语音 DOWN 时立即开启周期。即使用户临时禁用了快捷键，
+/// 本周期也必须继续吞掉遥控器固件 F5，不能把日期/刷新键送给前台程序。
+pub fn begin_voice_period() {
+    VOICE_PERIOD_ACTIVE.store(true, Ordering::Release);
+    *VOICE_F5_POST_TAIL_UNTIL.lock() = None;
+    *VOICE_F5_LAST_EVENT.lock() = None;
+    arm_voice_native_suppress();
+    arm_voice_firmware_modifier_filter();
+    log::debug!("XIAOMI VOICE period begin f5_guard=armed");
+}
+
+/// 遥控器 UP 或连接结束后进入 F5 尾窗。不能在这里清 sticky：固件 F5 UP
+/// 和 typematic 常在 ATVV UP 之后才到达，提前清除会造成 F5 泄漏。
+pub fn end_voice_period(reason: &str) {
+    let was_active = VOICE_PERIOD_ACTIVE.swap(false, Ordering::AcqRel);
+    *VOICE_F5_POST_TAIL_UNTIL.lock() =
+        Some(Instant::now() + Duration::from_millis(VOICE_F5_POST_TAIL_MS));
+    if was_active {
+        log::debug!("XIAOMI VOICE period end reason={reason} f5_tail_ms={VOICE_F5_POST_TAIL_MS}");
+    }
+}
+
+fn voice_period_active() -> bool {
+    VOICE_PERIOD_ACTIVE.load(Ordering::Acquire)
+}
+
+fn post_voice_f5_tail_active() -> bool {
+    let mut tail = VOICE_F5_POST_TAIL_UNTIL.lock();
+    match *tail {
+        Some(until) if Instant::now() <= until => true,
+        _ => {
+            *tail = None;
+            false
+        }
+    }
+}
 
 pub fn arm_voice_native_suppress() {
     VOICE_NATIVE_SUPPRESS.store(true, Ordering::Release);
@@ -412,12 +573,12 @@ pub fn direct_signal_recent(name: &str, window: Duration) -> bool {
 fn wait_for_direct_signal(name: &str, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if direct_signal_recent(name, Duration::from_millis(400)) {
+        if direct_signal_recent(name, Duration::from_millis(VOICE_F5_CORRELATE_MS)) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    direct_signal_recent(name, Duration::from_millis(400))
+    direct_signal_recent(name, Duration::from_millis(VOICE_F5_CORRELATE_MS))
 }
 
 /// 对齐 Python `_should_suppress_voice_f5`：关联固件 F5 与语音键，避免记事本刷日期时间
@@ -426,46 +587,71 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
         return false;
     }
     if up {
-        // DOWN 没被我们吞掉时，绝不能仅因语音会话还在线而吞它的 UP。
-        // 这也让普通实体键盘 F5 在 BLE 会话存活期间保持正常。
-        if VOICE_F5_DOWN_REACHED_OS.swap(false, Ordering::AcqRel) {
-            VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
-            VOICE_F5_SUPPRESSED_COUNT.store(0, Ordering::Release);
-            return false;
-        }
-        let suppressed = VOICE_F5_DOWN_SUPPRESSED.swap(false, Ordering::AcqRel);
-        if suppressed {
+        // 若 F5 DOWN 已进系统，UP 必须放行；否则 Windows 会把实体 F5 视为持续按下。
+        let leaked_down = VOICE_F5_DOWN_REACHED_OS.swap(false, Ordering::AcqRel);
+        let was_sticky = VOICE_F5_DOWN_SUPPRESSED.swap(false, Ordering::AcqRel);
+        *VOICE_F5_LAST_EVENT.lock() = None;
+        let suppress_up = was_sticky && !leaked_down;
+        if was_sticky {
             let count = VOICE_F5_SUPPRESSED_COUNT.swap(0, Ordering::AcqRel);
-            log::info!("XIAOMI VOICE firmware F5 suppressed count={count}");
+            log::info!(
+                "XIAOMI VOICE firmware F5 up action={} count={count}",
+                if suppress_up { "suppressed" } else { "passed_after_leak" }
+            );
         }
-        return suppressed;
+        return suppress_up;
     }
-    let suppressed = if VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire) {
-        true
-    } else if !input_session_active() {
-        false
-    } else if voice_native_suppress_active()
-        || direct_signal_recent("voice", Duration::from_millis(300))
-        || direct_signal_recent("mic", Duration::from_millis(300))
-    {
-        VOICE_F5_DOWN_SUPPRESSED.store(true, Ordering::Release);
-        true
-    } else if wait_for_direct_signal("mic", Duration::from_millis(80)) {
-        VOICE_F5_DOWN_SUPPRESSED.store(true, Ordering::Release);
-        arm_voice_native_suppress();
-        true
-    } else {
-        // Policy B：关联不上则放行（键盘 F5 可用）。ATVV 挂掉时由 toast 提示，不再会话级全吞。
-        false
-    };
-    if suppressed {
-        note_voice_firmware_f5_suppressed();
-        let count = VOICE_F5_SUPPRESSED_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
-        if count == 1 {
-            log::info!("XIAOMI VOICE firmware F5 suppression started");
+
+    let now = Instant::now();
+    if VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire) {
+        let last = *VOICE_F5_LAST_EVENT.lock();
+        if last.is_some_and(|at| now.duration_since(at) <= Duration::from_millis(VOICE_F5_STICKY_MAX_IDLE_MS)) {
+            *VOICE_F5_LAST_EVENT.lock() = Some(now);
+            let count = VOICE_F5_SUPPRESSED_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
+            log::debug!("XIAOMI VOICE firmware F5 suppressed typematic count={count}");
+            return true;
         }
+        VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
+        log::warn!("XIAOMI VOICE firmware F5 sticky expired after idle timeout");
     }
-    suppressed
+
+    let mut guarded = voice_period_active()
+        || voice_native_suppress_active()
+        || post_voice_f5_tail_active()
+        || direct_signal_recent("voice", Duration::from_millis(VOICE_F5_CORRELATE_MS))
+        || direct_signal_recent("mic", Duration::from_millis(VOICE_F5_CORRELATE_MS));
+    if !guarded && input_session_active() {
+        guarded = wait_for_direct_signal(
+            "mic",
+            Duration::from_millis(VOICE_F5_CORRELATE_WAIT_MS),
+        );
+    }
+    if !guarded {
+        return false;
+    }
+
+    VOICE_F5_DOWN_SUPPRESSED.store(true, Ordering::Release);
+    *VOICE_F5_LAST_EVENT.lock() = Some(now);
+    note_voice_firmware_f5_suppressed();
+    let count = VOICE_F5_SUPPRESSED_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
+    if count == 1 {
+        log::info!("XIAOMI VOICE firmware F5 suppression started");
+    }
+    true
+}
+
+#[cfg(test)]
+pub(crate) fn reset_voice_f5_state_for_test() {
+    VOICE_F5_DOWN_SUPPRESSED.store(false, Ordering::Release);
+    VOICE_F5_DOWN_REACHED_OS.store(false, Ordering::Release);
+    VOICE_F5_SUPPRESSED_COUNT.store(0, Ordering::Release);
+    VOICE_NATIVE_SUPPRESS.store(false, Ordering::Release);
+    VOICE_PERIOD_ACTIVE.store(false, Ordering::Release);
+    *VOICE_NATIVE_DEADLINE.lock() = None;
+    *VOICE_F5_LAST_EVENT.lock() = None;
+    *VOICE_F5_POST_TAIL_UNTIL.lock() = None;
+    *DIRECT_MARKS.lock() = None;
+    VOICE_FIRMWARE_MODIFIER_FILTER.lock().clear();
 }
 
 /// special key hook 在决定放行 F5 DOWN 时调用。与 `should_suppress_voice_f5`
@@ -1222,11 +1408,21 @@ fn click_count_label(count: u8) -> &'static str {
 }
 
 fn handle_voice(app: &AppHandle, pressed: bool) {
-    // 抬起必须优先释放已记录的原始组合键；此时配置可能已关闭、丢失或变更。
+    // 抬起必须优先释放按下时记录的原始组合键；此时配置可能已关闭、丢失或变更。
     if !pressed {
         force_release_voice_shortcut("remote_up");
+        end_voice_period("remote_up");
         return;
     }
+
+    if VOICE_SESSION.lock().is_active() {
+        log::debug!("XIAOMI VOICE DOWN ignored duplicate active_session=true");
+        return;
+    }
+
+    // 即使快捷键关闭，也要先建立 F5 周期并确保钩子运行，防止固件 F5 漏给前台。
+    begin_voice_period();
+    crate::bridges::xiaomi::special_keys::ensure_hook_for_capture();
     let Some(config) = load_xiaomi_config(app) else {
         return;
     };
@@ -1240,20 +1436,59 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
         return;
     }
     let profile = config.voice_input_profile;
-    arm_voice_firmware_modifier_filter();
-    wait_for_clean_voice_modifier_window();
+    if voice_hotkey_is_firmware_f5(&vks) {
+        log::error!("XIAOMI VOICE shortcut contains firmware F5; refusing to inject it");
+        return;
+    }
+
+    match crate::bridges::xiaomi::special_keys::bump_hook_to_front_and_settle(
+        VOICE_HOOK_BUMP_SETTLE_MS,
+    ) {
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::Settled => {}
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::TimedOut => {
+            log::warn!("XIAOMI VOICE hook bump timed out; F5 suppression may be late");
+        }
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::SelfDeadlock => {
+            log::error!("XIAOMI VOICE hook bump refused on hook thread");
+        }
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::NoHookThread => {
+            log::debug!("XIAOMI VOICE hook bump skipped; hook thread not ready");
+        }
+    }
+    // A WinUHid report is delivered to the low-level hook like a physical
+    // keyboard report.  Do not leave the firmware Ctrl/Win capture window open
+    // while issuing the target shortcut, otherwise our own virtual Ctrl/Win is
+    // indistinguishable from the remote leak and gets swallowed.  The bounded
+    // wait intentionally follows the upstream F5 pre-signal rule (80ms), not
+    // the removed unconditional 20ms delay.
+    settle_firmware_modifier_capture_before_injection();
+    sanitize_confirmed_firmware_modifiers_for_alt_voice(&vks, profile);
+
     if is_wechat_start_voice_shortcut(&vks, profile) {
-        if let Some(route) = start_wechat_start_voice_session(&vks, profile) {
+        if !VOICE_SESSION.lock().begin_tap(profile) {
+            log::debug!("XIAOMI VOICE WeChat tap DOWN ignored duplicate edge");
+            return;
+        }
+        if let Some(route) = tap_wechat_start_voice_shortcut(&vks) {
+            VOICE_SESSION.lock().record_tap_route(route);
             log::info!(
                 "XIAOMI VOICE WeChat start-voice tap route={} vks={vks:?}",
                 voice_injection_route_label(route),
             );
+        } else {
+            let _ = VOICE_SESSION.lock().finish_tap();
+            log::warn!("XIAOMI VOICE WeChat start-voice tap failed vks={vks:?}");
         }
         return;
     }
     // 点击 / 按住：快捷键都跟遥控按下/抬起走（短按≈点按，长按=按住）。
     // 先截掉固件自带 Ctrl/Win，目标和弦才会落在干净的修饰键状态上。
     if let Some(route) = press_voice_shortcut(&vks, profile, "remote_down") {
+        if route == VoiceInjectionRoute::SendInputFallback
+            && matches!(profile, Some(VoiceInputProfile::Qianwen))
+        {
+            emit_message(app, "千问语音已降级为 SendInput；请在小米设置中修复虚拟键盘后重试");
+        }
         log::info!(
             "XIAOMI VOICE SHORTCUT DOWN mode={:?} route={} vks={vks:?}",
             config.trigger_mode,
@@ -1281,7 +1516,7 @@ pub fn voice_shortcut_tap(app: &AppHandle) -> &'static str {
     } else {
         70
     };
-    wait_for_leak_modifiers_released();
+    settle_firmware_modifier_capture_before_injection();
     let route = press_voice_shortcut(&vks, config.voice_input_profile, "click_tap");
     let route = match route {
         Some(route) => {
@@ -1326,7 +1561,7 @@ pub fn voice_shortcut_ensure_down(app: &AppHandle) {
     if vks.is_empty() {
         return;
     }
-    wait_for_leak_modifiers_released();
+    settle_firmware_modifier_capture_before_injection();
     if let Some(route) = press_voice_shortcut(&vks, config.voice_input_profile, "hold_threshold") {
         log::info!(
             "XIAOMI VOICE SHORTCUT DOWN (hold-after-click-threshold) route={} vks={vks:?}",
@@ -1340,59 +1575,43 @@ fn press_voice_shortcut(
     profile: Option<VoiceInputProfile>,
     reason: &str,
 ) -> Option<VoiceInjectionRoute> {
-    let mut state = VOICE_HELD_KEYS.lock();
-    if state.is_held() {
-        log::debug!("XIAOMI VOICE SHORTCUT DOWN ignored already_held reason={reason}");
+    let mut state = VOICE_SESSION.lock();
+    if state.is_active() {
+        log::debug!("XIAOMI VOICE SHORTCUT DOWN ignored duplicate edge reason={reason}");
         return None;
     }
-    let pressed = state.press_with(
+    let route = state.begin_hold(
         vks,
+        profile,
         inject_voice_shortcut_down,
         compensate_voice_shortcut_down,
     );
-    if pressed {
-        *VOICE_HELD_PROFILE.lock() = profile;
+    if route.is_some() {
         set_voice_held_chord_modifiers(vks);
     } else {
         clear_voice_chord_guards();
         log::warn!("XIAOMI VOICE SHORTCUT DOWN failed reason={reason} vks={vks:?}");
     }
-    state.held_route()
+    route
 }
 
 /// 释放实际按下的组合键；对同一会话重复调用不产生额外键盘事件。
 pub fn force_release_voice_shortcut(reason: &str) -> bool {
-    // 停止点按与清空会话必须经同一守卫完成：parking_lot 不可重入，
-    // 持锁期间再次 lock() 同一把锁会自锁死调用线程。
-    let mut session_slot = VOICE_WECHAT_TAP_SESSION.lock();
-    if let Some(session) = session_slot.clone() {
-        let released = tap_voice_shortcut_on_route(&session.keys, session.route, 120, false);
-        if released {
-            *session_slot = None;
-            clear_voice_chord_guards();
-            log::info!(
-                "XIAOMI VOICE WeChat start-voice stop tap reason={reason} profile={:?} route={} vks={:?}",
-                session.profile,
-                voice_injection_route_label(session.route),
-                session.keys,
-            );
-        } else {
-            log::error!(
-                "XIAOMI VOICE WeChat start-voice stop tap failed reason={reason} profile={:?} route={} vks={:?}",
-                session.profile,
-                voice_injection_route_label(session.route),
-                session.keys,
-            );
-        }
-        return released;
-    }
-    drop(session_slot);
-    let profile = *VOICE_HELD_PROFILE.lock();
     open_voice_chord_release_pass_window();
-    let mut state = VOICE_HELD_KEYS.lock();
+    let mut state = VOICE_SESSION.lock();
+    if state.finish_tap() {
+        // Ctrl+Win was already fully released on the DOWN edge. UP only closes
+        // the session, never sends the toggle shortcut a second time.
+        clear_voice_chord_guards();
+        log::info!("XIAOMI VOICE SHORTCUT UP reason={reason} tap_session=true");
+        return true;
+    }
     let Some((keys, route, mut released)) =
-        state.release_with(|keys, route| release_voice_shortcut(keys, route, profile))
+        state.release_hold(|keys, route, profile| release_voice_shortcut(keys, route, profile))
     else {
+        // Disabled/failed sessions do not own a chord.  The F5 period itself is
+        // ended by the caller after this cleanup.
+        clear_voice_chord_guards();
         return false;
     };
     if !released && route == VoiceInjectionRoute::VirtualHid {
@@ -1429,14 +1648,10 @@ fn voice_injection_route_label(route: VoiceInjectionRoute) -> &'static str {
 
 /// Diagnostic-only view of the route fixed for the active voice press.
 pub fn current_voice_route_label() -> &'static str {
-    VOICE_WECHAT_TAP_SESSION
-        .lock()
-        .as_ref()
-        .map(|session| voice_injection_route_label(session.route))
-        .or_else(|| VOICE_HELD_KEYS
+    VOICE_SESSION
         .lock()
         .held_route()
-        .map(voice_injection_route_label))
+        .map(voice_injection_route_label)
         .unwrap_or("none")
 }
 
@@ -1465,11 +1680,15 @@ fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
 }
 
 fn is_wechat_start_voice_shortcut(vks: &[u16], profile: Option<VoiceInputProfile>) -> bool {
-    // 微信“启动语音输入”是 Ctrl+Win 点击型快捷键：遥控器按下和抬起
-    // 分别发送一次短脉冲，不在固件重复流期间持续持有组合键。
+    // 微信“启动语音输入”是 Ctrl+Win 点击型快捷键：遥控器按下时只发送
+    // 一次完整短脉冲；抬起仅清理会话，不能再次发送 Ctrl+Win 关闭面板。
     // 已弃用的 WechatHold 会在配置边界迁移，不能进入此运行时分支。
     matches!(profile, Some(VoiceInputProfile::Wechat))
         && matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
+}
+
+fn voice_hotkey_is_firmware_f5(vks: &[u16]) -> bool {
+    vks.iter().any(|vk| *vk == 0x74)
 }
 
 fn arm_voice_firmware_modifier_filter() {
@@ -1488,35 +1707,93 @@ fn note_voice_firmware_f5_suppressed() {
         .note_f5_suppressed();
 }
 
-fn wait_for_clean_voice_modifier_window() {
-    // F5 可能比 ATVV MIC_OPEN 早到；最多等待一个短窗口，绝不阻塞语音链路。
-    for _ in 0..8 {
-        if VOICE_FIRMWARE_MODIFIER_FILTER.lock().correlated_f5
-            || VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire)
-        {
+/// Give the remote's firmware modifiers/F5 a short head start, then close the
+/// capture window before emitting a virtual-HID shortcut.  This keeps the
+/// modifier filter scoped to the remote signal and prevents it from consuming
+/// Nexus Prime's own Ctrl/Win reports.
+fn settle_firmware_modifier_capture_before_injection() {
+    let deadline = Instant::now() + Duration::from_millis(VOICE_F5_CORRELATE_WAIT_MS);
+    loop {
+        let (capture_active, captured_or_correlated) = {
+            let filter = VOICE_FIRMWARE_MODIFIER_FILTER.lock();
+            (
+                filter.capture_active(Instant::now()),
+                filter.has_captured_modifiers() || filter.correlated_f5,
+            )
+        };
+        if !capture_active || captured_or_correlated || Instant::now() >= deadline {
             break;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(5));
     }
-    VOICE_FIRMWARE_MODIFIER_FILTER.lock().finish_capture();
-    wait_for_leak_modifiers_released();
+
+    let captured = {
+        let mut filter = VOICE_FIRMWARE_MODIFIER_FILTER.lock();
+        filter.finish_capture();
+        filter.captured_modifiers()
+    };
+    if captured.is_empty() {
+        log::debug!(
+            "XIAOMI VOICE firmware modifier capture settled before injection captured=false"
+        );
+        return;
+    }
+
+    let released = key_chord(&captured, true);
+    log::info!(
+        "XIAOMI VOICE firmware modifier recovery captured_only=true released={released} vks={captured:?}"
+    );
 }
 
-fn wait_for_leak_modifiers_released() {
+/// 千问/豆包的右 Alt 不能与遥控器泄漏的左 Ctrl/左 Win 同时落入系统，
+/// 否则输入法实际看到的是 Ctrl+Win+Alt，而不是它们配置的右 Alt。
+///
+/// 这是上游 `recover_foreign_modifiers` 在本项目中的最小、设备限定版本：
+/// 仅在已确认本次语音 F5 周期后检查这两个已知固件键，绝不扫描或释放其它
+/// 用户修饰键；微信路径不会调用它。
+fn sanitize_confirmed_firmware_modifiers_for_alt_voice(
+    target_vks: &[u16],
+    profile: Option<VoiceInputProfile>,
+) {
+    if !matches!(
+        profile,
+        Some(
+            VoiceInputProfile::Qianwen
+                | VoiceInputProfile::DoubaoHold
+                | VoiceInputProfile::DoubaoHandsFree
+        )
+    ) || !VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire)
+    {
+        return;
+    }
+
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-        for _ in 0..30 {
-            let dirty = VOICE_FIRMWARE_LEAK_MODIFIER_VKS
-                .iter()
-                .any(|&vk| unsafe { GetAsyncKeyState(vk as i32) } < 0);
-            if !dirty {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
+
+        let leaked = confirmed_firmware_modifiers_to_release(target_vks, |vk| unsafe {
+            GetAsyncKeyState(vk as i32) < 0
+        });
+        if leaked.is_empty() {
+            return;
         }
-        log::warn!("XIAOMI VOICE clean modifier window timed out after 150ms; inject anyway");
+        let released = key_chord(&leaked, true);
+        log::info!(
+            "XIAOMI VOICE alt-profile firmware modifier recovery confirmed=true released={released} vks={leaked:?} profile={profile:?}"
+        );
     }
+}
+
+fn confirmed_firmware_modifiers_to_release<F>(target_vks: &[u16], mut is_down: F) -> Vec<u16>
+where
+    F: FnMut(u16) -> bool,
+{
+    VOICE_FIRMWARE_LEAK_MODIFIER_VKS
+        .iter()
+        .copied()
+        .filter(|vk| !target_vks.contains(vk))
+        .filter(|vk| is_down(*vk))
+        .collect()
 }
 
 pub fn should_swallow_voice_firmware_modifier(vk: u16, down: bool) -> bool {
@@ -1555,7 +1832,6 @@ fn clear_voice_chord_guards() {
     VOICE_HELD_CHORD_MODIFIERS.lock().clear();
     *VOICE_CHORD_RELEASE_PASS_UNTIL.lock() = None;
     VOICE_FIRMWARE_MODIFIER_FILTER.lock().clear();
-    *VOICE_HELD_PROFILE.lock() = None;
     VOICE_CHORD_GUARD_LOGGED.store(false, Ordering::Release);
 }
 
@@ -1594,69 +1870,28 @@ fn voice_guard_vk_covers(guard_vk: u16, event_vk: u16) -> bool {
     matches!(guard_vk, 0x10 | 0x11 | 0x12) && family(guard_vk) == family(event_vk)
 }
 
-fn wait_for_first_voice_f5_suppression() {
-    for _ in 0..8 {
-        if VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn start_wechat_start_voice_session(
-    vks: &[u16],
-    profile: Option<VoiceInputProfile>,
-) -> Option<VoiceInjectionRoute> {
-    if VOICE_WECHAT_TAP_SESSION.lock().is_some() {
-        log::debug!("XIAOMI VOICE WeChat start-voice ignored already_active");
-        return None;
-    }
-    // Let the correlated physical F5 reach our suppression hook first.  The
-    // shortcut is then a short edge-triggered pulse, never a chord held
-    // alongside the remote firmware's repeat stream.
-    wait_for_first_voice_f5_suppression();
+fn tap_wechat_start_voice_shortcut(vks: &[u16]) -> Option<VoiceInjectionRoute> {
+    // One edge-triggered pulse. Remote UP only closes VoicePressSession and
+    // never emits Ctrl+Win again, so WeChat cannot toggle its panel back off.
     let route = inject_voice_shortcut_down(vks)?;
-    if !tap_voice_shortcut_on_route(vks, route, 120, true) {
+    if !release_wechat_start_voice_tap(vks, route, 120) {
         compensate_voice_shortcut_down(vks);
         return None;
     }
-    *VOICE_WECHAT_TAP_SESSION.lock() = Some(VoiceTapSession {
-        keys: vks.to_vec(),
-        route,
-        profile,
-    });
     Some(route)
 }
 
-fn tap_voice_shortcut_on_route(
+fn release_wechat_start_voice_tap(
     vks: &[u16],
     route: VoiceInjectionRoute,
     hold_ms: u64,
-    key_is_already_down: bool,
 ) -> bool {
-    // The caller has already sent the initial DOWN for a start tap.  For a
-    // stop tap we need to emit that DOWN here; callers pass a route stored at
-    // start so both halves of the voice session use the same injection layer.
-    if !key_is_already_down {
-        let pressed = match route {
-            VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::press_ready(vks).is_ok(),
-            VoiceInjectionRoute::SendInputFallback => key_chord(vks, false),
-        };
-        if !pressed {
-            return false;
-        }
-    }
     std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
-    let mut released = false;
-    for _ in 0..3 {
-        released = match route {
-            VoiceInjectionRoute::VirtualHid => crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok(),
-            VoiceInjectionRoute::SendInputFallback => key_chord(vks, true),
-        };
-        if released {
-            break;
-        }
-    }
+    // 放行 Nexus 自己的 Ctrl/Win 释放；F24 中和 Win 的系统壳行为，避免
+    // 微信未接管快捷键时单独弹出开始菜单。
+    open_voice_chord_release_pass_window();
+    let mut released =
+        execute_voice_release_steps(&neutralized_voice_release_steps(vks, route), route);
     if !released && route == VoiceInjectionRoute::VirtualHid {
         crate::bridges::xiaomi::hid_injector::reset_and_retry();
         released = key_chord(vks, true);
@@ -1676,8 +1911,8 @@ fn release_voice_shortcut(
 ) -> bool {
     // Pure Win/Alt shortcuts must be turned into a real chord
     // before the modifiers lift, otherwise Windows can open Start/the system
-    // menu. WeChat start-voice Ctrl+Win is handled above as two short taps and
-    // never reaches this F24-based held-chord release path.
+    // menu. WeChat start-voice Ctrl+Win is handled above as one short tap and
+    // uses the same F24 neutralization on that tap's release.
     let released = execute_voice_release_steps(&voice_release_steps(vks, route, profile), route);
     if matches!(profile, Some(VoiceInputProfile::Qianwen)) {
         log::info!(
@@ -1702,14 +1937,6 @@ fn voice_needs_shell_neutralizer(vks: &[u16]) -> bool {
 enum VoiceReleaseStep {
     Press(Vec<u16>),
     Release(Vec<u16>),
-}
-
-#[cfg(test)]
-fn wechat_start_voice_tap_steps(vks: &[u16]) -> Vec<VoiceReleaseStep> {
-    vec![
-        VoiceReleaseStep::Press(vks.to_vec()),
-        VoiceReleaseStep::Release(vks.to_vec()),
-    ]
 }
 
 fn neutralized_voice_release_steps(vks: &[u16], route: VoiceInjectionRoute) -> Vec<VoiceReleaseStep> {
@@ -2785,7 +3012,7 @@ mod gesture_tests {
     }
 
     #[test]
-    fn wechat_start_voice_ctrl_win_uses_the_separate_tap_session_policy() {
+    fn wechat_start_voice_ctrl_win_uses_one_start_tap_policy() {
         assert!(is_wechat_start_voice_shortcut(
             &[0xA2, 0x5B],
             Some(VoiceInputProfile::Wechat)
@@ -2806,29 +3033,19 @@ mod gesture_tests {
             &[0xA5],
             Some(VoiceInputProfile::Wechat)
         ));
+        // DOWN is sent once by inject_voice_shortcut_down; release is neutralized
+        // on the same edge. Remote UP has no second Press step.
         assert_eq!(
-            wechat_start_voice_tap_steps(&[0xA2, 0x5B]),
+            neutralized_voice_release_steps(
+                &[0xA2, 0x5B],
+                VoiceInjectionRoute::SendInputFallback
+            ),
             vec![
-                VoiceReleaseStep::Press(vec![0xA2, 0x5B]),
+                VoiceReleaseStep::Press(vec![0x87]),
                 VoiceReleaseStep::Release(vec![0xA2, 0x5B]),
+                VoiceReleaseStep::Release(vec![0x87]),
             ]
         );
-    }
-
-    #[test]
-    fn force_release_keeps_wechat_start_voice_session_when_stop_tap_fails() {
-        // 测试进程中 WinUHid 设备从未预热，VirtualHid 路由的停止点按会立即
-        // 失败且不产生真实按键；失败时会话必须保留以便稍后重试，且函数必须
-        // 正常返回（锁守卫不得遗留持有可能导致后续 lock() 挂起）。
-        *VOICE_WECHAT_TAP_SESSION.lock() = Some(VoiceTapSession {
-            keys: vec![0xA2, 0x5B],
-            route: VoiceInjectionRoute::VirtualHid,
-            profile: Some(VoiceInputProfile::Wechat),
-        });
-        let released = force_release_voice_shortcut("test");
-        assert!(!released);
-        assert!(VOICE_WECHAT_TAP_SESSION.lock().is_some());
-        *VOICE_WECHAT_TAP_SESSION.lock() = None;
     }
 
     #[test]
@@ -2904,14 +3121,31 @@ mod gesture_tests {
         assert!(filter.should_swallow(0xA2, true, false));
         assert!(!filter.should_swallow(0xA0, true, false));
         filter.note_f5_suppressed();
-        assert!(!filter.should_swallow(0x5B, true, false));
+        assert!(filter.should_swallow(0x5B, true, false));
         assert!(filter.should_swallow(0xA2, false, false));
+        filter.finish_capture();
+        assert!(!filter.should_swallow(0x5B, true, false));
 
         filter.arm(false);
         assert!(filter.should_swallow(0x5B, true, false));
         assert!(!filter.should_swallow(0x5B, false, true));
         filter.clear();
         assert!(!filter.should_swallow(0xA2, false, false));
+    }
+
+    #[test]
+    fn alt_voice_recovers_only_confirmed_firmware_ctrl_win_not_the_target_chord() {
+        assert_eq!(
+            confirmed_firmware_modifiers_to_release(&[0xA5], |vk| vk == 0xA2),
+            vec![0xA2]
+        );
+        assert_eq!(
+            confirmed_firmware_modifiers_to_release(&[0xA5], |vk| {
+                matches!(vk, 0xA2 | 0x5B)
+            }),
+            vec![0xA2, 0x5B]
+        );
+        assert!(confirmed_firmware_modifiers_to_release(&[0xA2, 0x5B], |_| true).is_empty());
     }
 
     #[test]
@@ -2981,5 +3215,44 @@ mod gesture_tests {
         assert!(is_dedicated_voice_button("mic"));
         assert!(is_dedicated_voice_button("voice"));
         assert!(!is_dedicated_voice_button("menu"));
+    }
+
+    #[test]
+    fn voice_press_session_consumes_wechat_tap_once() {
+        let mut session = VoicePressSession::empty();
+        assert!(session.begin_tap(Some(VoiceInputProfile::Wechat)));
+        assert!(!session.begin_tap(Some(VoiceInputProfile::Wechat)));
+        session.record_tap_route(VoiceInjectionRoute::VirtualHid);
+        assert_eq!(session.held_route(), Some(VoiceInjectionRoute::VirtualHid));
+        assert!(session.finish_tap());
+        assert!(!session.finish_tap());
+        assert_eq!(session.held_route(), None);
+    }
+
+    #[test]
+    fn voice_press_session_keeps_hold_route_and_original_keys() {
+        let mut session = VoicePressSession::empty();
+        let keys = vec![0xA2, 0xA0, 0x44];
+        assert_eq!(
+            session.begin_hold(
+                &keys,
+                Some(VoiceInputProfile::WechatCurrent),
+                |_| Some(VoiceInjectionRoute::VirtualHid),
+                |_| panic!("successful press must not compensate"),
+            ),
+            Some(VoiceInjectionRoute::VirtualHid)
+        );
+        assert!(session.is_active());
+        let released = session
+            .release_hold(|released_keys, route, profile| {
+                assert_eq!(released_keys, keys);
+                assert_eq!(route, VoiceInjectionRoute::VirtualHid);
+                assert_eq!(profile, Some(VoiceInputProfile::WechatCurrent));
+                true
+            })
+            .expect("hold session should own one release");
+        assert_eq!(released, (keys, VoiceInjectionRoute::VirtualHid, true));
+        assert!(!session.is_active());
+        assert!(session.release_hold(|_, _, _| true).is_none());
     }
 }

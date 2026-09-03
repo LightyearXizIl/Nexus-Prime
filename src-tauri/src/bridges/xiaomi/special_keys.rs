@@ -15,6 +15,11 @@ static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 static HID_TAP_READY: AtomicBool = AtomicBool::new(false);
 static HOOK_ENABLED: AtomicBool = AtomicBool::new(true);
 
+/// 由语音工作线程投递到钩子线程。最后安装的 LL hook 最先收到事件，因此
+/// 必须在注入语音快捷键前处理这条消息，才能尽量先吞掉固件 F5。
+#[cfg(target_os = "windows")]
+const WM_BUMP_HOOK_FRONT: u32 = 0x8000 + 71;
+
 /// 遥控器正在注入 Alt 开头的组合键（如 Alt+Space, Alt+S），
 /// 由 key_mapping 在 key_chord 注入前设置、注入后清除。
 /// 钩子检测到此标志时，对带 EXTRA_INFO 的 Alt/Space 等系统键也进行特殊处理：
@@ -73,6 +78,42 @@ pub fn is_hook_armed() -> bool {
 pub fn ensure_hook_for_capture() {
     HOOK_ENABLED.store(true, Ordering::Release);
     start_special_key_hook();
+}
+
+/// 请求把当前 LL hook 重新安装到链首，并在非 hook 线程上等待有限时间确认。
+/// 新 hook 会先安装，随后才卸载旧 hook，避免 F5 穿透的空窗。
+pub fn bump_hook_to_front_and_settle(
+    settle_ms: u64,
+) -> crate::bridges::xiaomi::hook_bump::BumpOutcome {
+    let generation = crate::bridges::xiaomi::hook_bump::next_generation();
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+
+        ensure_hook_for_capture();
+        let hook_thread_id = HOOK_THREAD_ID.load(Ordering::Acquire);
+        if hook_thread_id == 0 {
+            return crate::bridges::xiaomi::hook_bump::BumpOutcome::NoHookThread;
+        }
+        unsafe {
+            if PostThreadMessageW(hook_thread_id, WM_BUMP_HOOK_FRONT, None, None).is_err() {
+                log::warn!("XIAOMI SPECIAL KEY hook bump post failed");
+                return crate::bridges::xiaomi::hook_bump::BumpOutcome::TimedOut;
+            }
+        }
+        return crate::bridges::xiaomi::hook_bump::wait_for(
+            generation,
+            unsafe { GetCurrentThreadId() },
+            hook_thread_id,
+            settle_ms,
+        );
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (generation, settle_ms);
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::NoHookThread
+    }
 }
 
 pub fn start_special_key_hook() {
@@ -148,6 +189,10 @@ fn hook_loop() {
         CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
         UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
     };
+
+    unsafe fn install_hook() -> windows::core::Result<HHOOK> {
+        SetWindowsHookExW(WH_KEYBOARD_LL, Some(proc), None, 0)
+    }
 
     unsafe extern "system" fn proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let hook = load_hook();
@@ -306,7 +351,7 @@ fn hook_loop() {
 
     unsafe {
         HOOK_THREAD_ID.store(GetCurrentThreadId(), Ordering::Release);
-        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(proc), None, 0) {
+        let hook = match install_hook() {
             Ok(h) => h,
             Err(e) => {
                 log::error!("SetWindowsHookExW failed: {e}");
@@ -323,6 +368,25 @@ fn hook_loop() {
             let ret = GetMessageW(&mut msg, None, 0, 0);
             if ret.0 == -1 || ret.0 == 0 {
                 break;
+            }
+            if msg.message == WM_BUMP_HOOK_FRONT {
+                // Overlap is intentional: installing before unhooking ensures there
+                // is never a period where firmware F5 can bypass our suppression.
+                match install_hook() {
+                    Ok(new_hook) => {
+                        let old_hook = load_hook();
+                        store_hook(new_hook);
+                        crate::bridges::xiaomi::hook_bump::mark_handled();
+                        if !old_hook.is_invalid() {
+                            let _ = UnhookWindowsHookEx(old_hook);
+                        }
+                        log::debug!("XIAOMI SPECIAL KEY hook bump settled");
+                    }
+                    Err(error) => {
+                        log::warn!("XIAOMI SPECIAL KEY hook bump install failed: {error}");
+                    }
+                }
+                continue;
             }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);

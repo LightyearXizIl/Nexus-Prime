@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.3.9",
-  "name": "Nexus Prime v0.3.9",
-  "body": "- 微信输入法设置对齐两种官方语音模式：启动语音输入（左 Ctrl + 左 Win）与按住说话（左 Ctrl + 左 Shift + D）。\n- 旧 wechat-hold 配置自动迁移到推荐的按住说话模式，手动自定义快捷键保持不变。\n- 遥控器语音 DOWN/UP 事件去重，避免重复激活语音面板和修饰键残留。",
+  "tag_name": "v0.4.0",
+  "name": "Nexus Prime v0.4.0",
+  "body": "- 语音按键改为单一会话状态机，重复 DOWN/UP 不会重复触发输入法。\n- 微信启动语音输入改为一次 Ctrl+Win 短脉冲；按住说话继续使用 Ctrl+Shift+D。\n- F5、Ctrl 与 Win 固件泄漏按本次语音周期受控处理，避免粘键和重复面板。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.3.9_x64-setup.exe",
-      "size": 13336223,
-      "digest": "sha256:76d74270324ad02e8f60dfaa77494f6bb7601bd819a8d1dd6d7aac2a559a3dc5",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.3.9/Nexus.Prime_0.3.9_x64-setup.exe"
+      "name": "Nexus.Prime_0.4.0_x64-setup.exe",
+      "size": 13339277,
+      "digest": "sha256:7f0ee7750e029a74708793228a11653580b4091c6c0694c226ba0aa30d225b18",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.0/Nexus.Prime_0.4.0_x64-setup.exe"
     }
   ]
 }

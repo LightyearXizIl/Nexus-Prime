@@ -1502,18 +1502,18 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
         st.press_gen = st.press_gen.wrapping_add(1);
     }
 
+    // Shortcut DOWN precedes all PCM work.  A cold audio router must never
+    // delay WeChat/Qianwen receiving their global voice shortcut.
+    key_mapping::on_remote_button(app, "mic", true);
+
+    // Start and clear PCM only after the IME wakeup path has been committed.
     reset_pcm_session(state, true);
-    notify_voice_phase(app, gate, true);
     if !crate::bridges::xiaomi::voice_pcm::is_ready() {
         crate::bridges::xiaomi::voice_pcm::warmup_async();
     }
-    crate::bridges::xiaomi::voice_meter::set_session(true);
-
-    // Both modes must activate the IME as soon as AUDIO_START arrives.  Click
-    // keeps a minimum press duration on release; it no longer delays the
-    // floating voice bar until the remote button is released.
-    key_mapping::on_remote_button(app, "mic", true);
     mark_voice_shortcut_ready(state, None);
+    notify_voice_phase(app, gate, true);
+    crate::bridges::xiaomi::voice_meter::set_session(true);
     log::info!(
         "XIAOMI ATVV AUDIO_START mode={} → shortcut DOWN immediately",
         if toggle { "click" } else { "hold" }
@@ -1547,16 +1547,17 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
         return;
     }
 
-    notify_voice_phase(app, gate, false);
-
     if toggle {
         if press_ms < minimum_press_ms {
             std::thread::sleep(Duration::from_millis(minimum_press_ms - press_ms));
         }
     }
+    // Always release the IME chord before PCM teardown.  This is also the
+    // only release entry for disconnect/config-switch recovery.
+    key_mapping::on_remote_button(app, "mic", false);
+    notify_voice_phase(app, gate, false);
     std::thread::sleep(Duration::from_millis(40));
     voice_pcm::end_session();
-    key_mapping::on_remote_button(app, "mic", false);
     log::info!(
         "XIAOMI ATVV AUDIO_STOP mode={} release ms={press_ms}",
         if toggle { "click" } else { "hold" }
@@ -1564,7 +1565,6 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
 
     log_voice_timing(state, if toggle { "click" } else { "hold" });
 
-    crate::bridges::xiaomi::key_mapping::disarm_voice_native_suppress();
     crate::bridges::xiaomi::voice_meter::set_session(false);
 }
 

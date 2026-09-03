@@ -8,6 +8,7 @@ mod voice_f5_suppress_tests;
 pub mod hid_tap_runtime;
 pub mod hid_tap_injector;
 pub mod hid_report_tap;
+pub(crate) mod hook_bump;
 pub mod key_mapping;
 pub mod special_keys;
 pub mod tv_gate;
