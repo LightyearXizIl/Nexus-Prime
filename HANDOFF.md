@@ -17,6 +17,12 @@
 - `npm.cmd run build`、`cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml` 与 `git diff --check`：通过。
 - `npm.cmd run tauri:build`：通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.8_x64-setup.exe`，13,335,215 bytes，SHA-256 `CF91B052491CB3B4AC05208198733EA39D1B1C6101D3CD06D5BD6431DB444B6C`；文件版本和产品版本均为 `0.3.8`。
 
+### GitHub Release（已发布）
+
+- GitHub 正式 Release：[`v0.3.8`](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.8) 已公开，标签指向 `26f0e19`。
+- 资产 `Nexus.Prime_0.3.8_x64-setup.exe` 状态 `uploaded`、大小 13,335,215 bytes、GitHub digest `sha256:cf91b052491cb3b4ac05208198733ea39d1b1c6101d3cd06d5bd6431db444b6c`，与本地 SHA-256 一致；公开下载链路返回 HTTP 200 与相同长度。
+- `latest.json` 同时作为 Release 资产和 `main/latest.json` 提供，两个公开端点均返回相同的 v0.3.8 安装包元数据。
+
 ## 本次范围（未发布，2026-09-03）
 
 - 参考上游 `mwlt/Voice_VibeCoding` 的 `v1.6.7` / `c76056d` 做选择性适配；两仓库没有共同 Git 历史，未整仓合并，也未同步其电池组件、整体页面、更新器或启动修复。
