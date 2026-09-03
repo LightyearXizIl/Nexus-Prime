@@ -1242,10 +1242,10 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     let profile = config.voice_input_profile;
     arm_voice_firmware_modifier_filter();
     wait_for_clean_voice_modifier_window();
-    if is_legacy_wechat_toggle_shortcut(&vks, profile) {
-        if let Some(route) = start_legacy_wechat_tap_session(&vks, profile) {
+    if is_wechat_start_voice_shortcut(&vks, profile) {
+        if let Some(route) = start_wechat_start_voice_session(&vks, profile) {
             log::info!(
-                "XIAOMI VOICE legacy WeChat start tap route={} vks={vks:?}",
+                "XIAOMI VOICE WeChat start-voice tap route={} vks={vks:?}",
                 voice_injection_route_label(route),
             );
         }
@@ -1371,14 +1371,14 @@ pub fn force_release_voice_shortcut(reason: &str) -> bool {
             *session_slot = None;
             clear_voice_chord_guards();
             log::info!(
-                "XIAOMI VOICE legacy WeChat stop tap reason={reason} profile={:?} route={} vks={:?}",
+                "XIAOMI VOICE WeChat start-voice stop tap reason={reason} profile={:?} route={} vks={:?}",
                 session.profile,
                 voice_injection_route_label(session.route),
                 session.keys,
             );
         } else {
             log::error!(
-                "XIAOMI VOICE legacy WeChat stop tap failed reason={reason} profile={:?} route={} vks={:?}",
+                "XIAOMI VOICE WeChat start-voice stop tap failed reason={reason} profile={:?} route={} vks={:?}",
                 session.profile,
                 voice_injection_route_label(session.route),
                 session.keys,
@@ -1464,9 +1464,10 @@ fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
     }
 }
 
-fn is_legacy_wechat_toggle_shortcut(vks: &[u16], profile: Option<VoiceInputProfile>) -> bool {
-    // Ctrl+Win 本身不是旧协议；只有旧的 wechat 配置才保持“分两次点按”的
-    // 兼容行为。新的 wechat-hold 必须落入正常的真实 Hold 注入路径。
+fn is_wechat_start_voice_shortcut(vks: &[u16], profile: Option<VoiceInputProfile>) -> bool {
+    // 微信“启动语音输入”是 Ctrl+Win 点击型快捷键：遥控器按下和抬起
+    // 分别发送一次短脉冲，不在固件重复流期间持续持有组合键。
+    // 已弃用的 WechatHold 会在配置边界迁移，不能进入此运行时分支。
     matches!(profile, Some(VoiceInputProfile::Wechat))
         && matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
 }
@@ -1602,12 +1603,12 @@ fn wait_for_first_voice_f5_suppression() {
     }
 }
 
-fn start_legacy_wechat_tap_session(
+fn start_wechat_start_voice_session(
     vks: &[u16],
     profile: Option<VoiceInputProfile>,
 ) -> Option<VoiceInjectionRoute> {
     if VOICE_WECHAT_TAP_SESSION.lock().is_some() {
-        log::debug!("XIAOMI VOICE legacy WeChat start ignored already_active");
+        log::debug!("XIAOMI VOICE WeChat start-voice ignored already_active");
         return None;
     }
     // Let the correlated physical F5 reach our suppression hook first.  The
@@ -1673,9 +1674,9 @@ fn release_voice_shortcut(
     route: VoiceInjectionRoute,
     profile: Option<VoiceInputProfile>,
 ) -> bool {
-    // Non-legacy pure Win/Alt shortcuts must be turned into a real chord
+    // Pure Win/Alt shortcuts must be turned into a real chord
     // before the modifiers lift, otherwise Windows can open Start/the system
-    // menu.  Legacy WeChat Ctrl+Win is handled above as two short taps and
+    // menu. WeChat start-voice Ctrl+Win is handled above as two short taps and
     // never reaches this F24-based held-chord release path.
     let released = execute_voice_release_steps(&voice_release_steps(vks, route, profile), route);
     if matches!(profile, Some(VoiceInputProfile::Qianwen)) {
@@ -1704,7 +1705,7 @@ enum VoiceReleaseStep {
 }
 
 #[cfg(test)]
-fn legacy_wechat_tap_steps(vks: &[u16]) -> Vec<VoiceReleaseStep> {
+fn wechat_start_voice_tap_steps(vks: &[u16]) -> Vec<VoiceReleaseStep> {
     vec![
         VoiceReleaseStep::Press(vks.to_vec()),
         VoiceReleaseStep::Release(vks.to_vec()),
@@ -2784,29 +2785,29 @@ mod gesture_tests {
     }
 
     #[test]
-    fn legacy_wechat_ctrl_win_uses_the_separate_tap_session_policy() {
-        assert!(is_legacy_wechat_toggle_shortcut(
+    fn wechat_start_voice_ctrl_win_uses_the_separate_tap_session_policy() {
+        assert!(is_wechat_start_voice_shortcut(
             &[0xA2, 0x5B],
             Some(VoiceInputProfile::Wechat)
         ));
-        assert!(is_legacy_wechat_toggle_shortcut(
+        assert!(is_wechat_start_voice_shortcut(
             &[0x5B, 0xA2],
             Some(VoiceInputProfile::Wechat)
         ));
-        assert!(!is_legacy_wechat_toggle_shortcut(
+        assert!(!is_wechat_start_voice_shortcut(
             &[0xA2, 0x5B],
             Some(VoiceInputProfile::WechatHold)
         ));
-        assert!(!is_legacy_wechat_toggle_shortcut(
+        assert!(!is_wechat_start_voice_shortcut(
             &[0xA2, 0xA0, 0x44],
             Some(VoiceInputProfile::Wechat)
         ));
-        assert!(!is_legacy_wechat_toggle_shortcut(
+        assert!(!is_wechat_start_voice_shortcut(
             &[0xA5],
             Some(VoiceInputProfile::Wechat)
         ));
         assert_eq!(
-            legacy_wechat_tap_steps(&[0xA2, 0x5B]),
+            wechat_start_voice_tap_steps(&[0xA2, 0x5B]),
             vec![
                 VoiceReleaseStep::Press(vec![0xA2, 0x5B]),
                 VoiceReleaseStep::Release(vec![0xA2, 0x5B]),
@@ -2815,7 +2816,7 @@ mod gesture_tests {
     }
 
     #[test]
-    fn force_release_keeps_legacy_wechat_session_when_stop_tap_fails() {
+    fn force_release_keeps_wechat_start_voice_session_when_stop_tap_fails() {
         // 测试进程中 WinUHid 设备从未预热，VirtualHid 路由的停止点按会立即
         // 失败且不产生真实按键；失败时会话必须保留以便稍后重试，且函数必须
         // 正常返回（锁守卫不得遗留持有可能导致后续 lock() 挂起）。
@@ -2832,9 +2833,9 @@ mod gesture_tests {
 
     #[test]
     fn virtual_hid_voice_release_keeps_f24_held_while_modifiers_lift() {
-        let legacy_wechat = vec![0xA2, 0x5B];
+        let ctrl_win = vec![0xA2, 0x5B];
         assert_eq!(
-            neutralized_voice_release_steps(&legacy_wechat, VoiceInjectionRoute::VirtualHid),
+            neutralized_voice_release_steps(&ctrl_win, VoiceInjectionRoute::VirtualHid),
             vec![
                 VoiceReleaseStep::Press(vec![0xA2, 0x5B, 0x87]),
                 VoiceReleaseStep::Press(vec![0x87]),
@@ -2845,9 +2846,9 @@ mod gesture_tests {
 
     #[test]
     fn send_input_voice_release_lifts_chord_between_f24_down_and_up() {
-        let legacy_wechat = vec![0xA2, 0x5B];
+        let ctrl_win = vec![0xA2, 0x5B];
         assert_eq!(
-            neutralized_voice_release_steps(&legacy_wechat, VoiceInjectionRoute::SendInputFallback),
+            neutralized_voice_release_steps(&ctrl_win, VoiceInjectionRoute::SendInputFallback),
             vec![
                 VoiceReleaseStep::Press(vec![0x87]),
                 VoiceReleaseStep::Release(vec![0xA2, 0x5B]),

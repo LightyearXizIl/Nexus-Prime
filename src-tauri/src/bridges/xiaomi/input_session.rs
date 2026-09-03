@@ -1400,6 +1400,14 @@ fn voice_trigger_is_toggle(app: &AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+fn claim_voice_remote_edge(remote_pressed: &mut bool, pressed: bool) -> bool {
+    if *remote_pressed == pressed {
+        return false;
+    }
+    *remote_pressed = pressed;
+    true
+}
+
 #[cfg(target_os = "windows")]
 fn atvv_write_tx(
     tx: &windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic,
@@ -1485,10 +1493,9 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
         let Ok(mut st) = state.lock() else {
             return;
         };
-        if st.remote_pressed {
+        if !claim_voice_remote_edge(&mut st.remote_pressed, true) {
             return;
         }
-        st.remote_pressed = true;
         st.press_at = Some(Instant::now());
         st.hold_chord_armed = true;
         st.minimum_press_ms = minimum_press_ms;
@@ -1521,14 +1528,13 @@ fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mute
         let Ok(mut st) = state.lock() else {
             return;
         };
-        if !st.remote_pressed {
+        if !claim_voice_remote_edge(&mut st.remote_pressed, false) {
             return;
         }
         let ms = st
             .press_at
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
-        st.remote_pressed = false;
         st.press_at = None;
         st.hold_chord_armed = false;
         st.press_gen = st.press_gen.wrapping_add(1); // 作废阈值定时器
@@ -2004,8 +2010,8 @@ fn handle_hid_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        atvv_codec_sample_rate, disconnect_confirmed, parse_battery_charging_state, parse_hid_usages,
-        BatteryChargingState,
+        atvv_codec_sample_rate, claim_voice_remote_edge, disconnect_confirmed,
+        parse_battery_charging_state, parse_hid_usages, BatteryChargingState,
     };
 
     #[test]
@@ -2075,5 +2081,15 @@ mod tests {
         assert!(disconnect_confirmed(true, true, true));
         assert!(!disconnect_confirmed(true, false, true));
         assert!(!disconnect_confirmed(true, true, false));
+    }
+
+    #[test]
+    fn duplicate_voice_edges_are_ignored_until_the_opposite_edge_arrives() {
+        let mut pressed = false;
+        assert!(claim_voice_remote_edge(&mut pressed, true));
+        assert!(!claim_voice_remote_edge(&mut pressed, true));
+        assert!(claim_voice_remote_edge(&mut pressed, false));
+        assert!(!claim_voice_remote_edge(&mut pressed, false));
+        assert!(claim_voice_remote_edge(&mut pressed, true));
     }
 }

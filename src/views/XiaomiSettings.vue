@@ -1640,6 +1640,7 @@ watch(
         :config-ready="Boolean(config)"
         :saving="configStore.saving"
         :apply-hint="setupApplyHint"
+        :active-preset="config?.voice_input_profile ?? null"
         @close="showSetupTips = false"
         @apply="applyImePreset"
       />

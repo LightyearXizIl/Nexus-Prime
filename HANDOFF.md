@@ -2,6 +2,27 @@
 
 更新时间：2026-09-03
 
+## 本次范围（v0.3.9，待发布，2026-09-03）
+
+- 已按本机微信输入法 2.1.3.18 的真实“语音输入”设置恢复两个可选项：“启动语音输入”对应左 Ctrl + 左 Win 点击触发；“按住说话”对应左 Ctrl + 左 Shift + D 按住触发。Nexus Prime 同一时间只应用其中一种，并在界面标明当前模式。
+- 删除 v0.3.7/v0.3.8 界面和 README 中错误的 F5 + 左 Ctrl + 左 Win 指引。已发布版本的历史记录保留，但其操作说明由本节和最新 README 取代。
+- `wechat-hold` 仅作为 Rust 持久化兼容值读取，配置加载或保存时会自动迁移到 `wechat-current`，同步修正 mic/voice 绑定、voice_hotkey 和 Hold 模式；没有预设标记的用户自定义快捷键不会迁移。
+- ATVV 会话现在通过独立边沿门控明确拒绝重复 DOWN/UP；微信“启动语音输入”继续使用 Ctrl+Win 短脉冲，不会把组合键持续按住；“按住说话”继续以 Ctrl+Shift+D 的真实 DOWN/UP 覆盖遥控器按住周期。固件 F5/修饰键过滤、WinUHid 与 SendInput 降级路径保持不变。
+
+### 自动化验证
+
+- `npm.cmd test -- --run`：13 个测试文件、47/47 通过。
+- `npm.cmd run build`：Vue TypeScript 检查和 Vite 生产构建通过。
+- `cargo test --workspace --manifest-path src-tauri/Cargo.toml`：120/120 通过。
+- `cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml`：通过。
+- `npm.cmd run tauri:build`：通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.9_x64-setup.exe`，13,336,223 bytes，SHA-256 `76D74270324AD02E8F60DFAA77494F6BB7601BD819A8D1DD6D7AAC2A559A3DC5`；主程序文件版本与产品版本均为 `0.3.9`，安装包未签名。
+- `git diff --check`：通过。GitHub Release 上传与公开下载复核待本轮发布完成；本轮未修改微信输入法自身设置。
+
+### 仍待真实设备验收
+
+- 微信输入法两项同时启用时，分别在 Nexus Prime 应用“启动语音输入”和“按住说话”，每种连续按住/松开至少 10 次；每次只能出现一个语音面板，无开始菜单、F5 串入或粘键。
+- “按住说话”松手后文字应进入当前输入框，但不得自动发送 Enter；分别确认 WinUHid 正常路径和 SendInput 降级路径。
+
 ## 本次范围（v0.3.8，已发布，2026-09-03）
 
 - 已根据用户日志定位应用内更新失败的直接原因：GitHub Core API 返回 `403 rate limit exceeded`，响应头为 `X-RateLimit-Limit: 60`、`X-RateLimit-Remaining: 0`；这与 ATVV 的“遥控器不可达”告警无关。

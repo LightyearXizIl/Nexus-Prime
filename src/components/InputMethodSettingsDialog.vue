@@ -11,6 +11,7 @@ const props = defineProps<{
   configReady: boolean;
   saving: boolean;
   applyHint: string;
+  activePreset: ImePreset | null;
 }>();
 
 const emit = defineEmits<{
@@ -196,28 +197,45 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
         <template v-else-if="activeProvider === 'wechat'">
           <div class="ime-panel-copy">
-            <span class="ime-eyebrow">{{ activeLabel }} · 推荐设置</span>
-            <h4>按住遥控器说话，松开结束</h4>
+            <span class="ime-eyebrow">{{ activeLabel }} · 两种语音模式</span>
+            <h4>与微信输入法的语音设置保持一致</h4>
             <p id="ime-wechat-summary">
-              本软件会按住 <code>左 Ctrl + 左 Win</code>；微信输入法的“按住说话”需要设为
-              <code>F5 + 左 Ctrl + 左 Win</code>。
+              微信输入法提供“启动语音输入”和“按住说话”两种快捷键。本软件每次只应用其中一种，
+              请与微信输入法“设置 → 语音输入”中的快捷键保持一致。
             </p>
             <ol>
-              <li>打开微信输入法“设置 → 语音输入 → 按住说话”。</li>
-              <li>把快捷键设为 <code>F5 + 左 Ctrl + 左 Win</code>。</li>
-              <li>回到本软件点击“应用微信按住说话”。旧版配置不会被自动改动。</li>
+              <li>“启动语音输入”使用 <code>左 Ctrl + 左 Win</code>，按下即可启动。</li>
+              <li>“按住说话”使用 <code>左 Ctrl + 左 Shift + D</code>，松手结束并上屏。</li>
+              <li>两项可以同时在微信输入法中启用；本软件只发送下方选中的一种。</li>
             </ol>
           </div>
           <aside class="ime-panel-action ime-wechat-actions">
             <section class="ime-wechat-option">
-              <span class="ime-status">微信按住说话</span>
-              <strong>软件：左 Ctrl + 左 Win</strong>
-              <p>微信：F5 + 左 Ctrl + 左 Win；触发模式：按住</p>
-              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('wechat-hold')">
-                <span>{{ saving ? "正在应用…" : "应用微信按住说话" }}</span>
+              <div class="ime-option-head">
+                <span class="ime-status">启动语音输入</span>
+                <span v-if="activePreset === 'wechat'" class="ime-current">当前已应用</span>
+              </div>
+              <strong>左 Ctrl + 左 Win</strong>
+              <p>按下即可启用语音输入，按任意键均可结束；触发模式：点击</p>
+              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat'" :disabled="!configReady || saving" @click="apply('wechat')">
+                <span>{{ saving ? "正在应用…" : "应用启动语音输入" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
               </button>
-              <span v-if="applyHint && lastAppliedPreset === 'wechat-hold'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+              <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+            </section>
+
+            <section class="ime-wechat-option">
+              <div class="ime-option-head">
+                <span class="ime-status">按住说话</span>
+                <span v-if="activePreset === 'wechat-current'" class="ime-current">当前已应用</span>
+              </div>
+              <strong>左 Ctrl + 左 Shift + D</strong>
+              <p>按住可语音输入，松手结束并上屏；触发模式：按住（推荐）</p>
+              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat-current'" :disabled="!configReady || saving" @click="apply('wechat-current')">
+                <span>{{ saving ? "正在应用…" : "应用按住说话" }}</span>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              </button>
+              <span v-if="applyHint && lastAppliedPreset === 'wechat-current'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
           </aside>
         </template>
@@ -477,6 +495,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-wechat-actions, .ime-doubao-actions { gap: 12px; padding: 14px; }
 .ime-wechat-option, .ime-doubao-option { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
+.ime-option-head { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; }
+.ime-current { color: var(--success-text); font-size: 11px; font-weight: 700; }
 .ime-wechat-option strong, .ime-doubao-option strong { color: var(--text); font-size: 16px; }
 .ime-wechat-option p, .ime-doubao-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
 .ime-wechat-option .ime-button, .ime-doubao-option .ime-button { width: 100%; margin-top: 2px; }

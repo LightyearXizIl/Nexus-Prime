@@ -45,10 +45,7 @@ export type TriggerMode = "Toggle" | "Hold";
 /** 输入法预设来源；缺失或 null 表示用户自定义快捷键。 */
 export type VoiceInputProfile =
   | "codex"
-  | "wechat-hold"
-  /** Historical preset retained only so existing configurations can load unchanged. */
   | "wechat"
-  /** Historical preset retained only so existing configurations can load unchanged. */
   | "wechat-current"
   | "qianwen"
   | "doubao-hold"

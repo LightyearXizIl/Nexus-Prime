@@ -23,7 +23,7 @@ const autoSettings = {
   log_retention_days: 7,
 };
 
-const noUpdate = { currentVersion: "v0.3.8", update: null, source: "release-manifest" };
+const noUpdate = { currentVersion: "v0.3.9", update: null, source: "release-manifest" };
 
 describe("update check coordinator", () => {
   let store: ReturnType<typeof useUpdateStore>;
@@ -33,7 +33,7 @@ describe("update check coordinator", () => {
     vi.setSystemTime(new Date("2026-09-03T12:00:00Z"));
     setActivePinia(createPinia());
     store = useUpdateStore();
-    getVersion.mockResolvedValue("0.3.8");
+    getVersion.mockResolvedValue("0.3.9");
     listen.mockResolvedValue(() => {});
     invoke.mockImplementation((command: string) => {
       if (command === "get_global_settings") return Promise.resolve({ ...autoSettings });

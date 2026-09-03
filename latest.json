@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.3.8",
-  "name": "Nexus Prime v0.3.8",
-  "body": "- 修复 GitHub API 匿名额度耗尽时的应用内更新失败。\n- 自动检查支持启动、每 6 小时和窗口恢复到期重试。\n- 手动检查会与后台检查合并，不再错误提示必须重启。",
+  "tag_name": "v0.3.9",
+  "name": "Nexus Prime v0.3.9",
+  "body": "- 微信输入法设置对齐两种官方语音模式：启动语音输入（左 Ctrl + 左 Win）与按住说话（左 Ctrl + 左 Shift + D）。\n- 旧 wechat-hold 配置自动迁移到推荐的按住说话模式，手动自定义快捷键保持不变。\n- 遥控器语音 DOWN/UP 事件去重，避免重复激活语音面板和修饰键残留。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.3.8_x64-setup.exe",
-      "size": 13335215,
-      "digest": "sha256:cf91b052491cb3b4ac05208198733ea39d1b1c6101d3cd06d5bd6431db444b6c",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.3.8/Nexus.Prime_0.3.8_x64-setup.exe"
+      "name": "Nexus.Prime_0.3.9_x64-setup.exe",
+      "size": 13336223,
+      "digest": "sha256:76d74270324ad02e8f60dfaa77494f6bb7601bd819a8d1dd6d7aac2a559a3dc5",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.3.9/Nexus.Prime_0.3.9_x64-setup.exe"
     }
   ]
 }

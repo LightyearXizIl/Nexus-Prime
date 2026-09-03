@@ -2,7 +2,7 @@
 
 Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具。它通过蓝牙读取遥控器按键与 ATVV 语音数据，把按键转换为可自定义的键盘快捷键，并将语音路由到虚拟声卡，供输入法或其他语音软件使用。
 
-当前版本：**v0.3.8**
+当前版本：**v0.3.9**
 
 技术栈：**Rust · Tauri 2 · Vue 3 · TypeScript**
 
@@ -69,15 +69,15 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 项目发布后，可从 GitHub Releases 下载 NSIS 安装包：
 
-- NSIS：`Nexus.Prime_0.3.8_x64-setup.exe`
+- NSIS：`Nexus.Prime_0.3.9_x64-setup.exe`
 
-当前正式版：[v0.3.8 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.8)。
+当前正式版：[v0.3.9 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.3.9)。
 
 从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
 
 应用内自动更新会优先读取 GitHub Release 随包发布的 `latest.json`，避免 GitHub API 的匿名请求额度影响检查；仓库清单和 GitHub API 仅作为兼容回退。发布新版本时请使用 `vX.Y.Z` 标签，并上传唯一的 `Nexus.Prime_X.Y.Z_x64-setup.exe` 安装包及其 `latest.json`；清单提供安装包 SHA-256，下载完成后仍会校验完整性。
 
-若 v0.3.6 或 v0.3.7 的“检查更新”提示 GitHub `403` 或“检查失败”，请直接下载安装 v0.3.8；旧版没有清单优先与限流恢复机制，重启应用不会修复 GitHub 的匿名请求额度。v0.3.8 在“自动检查更新”开启时会在启动、每 6 小时、窗口恢复且到期时检查；限流响应含恢复时间时会提前自动重试。
+若 v0.3.6 或 v0.3.7 的“检查更新”提示 GitHub `403` 或“检查失败”，请直接下载安装 v0.3.9；旧版没有清单优先与限流恢复机制，重启应用不会修复 GitHub 的匿名请求额度。v0.3.9 在“自动检查更新”开启时会在启动、每 6 小时、窗口恢复且到期时检查；限流响应含恢复时间时会提前自动重试。
 
 详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
@@ -116,7 +116,7 @@ src-tauri/target/release/bundle/nsis/
 4. 点击遥控器卡片或列表项可快速定位对应映射；
 5. 如需语音输入，在首页运行“声卡检测与修复”，确认 VB-CABLE 已安装；
 6. 在目标输入法或应用中，将麦克风设备设置为 `CABLE Output (VB-Audio Virtual Cable)`；
-7. 确保输入法听写快捷键与 Nexus Prime 中的语音键映射一致；豆包可使用右 Alt。微信输入法请先在其“按住说话”设置中手动录入 `F5 + 左 Ctrl + 左 Win`，再在 Nexus Prime 的输入法设置应用唯一的“微信按住说话”预设；该预设会以真实 Hold 注入 `左 Ctrl + 左 Win`。旧微信配置仍可读取，但不会自动迁移；
+7. 确保输入法听写快捷键与 Nexus Prime 中的语音键映射一致；豆包可使用右 Alt。微信输入法有两种语音模式：“启动语音输入”使用 `左 Ctrl + 左 Win`，“按住说话”使用 `左 Ctrl + 左 Shift + D`。请在 Nexus Prime 的输入法设置中应用与微信输入法相同的模式；即使微信输入法同时启用两项，Nexus Prime 每次也只会发送当前选择的一种。“按住说话”会在遥控器松开时结束并把文字放入当前输入框，不会自动发送 Enter；
 8. 如果网页键盘测试能显示按键、但豆包或微信没有反应，在首页点击“修复虚拟键盘”，接受 Windows 管理员确认；如结果提示需要重启，请重启 Windows 后再测试；
 9. 若音频无波形或出现“ATVV 未连接”，使用“修复 ATVV 连接”；
 10. 关闭窗口时可按设置最小化到托盘，之后从托盘重新打开或退出。
@@ -256,6 +256,8 @@ npm run tauri:dev
 这通常表示输入法过滤了普通模拟键盘事件。先确认首页音频信号正常、输入法麦克风为 `CABLE Output`，并核对实际听写快捷键；随后在首页点击“修复虚拟键盘”，接受管理员确认。修复完成后使用遥控器语音键重新测试。若提示“待重启”，重启 Windows 后再试。
 
 WinUHid 不可用时，程序会保留原有的 SendInput 回退路径；日志中可用 `route=virtual_hid` 或 `route=send_input_fallback` 判断实际使用的发送方式。
+
+如果按一次遥控器语音键出现两个微信语音面板，请在 Nexus Prime 的“输入法设置 → 微信”重新应用所需模式。旧版 `wechat-hold` 配置会自动迁移到推荐的“按住说话”（`左 Ctrl + 左 Shift + D`），避免把微信的 Ctrl+Win 启动快捷键当成长按组合持续发送。
 
 包含 Win 或 Alt 的纯修饰键语音快捷键会在释放前发送中和键，避免输入法未接管时弹出开始菜单或系统菜单；若日志出现 `modifier still down` 或 `release recovery`，请保留当天日志用于排查。
 

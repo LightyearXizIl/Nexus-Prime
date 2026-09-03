@@ -63,10 +63,10 @@ impl Default for TriggerMode {
 #[serde(rename_all = "kebab-case")]
 pub enum VoiceInputProfile {
     Codex,
+    /// Deprecated persisted profile. It is migrated to `WechatCurrent` at the
+    /// Xiaomi configuration boundary and must not reach the runtime.
     WechatHold,
-    /// Historical profile kept only for persisted configuration compatibility.
     Wechat,
-    /// Historical profile kept only for persisted configuration compatibility.
     WechatCurrent,
     Qianwen,
     DoubaoHold,
@@ -81,7 +81,7 @@ impl VoiceInputProfile {
     ) -> bool {
         let (keys, mode) = match self {
             Self::Codex => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
-            Self::WechatHold => (&[0xA2, 0x5B][..], TriggerMode::Hold),
+            Self::WechatHold => return false,
             Self::Wechat => (&[0xA2, 0x5B][..], TriggerMode::Toggle),
             Self::WechatCurrent => (&[0xA2, 0xA0, 0x44][..], TriggerMode::Hold),
             Self::Qianwen | Self::DoubaoHold => (&[0xA5][..], TriggerMode::Hold),
@@ -339,6 +339,10 @@ impl ConfigManager {
     /// 对齐 Python schema 升级：补齐缺失的默认绑定/别名，不覆盖用户已有项
     fn merge_xiaomi_defaults(config: &mut DeviceConfig) -> (bool, bool) {
         let mut changed = false;
+        if Self::migrate_deprecated_wechat_hold_profile(config) {
+            log::info!("XIAOMI CONFIG migrated deprecated wechat-hold profile to wechat-current");
+            changed = true;
+        }
         let defaults = Self::default_config_for("xiaomi");
         for (k, v) in defaults.button_aliases {
             if let std::collections::hash_map::Entry::Vacant(entry) = config.button_aliases.entry(k) {
@@ -358,6 +362,23 @@ impl ConfigManager {
         }
         let (sanitized, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(config);
         (changed || sanitized, removed_voice_gestures)
+    }
+
+    /// `wechat-hold` mixed WeChat's Ctrl+Win start shortcut with a held
+    /// gesture. Normalize it to WeChat's real hold-to-talk shortcut. Profiles
+    /// are authoritative presets; `None` remains a user-owned custom mapping.
+    fn migrate_deprecated_wechat_hold_profile(config: &mut DeviceConfig) -> bool {
+        if config.voice_input_profile != Some(VoiceInputProfile::WechatHold) {
+            return false;
+        }
+
+        let action = KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]);
+        config.button_bindings.insert("mic".into(), action.clone());
+        config.button_bindings.insert("voice".into(), action);
+        config.voice_hotkey = Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()]);
+        config.trigger_mode = TriggerMode::Hold;
+        config.voice_input_profile = Some(VoiceInputProfile::WechatCurrent);
+        true
     }
 
     /// Returns `(changed, removed_voice_gestures)`. Voice is reserved for its
@@ -485,6 +506,9 @@ impl ConfigManager {
     pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
         let mut config = config.clone();
         if device == "xiaomi" {
+            if Self::migrate_deprecated_wechat_hold_profile(&mut config) {
+                log::info!("XIAOMI CONFIG migrated deprecated wechat-hold profile during save");
+            }
             let (_, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(&mut config);
             if removed_voice_gestures {
                 crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
@@ -717,6 +741,109 @@ mod tests {
         assert!(profile.matches_voice_binding(&KeyAction::SingleKey(0xA5), &TriggerMode::Hold));
         assert!(!profile.matches_voice_binding(&KeyAction::SingleKey(0xA5), &TriggerMode::Toggle));
         assert!(!profile.matches_voice_binding(&KeyAction::SingleKey(0xA4), &TriggerMode::Hold));
+    }
+
+    #[test]
+    fn deprecated_wechat_hold_profile_migrates_to_real_hold_to_talk() {
+        let mut config = DeviceConfig::new();
+        config.button_bindings.insert(
+            "mic".into(),
+            KeyAction::ComboKey(vec![0xA2, 0x5B]),
+        );
+        config.button_bindings.insert(
+            "voice".into(),
+            KeyAction::ComboKey(vec![0xA2, 0x5B]),
+        );
+        config.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
+        config.trigger_mode = TriggerMode::Hold;
+        config.voice_input_profile = Some(VoiceInputProfile::WechatHold);
+
+        let (changed, _) = ConfigManager::merge_xiaomi_defaults(&mut config);
+
+        assert!(changed);
+        assert_eq!(
+            config.button_bindings.get("mic"),
+            Some(&KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]))
+        );
+        assert_eq!(
+            config.button_bindings.get("voice"),
+            config.button_bindings.get("mic")
+        );
+        assert_eq!(
+            config.voice_hotkey,
+            Some(vec!["leftctrl".into(), "leftshift".into(), "d".into()])
+        );
+        assert_eq!(config.trigger_mode, TriggerMode::Hold);
+        assert_eq!(
+            config.voice_input_profile,
+            Some(VoiceInputProfile::WechatCurrent)
+        );
+    }
+
+    #[test]
+    fn custom_ctrl_win_mapping_is_not_migrated_without_a_profile() {
+        let mut config = DeviceConfig::new();
+        let custom = KeyAction::ComboKey(vec![0xA2, 0x5B]);
+        config.button_bindings.insert("mic".into(), custom.clone());
+        config.button_bindings.insert("voice".into(), custom.clone());
+        config.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
+        config.trigger_mode = TriggerMode::Hold;
+        config.voice_input_profile = None;
+
+        assert!(!ConfigManager::migrate_deprecated_wechat_hold_profile(
+            &mut config
+        ));
+        assert_eq!(config.button_bindings.get("mic"), Some(&custom));
+        assert_eq!(config.trigger_mode, TriggerMode::Hold);
+        assert_eq!(config.voice_input_profile, None);
+    }
+
+    #[test]
+    fn loading_deprecated_wechat_hold_writes_back_the_migrated_profile() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config_dir = std::env::temp_dir().join(format!(
+            "nexus-prime-wechat-migration-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&config_dir).unwrap();
+        let config_path = config_dir.join("xiaomi.json");
+
+        let mut legacy = DeviceConfig::new();
+        legacy.button_bindings.insert(
+            "mic".into(),
+            KeyAction::ComboKey(vec![0xA2, 0x5B]),
+        );
+        legacy.button_bindings.insert(
+            "voice".into(),
+            KeyAction::ComboKey(vec![0xA2, 0x5B]),
+        );
+        legacy.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
+        legacy.trigger_mode = TriggerMode::Hold;
+        legacy.voice_input_profile = Some(VoiceInputProfile::WechatHold);
+        fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let manager = ConfigManager {
+            config_dir: config_dir.clone(),
+            device_cache: Mutex::new(HashMap::new()),
+            global_settings_lock: Mutex::new(()),
+        };
+        let loaded = manager.get_device_config("xiaomi").unwrap();
+        let persisted: DeviceConfig =
+            serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(
+            loaded.voice_input_profile,
+            Some(VoiceInputProfile::WechatCurrent)
+        );
+        assert_eq!(persisted.voice_input_profile, loaded.voice_input_profile);
+        assert_eq!(persisted.voice_hotkey, loaded.voice_hotkey);
+
+        drop(manager);
+        fs::remove_file(config_path).unwrap();
+        fs::remove_dir(config_dir).unwrap();
     }
 
     #[test]
