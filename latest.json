@@ -1,0 +1,16 @@
+{
+  "tag_name": "v0.3.8",
+  "name": "Nexus Prime v0.3.8",
+  "body": "- 修复 GitHub API 匿名额度耗尽时的应用内更新失败。\n- 自动检查支持启动、每 6 小时和窗口恢复到期重试。\n- 手动检查会与后台检查合并，不再错误提示必须重启。",
+  "published_at": null,
+  "draft": false,
+  "prerelease": false,
+  "assets": [
+    {
+      "name": "Nexus.Prime_0.3.8_x64-setup.exe",
+      "size": 13335215,
+      "digest": "sha256:cf91b052491cb3b4ac05208198733ea39d1b1c6101d3cd06d5bd6431db444b6c",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.3.8/Nexus.Prime_0.3.8_x64-setup.exe"
+    }
+  ]
+}

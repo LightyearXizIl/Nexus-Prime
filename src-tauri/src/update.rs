@@ -2,7 +2,7 @@
 
 use parking_lot::Mutex;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -13,12 +13,16 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/LightyearXizIl/Nexus-Prime/releases/latest";
+const RELEASE_MANIFEST_URL: &str =
+    "https://github.com/LightyearXizIl/Nexus-Prime/releases/latest/download/latest.json";
+const REPOSITORY_MANIFEST_URL: &str =
+    "https://raw.githubusercontent.com/LightyearXizIl/Nexus-Prime/main/latest.json";
 const MAX_ASSET_SIZE: u64 = 512 * 1024 * 1024;
 const USER_AGENT: &str = "Nexus-Prime-Updater";
 
@@ -39,6 +43,52 @@ pub struct UpdateRelease {
 pub struct UpdateCheckResult {
     pub current_version: String,
     pub update: Option<UpdateRelease>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckError {
+    pub stage: UpdateCheckStage,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateCheckStage {
+    Network,
+    Http,
+    Parse,
+    Validation,
+    Task,
+}
+
+impl UpdateCheckError {
+    fn new(stage: UpdateCheckStage, message: impl Into<String>) -> Self {
+        Self {
+            stage,
+            message: message.into(),
+            retry_after_seconds: None,
+        }
+    }
+
+    fn rate_limited(retry_after_seconds: Option<u64>) -> Self {
+        let message = match retry_after_seconds {
+            Some(seconds) if seconds < 60 => "GitHub 请求额度暂时用尽，应用将在不到 1 分钟后自动重试。".into(),
+            Some(seconds) => format!(
+                "GitHub 请求额度暂时用尽，应用将在约 {} 分钟后自动重试。",
+                (seconds + 59) / 60
+            ),
+            None => "GitHub 请求额度暂时用尽，请稍后重试。".into(),
+        };
+        Self {
+            stage: UpdateCheckStage::Http,
+            message,
+            retry_after_seconds,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +131,11 @@ struct Candidate {
     public: UpdateRelease,
     download_url: String,
     sha256: String,
+}
+
+struct FetchedRelease {
+    release: GithubRelease,
+    source: &'static str,
 }
 
 #[derive(Default)]
@@ -206,48 +261,109 @@ fn verify_cached_installer(path: &Path, candidate: &Candidate) -> bool {
             .unwrap_or(false)
 }
 
-fn fetch_latest_release() -> Result<GithubRelease, String> {
+fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    if let Some(seconds) = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        return Some(seconds);
+    }
+
+    let reset_at = headers
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    Some(reset_at.saturating_sub(now))
+}
+
+fn http_error(response: &reqwest::blocking::Response) -> UpdateCheckError {
+    let status = response.status();
+    let headers = response.headers();
+    let rate_limited = status == reqwest::StatusCode::FORBIDDEN
+        && headers
+            .get("x-ratelimit-remaining")
+            .and_then(|value| value.to_str().ok())
+            == Some("0");
+    if rate_limited {
+        return UpdateCheckError::rate_limited(retry_after_seconds(headers));
+    }
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return UpdateCheckError::new(UpdateCheckStage::Http, "尚未发布可用的正式更新。");
+    }
+    UpdateCheckError::new(
+        UpdateCheckStage::Http,
+        format!("更新服务返回 HTTP {}，请稍后重试。", status.as_u16()),
+    )
+}
+
+fn fetch_json<T: DeserializeOwned>(
+    client: &reqwest::blocking::Client,
+    url: &str,
+) -> Result<T, UpdateCheckError> {
+    let response = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Network, format!("无法连接更新服务：{error}")))?;
+    if !response.status().is_success() {
+        return Err(http_error(&response));
+    }
+    response
+        .json::<T>()
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Parse, format!("读取更新信息失败：{error}")))
+}
+
+fn fetch_latest_release() -> Result<FetchedRelease, UpdateCheckError> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(15))
         .user_agent(USER_AGENT)
         .build()
-        .map_err(|error| format!("创建更新请求失败：{error}"))?;
-    let response = client
-        .get(LATEST_RELEASE_URL)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .map_err(|error| format!("检查更新失败：{error}"))?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err("GitHub 尚未发布正式版本".into());
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Network, format!("创建更新请求失败：{error}")))?;
+
+    for (url, source) in [
+        (RELEASE_MANIFEST_URL, "release-manifest"),
+        (REPOSITORY_MANIFEST_URL, "repository-manifest"),
+    ] {
+        match fetch_json::<GithubRelease>(&client, url) {
+            Ok(release) => return Ok(FetchedRelease { release, source }),
+            Err(error) if matches!(error.stage, UpdateCheckStage::Network | UpdateCheckStage::Http) => continue,
+            Err(error) => return Err(error),
+        }
     }
-    response
-        .error_for_status()
-        .map_err(|error| format!("检查更新失败：{error}"))?
-        .json::<GithubRelease>()
-        .map_err(|error| format!("读取更新信息失败：{error}"))
+
+    fetch_json::<GithubRelease>(&client, LATEST_RELEASE_URL).map(|release| FetchedRelease {
+        release,
+        source: "github-api",
+    })
 }
 
 #[tauri::command]
 pub async fn check_for_update(
     app: AppHandle,
     manager: State<'_, UpdateManager>,
-) -> Result<UpdateCheckResult, String> {
+) -> Result<UpdateCheckResult, UpdateCheckError> {
     let current_version = app.package_info().version.to_string();
-    let current = normalize_version(&current_version)?;
+    let current = normalize_version(&current_version)
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Validation, error))?;
     let fetched = tokio::task::spawn_blocking(fetch_latest_release)
         .await
-        .map_err(|error| format!("更新检查任务失败：{error}"))??;
-    let mut candidate = candidate_from_release(fetched, &current)?;
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Task, format!("更新检查任务失败：{error}")))??;
+    let mut candidate = candidate_from_release(fetched.release, &current)
+        .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Validation, error))?;
     if let Some(found) = candidate.as_mut() {
-        let path = installer_path(&app, found)?;
+        let path = installer_path(&app, found)
+            .map_err(|error| UpdateCheckError::new(UpdateCheckStage::Validation, error))?;
         found.public.downloaded = verify_cached_installer(&path, found);
     }
     manager.state.lock().candidate = candidate.clone();
     Ok(UpdateCheckResult {
         current_version: format!("v{current}"),
         update: candidate.map(|value| value.public),
+        source: fetched.source.into(),
     })
 }
 
@@ -452,5 +568,28 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(candidate.public.version, "v0.0.7");
+    }
+
+    #[test]
+    fn reads_github_rate_limit_reset_as_retry_delay() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        headers.insert(
+            "x-ratelimit-reset",
+            reqwest::header::HeaderValue::from_str(&(now + 120).to_string()).unwrap(),
+        );
+
+        let delay = retry_after_seconds(&headers).unwrap();
+        assert!((119..=120).contains(&delay));
+    }
+
+    #[test]
+    fn exposes_a_safe_rate_limit_error() {
+        let error = UpdateCheckError::rate_limited(Some(90));
+        let value = serde_json::to_value(error).unwrap();
+
+        assert_eq!(value["stage"], "http");
+        assert_eq!(value["retryAfterSeconds"], 90);
+        assert!(value["message"].as_str().unwrap().contains("自动重试"));
     }
 }

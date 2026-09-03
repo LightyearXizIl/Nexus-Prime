@@ -33,7 +33,6 @@ const saving = ref(false);
 const saveError = ref("");
 const appVersion = ref("v0.1.7");
 const activeSection = ref<SectionId>("general");
-const manualUpdateChecked = ref(false);
 const settingsReady = ref(false);
 const clearingLogs = ref(false);
 const logCleanupFeedback = ref("");
@@ -83,10 +82,10 @@ const updateControlState = computed(() => {
   if (update.release) {
     return { label: `发现 ${update.release.version}`, tone: "available", progress: 100, indeterminate: false, disabled: false };
   }
-  if (update.error) {
+  if (update.checkError) {
     return { label: "检查失败，重试", tone: "error", progress: 100, indeterminate: false, disabled: false };
   }
-  if (manualUpdateChecked.value) {
+  if (update.manualCheckSucceeded) {
     return { label: "已是最新版本", tone: "latest", progress: 100, indeterminate: false, disabled: false };
   }
   return { label: "检查更新", tone: "idle", progress: 14, indeterminate: false, disabled: false };
@@ -101,7 +100,7 @@ async function saveSettings() {
     await invoke("save_global_settings", { settings: settingsToSave });
     settings.value = settingsToSave;
     saved.value = true;
-    if (settingsToSave.auto_check_updates) void update.checkAfterEnabled();
+    void update.setAutoCheckEnabled(settingsToSave.auto_check_updates);
   } catch (error) {
     console.error("Failed to save settings:", error);
     saveError.value = "保存失败，请检查应用权限后重试。";
@@ -164,9 +163,7 @@ async function handleUpdateControl() {
     return;
   }
 
-  manualUpdateChecked.value = false;
-  await update.checkForUpdate(false);
-  manualUpdateChecked.value = true;
+  await update.checkForUpdate("manual");
   if (update.canOpen) update.openDialog();
 }
 
@@ -373,22 +370,25 @@ async function openExternal(url: string) {
                   <span>GitHub：</span>
                   <small>LightyearXizIl/Nexus-Prime</small>
                 </button>
-                <button
-                  type="button"
-                  :class="['update-orbit', `is-${updateControlState.tone}`]"
-                  :disabled="updateControlState.disabled"
-                  :aria-busy="update.phase === 'checking' || update.phase === 'installing'"
-                  :aria-label="`应用更新：${updateControlState.label}`"
-                  @click="handleUpdateControl"
-                >
-                  <span class="update-orbit-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                      <path d="m13 2-9 12h6l-1 8 11-14h-6l-1-6Z" />
-                    </svg>
-                  </span>
-                  <span class="update-orbit-track" aria-hidden="true"><i :class="{ indeterminate: updateControlState.indeterminate }" :style="{ width: `${updateControlState.progress}%` }"></i></span>
-                  <span class="update-orbit-label">{{ updateControlState.label }}</span>
-                </button>
+                <div class="update-control">
+                  <button
+                    type="button"
+                    :class="['update-orbit', `is-${updateControlState.tone}`]"
+                    :disabled="updateControlState.disabled"
+                    :aria-busy="update.phase === 'checking' || update.phase === 'installing'"
+                    :aria-label="`应用更新：${updateControlState.label}`"
+                    @click="handleUpdateControl"
+                  >
+                    <span class="update-orbit-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                        <path d="m13 2-9 12h6l-1 8 11-14h-6l-1-6Z" />
+                      </svg>
+                    </span>
+                    <span class="update-orbit-track" aria-hidden="true"><i :class="{ indeterminate: updateControlState.indeterminate }" :style="{ width: `${updateControlState.progress}%` }"></i></span>
+                    <span class="update-orbit-label">{{ updateControlState.label }}</span>
+                  </button>
+                  <p v-if="update.checkError" class="update-check-error" role="status">{{ update.checkError }}</p>
+                </div>
               </article>
             </section>
             <section class="source-list" aria-labelledby="source-list-title">
@@ -547,6 +547,8 @@ async function openExternal(url: string) {
 .author-card h3 { margin: 0; color: var(--text); font-size: 14px; }
 .author-description, .author-contact { margin: 4px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
 .author-contact { display: block; color: var(--text-muted); }
+.update-control { display: grid; gap: 7px; margin-top: auto; }
+.update-check-error { margin: 0; color: var(--danger-text); font-size: 10px; line-height: 1.4; }
 .source-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 7px; }
 .source-card { display: flex; min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); flex-direction: column; }
 .source-card-featured { grid-column: 1 / -1; }

@@ -2,6 +2,21 @@
 
 更新时间：2026-09-03
 
+## 本次范围（v0.3.8，发布待完成，2026-09-03）
+
+- 已根据用户日志定位应用内更新失败的直接原因：GitHub Core API 返回 `403 rate limit exceeded`，响应头为 `X-RateLimit-Limit: 60`、`X-RateLimit-Remaining: 0`；这与 ATVV 的“遥控器不可达”告警无关。
+- 更新检查改为单一协调器：自动检查开启时在启动、每 6 小时和窗口恢复且已到期时执行；`focus` 与 `visibilitychange` 在 1 秒内去重。手动检查强制刷新，但遇到正在进行的自动请求会等待该请求，不再把空返回误写为“已是最新版本”。
+- 新版优先从 GitHub Release 的 `latest.json` 更新清单读取版本、安装包大小、下载地址和 SHA-256；仓库 `main/latest.json` 与 GitHub API 保留为兼容回退。下载仍只接受受信任 GitHub 地址，并在完成后进行大小和 SHA-256 校验。
+- 后端将网络、HTTP、解析、校验和任务错误以结构化形式返回；GitHub 限流会给出安全的自动重试时间。前端记录触发来源、合并检查、跳过原因和错误阶段，设置页在原有更新胶囊下显示可重试的简洁说明。
+- v0.3.6/v0.3.7 的旧二进制仍只使用 GitHub API，匿名额度耗尽时无法靠代码热修复；必须手动安装本轮 v0.3.8 一次，之后才获得清单优先与定时恢复机制。
+
+### 本轮自动化验证（发布前）
+
+- `npm.cmd test`：45/45 通过。
+- `cargo test --workspace --manifest-path src-tauri/Cargo.toml`：116/116 通过。
+- `npm.cmd run build`、`cargo check --workspace --all-targets --manifest-path src-tauri/Cargo.toml` 与 `git diff --check`：通过。
+- `npm.cmd run tauri:build`：通过。本地 NSIS 安装包为 `src-tauri/target/release/bundle/nsis/Nexus Prime_0.3.8_x64-setup.exe`，13,335,215 bytes，SHA-256 `CF91B052491CB3B4AC05208198733EA39D1B1C6101D3CD06D5BD6431DB444B6C`；文件版本和产品版本均为 `0.3.8`。
+
 ## 本次范围（未发布，2026-09-03）
 
 - 参考上游 `mwlt/Voice_VibeCoding` 的 `v1.6.7` / `c76056d` 做选择性适配；两仓库没有共同 Git 历史，未整仓合并，也未同步其电池组件、整体页面、更新器或启动修复。

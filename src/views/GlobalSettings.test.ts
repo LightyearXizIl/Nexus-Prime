@@ -139,4 +139,24 @@ describe("GlobalSettings autostart tray preference", () => {
 
     expect(wrapper.text()).toContain("清理日志失败");
   });
+
+  it("keeps an update-check failure visible and retryable", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_global_settings") return Promise.resolve({ ...defaultSettings });
+      if (command === "check_for_update") return Promise.reject({ stage: "http", message: "GitHub 请求额度暂时用尽。" });
+      return Promise.resolve(undefined);
+    });
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const wrapper = mount(GlobalSettingsView, { global: { plugins: [pinia, i18n] } });
+    await flushPromises();
+    await wrapper.findAll('[role="tab"]')[2].trigger("click");
+
+    await wrapper.get("button.update-orbit").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("检查失败，重试");
+    expect(wrapper.text()).toContain("GitHub 请求额度暂时用尽。");
+    expect(invoke).toHaveBeenCalledWith("check_for_update");
+  });
 });

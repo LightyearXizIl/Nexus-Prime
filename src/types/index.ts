@@ -93,6 +93,7 @@ export interface UpdateRelease {
 export interface UpdateCheckResult {
   currentVersion: string;
   update: UpdateRelease | null;
+  source: string;
 }
 
 export interface UpdateDownloadProgress {
