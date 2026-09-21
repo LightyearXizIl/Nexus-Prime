@@ -28,39 +28,68 @@ const ATVV_AUDIO: u128 = 0xab5e0003_5a21_4f05_bc7d_af01f617b664;
 const ATVV_CONTROL: u128 = 0xab5e0004_5a21_4f05_bc7d_af01f617b664;
 const ATVV_MIC_START_TIMEOUT: Duration = Duration::from_millis(800);
 
-// A MIC_OPEN request must be followed by AUDIO_START (or the first audio
-// packet) promptly.  If the remote/Windows GATT stack drops that transition,
-// the existing input-session reconnect loop is the safest recovery path.
-static ATVV_MIC_OPEN_PENDING_AT: Mutex<Option<Instant>> = Mutex::new(None);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AtvvStartPhase {
+    Idle,
+    MicOpenPending(Instant),
+    Active,
+}
 
-fn mark_atvv_mic_open_pending() {
-    if let Ok(mut pending_at) = ATVV_MIC_OPEN_PENDING_AT.lock() {
-        *pending_at = Some(Instant::now());
+/// A watchdog belongs to exactly one BLE input session. Keeping it out of a
+/// process-global slot prevents a delayed callback from an old connection from
+/// cancelling a newer connection.
+struct AtvvStartWatchdog {
+    session_id: u64,
+    phase: Mutex<AtvvStartPhase>,
+}
+
+impl AtvvStartWatchdog {
+    fn new(session_id: u64) -> Self {
+        Self { session_id, phase: Mutex::new(AtvvStartPhase::Idle) }
     }
-}
 
-fn clear_atvv_mic_open_pending() {
-    if let Ok(mut pending_at) = ATVV_MIC_OPEN_PENDING_AT.lock() {
-        *pending_at = None;
+    fn arm_mic_open(&self, now: Instant) {
+        if let Ok(mut phase) = self.phase.lock() {
+            *phase = AtvvStartPhase::MicOpenPending(now);
+        }
     }
-}
 
-fn atvv_mic_start_timeout_due(opened_at: Option<Instant>, now: Instant) -> bool {
-    opened_at
-        .and_then(|opened_at| now.checked_duration_since(opened_at))
-        .map(|elapsed| elapsed >= ATVV_MIC_START_TIMEOUT)
-        .unwrap_or(false)
-}
-
-fn take_atvv_mic_start_timeout(now: Instant) -> bool {
-    let Ok(mut pending_at) = ATVV_MIC_OPEN_PENDING_AT.lock() else {
-        return false;
-    };
-    if atvv_mic_start_timeout_due(*pending_at, now) {
-        *pending_at = None;
+    /// Both explicit AUDIO_START and an early PCM packet use this edge, so the
+    /// input-method shortcut is never skipped when control packets race audio.
+    fn mark_active(&self) -> bool {
+        let Ok(mut phase) = self.phase.lock() else {
+            return false;
+        };
+        if matches!(*phase, AtvvStartPhase::Active) {
+            return false;
+        }
+        *phase = AtvvStartPhase::Active;
         true
-    } else {
-        false
+    }
+
+    fn clear(&self) {
+        if let Ok(mut phase) = self.phase.lock() {
+            *phase = AtvvStartPhase::Idle;
+        }
+    }
+
+    /// Consumes one overdue MIC_OPEN only when called by the owning session.
+    fn take_timeout(&self, session_id: u64, now: Instant) -> Option<Duration> {
+        if self.session_id != session_id {
+            return None;
+        }
+        let Ok(mut phase) = self.phase.lock() else {
+            return None;
+        };
+        let AtvvStartPhase::MicOpenPending(opened_at) = *phase else {
+            return None;
+        };
+        let elapsed = now.checked_duration_since(opened_at)?;
+        if elapsed < ATVV_MIC_START_TIMEOUT {
+            return None;
+        }
+        *phase = AtvvStartPhase::Idle;
+        Some(elapsed)
     }
 }
 
@@ -174,7 +203,7 @@ fn windows_run_input_session(
     use tauri::Manager;
 
     log::info!("XIAOMI INPUT SESSION start id={session_id}");
-    clear_atvv_mic_open_pending();
+    let atvv_watchdog = Arc::new(AtvvStartWatchdog::new(session_id));
 
     tv_gate::mark_connecting();
     reset_atvv_subscribed();
@@ -250,6 +279,7 @@ fn windows_run_input_session(
             &gate,
             &mut tokens,
             gain_db,
+            &atvv_watchdog,
         ) {
             Ok(true) => {
                 atvv_ok = true;
@@ -413,6 +443,7 @@ fn windows_run_input_session(
                 &gate,
                 &mut tokens,
                 gain_db,
+                &atvv_watchdog,
             ) {
                 Ok(true) => {
                     atvv_ok = true;
@@ -448,6 +479,7 @@ fn windows_run_input_session(
                     gain_db,
                     &runtime,
                     session_id,
+                    &atvv_watchdog,
                 ) {
                     Ok(true) => {
                         atvv_ok = true;
@@ -584,9 +616,10 @@ fn windows_run_input_session(
     let mut since_atvv_retry = Instant::now();
     while runtime.session_active(session_id) {
         std::thread::sleep(Duration::from_millis(200));
-        if atvv_ok && take_atvv_mic_start_timeout(Instant::now()) {
+        if let Some(elapsed) = atvv_watchdog.take_timeout(session_id, Instant::now()) {
             log::warn!(
-                "XIAOMI ATVV voice start timed out after MIC_OPEN; reconnecting input session"
+                "XIAOMI ATVV stage=timeout session={session_id} phase=mic_open_pending elapsed_ms={} reconnecting input session",
+                elapsed.as_millis()
             );
             runtime.end_session(session_id, "atvv_voice_start_timeout");
             break;
@@ -594,9 +627,16 @@ fn windows_run_input_session(
         if !atvv_ok && since_atvv_retry.elapsed() >= Duration::from_secs(3) {
             since_atvv_retry = Instant::now();
             let retry = if !atvv_interface_id.is_empty() {
-                subscribe_atvv_from_interface(&app, &atvv_interface_id, &gate, &mut tokens, gain_db)
+                subscribe_atvv_from_interface(
+                    &app,
+                    &atvv_interface_id,
+                    &gate,
+                    &mut tokens,
+                    gain_db,
+                    &atvv_watchdog,
+                )
             } else if let Some(atvv) = atvv_service.as_ref() {
-                subscribe_atvv_service(&app, atvv, &gate, &mut tokens, gain_db)
+                subscribe_atvv_service(&app, atvv, &gate, &mut tokens, gain_db, &atvv_watchdog)
             } else {
                 Ok(false)
             };
@@ -661,7 +701,7 @@ fn windows_run_input_session(
     }
 
     voice_pcm::stop();
-    clear_atvv_mic_open_pending();
+    atvv_watchdog.clear();
     crate::bridges::xiaomi::key_mapping::reset_voice_input_state("input_session_cleanup");
     crate::bridges::xiaomi::key_mapping::set_input_session_active(false);
     tv_gate::reset();
@@ -1284,8 +1324,9 @@ fn subscribe_atvv_periodic_retry(
     gain_db: f32,
     runtime: &Arc<XiaomiRuntime>,
     session_id: u64,
+    watchdog: &Arc<AtvvStartWatchdog>,
 ) -> Result<bool, String> {
-    let first = subscribe_atvv_service(app, atvv, gate, tokens, gain_db);
+    let first = subscribe_atvv_service(app, atvv, gate, tokens, gain_db, watchdog);
     let access_denied = first
         .as_ref()
         .err()
@@ -1298,7 +1339,7 @@ fn subscribe_atvv_periodic_retry(
     log::warn!("ATVV periodic retry pausing HID Tap session={session_id} after AccessDenied");
     crate::bridges::xiaomi::hid_report_tap::stop_and_join();
     std::thread::sleep(Duration::from_millis(150));
-    let retry = subscribe_atvv_service(app, atvv, gate, tokens, gain_db);
+    let retry = subscribe_atvv_service(app, atvv, gate, tokens, gain_db, watchdog);
 
     if runtime.session_active(session_id) {
         let tap_enabled = app
@@ -1341,6 +1382,7 @@ fn subscribe_atvv_from_interface(
         windows::Foundation::EventRegistrationToken,
     )>,
     gain_db: f32,
+    watchdog: &Arc<AtvvStartWatchdog>,
 ) -> Result<bool, String> {
     use windows::core::HSTRING;
     use windows::Devices::Bluetooth::GenericAttributeProfile::{
@@ -1363,7 +1405,7 @@ fn subscribe_atvv_from_interface(
                 .and_then(|op| op.get())
         });
 
-    subscribe_atvv_service(app, &service, gate, tokens, gain_db)
+    subscribe_atvv_service(app, &service, gate, tokens, gain_db, watchdog)
 }
 
 /// ATVV 语音会话共享状态
@@ -1528,7 +1570,12 @@ fn log_voice_timing(state: &Arc<Mutex<AtvvVoiceState>>, phase: &str) {
 }
 
 /// 遥控语音键按下：传声 + 按模式注入快捷键
-fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
+fn on_voice_remote_press(
+    app: &AppHandle,
+    gate: &KeyEmitGate,
+    state: &Arc<Mutex<AtvvVoiceState>>,
+    source: &str,
+) {
     let toggle = voice_trigger_is_toggle(app);
     let minimum_press_ms = if toggle {
         key_mapping::voice_shortcut_min_hold_ms(app)
@@ -1561,15 +1608,20 @@ fn on_voice_remote_press(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<
     notify_voice_phase(app, gate, true);
     crate::bridges::xiaomi::voice_meter::set_session(true);
     log::info!(
-        "XIAOMI ATVV AUDIO_START mode={} → shortcut DOWN immediately",
+        "XIAOMI ATVV stage=active source={source} mode={} shortcut_down=true",
         if toggle { "click" } else { "hold" }
     );
 }
 
 /// 遥控语音键抬起：结束传声 + 短按 TAP / 长按 UP
-fn on_voice_remote_release(app: &AppHandle, gate: &KeyEmitGate, state: &Arc<Mutex<AtvvVoiceState>>) {
+fn on_voice_remote_release(
+    app: &AppHandle,
+    gate: &KeyEmitGate,
+    state: &Arc<Mutex<AtvvVoiceState>>,
+    watchdog: &AtvvStartWatchdog,
+) {
     use crate::bridges::xiaomi::voice_pcm;
-    clear_atvv_mic_open_pending();
+    watchdog.clear();
     let toggle = voice_trigger_is_toggle(app);
     let (was_pressed, press_ms, minimum_press_ms) = {
         let Ok(mut st) = state.lock() else {
@@ -1625,6 +1677,7 @@ fn subscribe_atvv_service(
         windows::Foundation::EventRegistrationToken,
     )>,
     gain_db: f32,
+    watchdog: &Arc<AtvvStartWatchdog>,
 ) -> Result<bool, String> {
     use windows::core::GUID;
     use windows::Devices::Bluetooth::GenericAttributeProfile::{
@@ -1724,6 +1777,7 @@ fn subscribe_atvv_service(
     let gate2 = Arc::clone(gate);
     let tx_for_mic = tx.clone();
     let voice_ctrl = Arc::clone(&voice_state);
+    let watchdog_ctrl = Arc::clone(watchdog);
     let handler = TypedEventHandler::new(
         move |_sender: &Option<GattCharacteristic>,
               args: &Option<
@@ -1740,6 +1794,7 @@ fn subscribe_atvv_service(
                             &gate2,
                             &voice_ctrl,
                             tx_for_mic.as_ref(),
+                            &watchdog_ctrl,
                             &data,
                         );
                     }
@@ -1771,6 +1826,9 @@ fn subscribe_atvv_service(
     // 订阅 AUDIO 特征 → ADPCM → VB-CABLE
     if let Some(audio_ch) = audio {
         let voice_audio = Arc::clone(&voice_state);
+        let app_audio = app.clone();
+        let gate_audio = Arc::clone(gate);
+        let watchdog_audio = Arc::clone(watchdog);
         let audio_handler = TypedEventHandler::new(
             move |_sender: &Option<GattCharacteristic>,
                   args: &Option<
@@ -1782,7 +1840,13 @@ fn subscribe_atvv_service(
                             let len = reader.UnconsumedBufferLength().unwrap_or(0) as usize;
                             let mut data = vec![0u8; len];
                             let _ = reader.ReadBytes(&mut data);
-                            handle_atvv_audio(&voice_audio, &data);
+                            handle_atvv_audio(
+                                &app_audio,
+                                &gate_audio,
+                                &voice_audio,
+                                &watchdog_audio,
+                                &data,
+                            );
                         }
                     }
                 }
@@ -1825,12 +1889,21 @@ fn subscribe_atvv_service(
     Ok(true)
 }
 
-fn handle_atvv_audio(state: &Arc<Mutex<AtvvVoiceState>>, payload: &[u8]) {
+fn handle_atvv_audio(
+    app: &AppHandle,
+    gate: &KeyEmitGate,
+    state: &Arc<Mutex<AtvvVoiceState>>,
+    watchdog: &AtvvStartWatchdog,
+    payload: &[u8],
+) {
     use crate::bridges::xiaomi::adpcm_decoder::postprocess;
     use crate::bridges::xiaomi::voice_pcm;
 
-    if !payload.is_empty() {
-        clear_atvv_mic_open_pending();
+    if !payload.is_empty() && watchdog.mark_active() {
+        // Some RC003 firmware emits PCM before (or without) AUDIO_START. The
+        // previous implementation cleared the timeout here but never pressed
+        // the configured IME shortcut, leaving a live stream with no text.
+        on_voice_remote_press(app, gate, state, "implicit_pcm");
     }
 
     // Keep decoder mutation and frame assembly serialized, but move gain,
@@ -1895,6 +1968,7 @@ fn handle_atvv_control(
     gate: &KeyEmitGate,
     state: &Arc<Mutex<AtvvVoiceState>>,
     tx: Option<&windows::Devices::Bluetooth::GenericAttributeProfile::GattCharacteristic>,
+    watchdog: &AtvvStartWatchdog,
     payload: &[u8],
 ) {
     if payload.is_empty() {
@@ -1902,28 +1976,28 @@ fn handle_atvv_control(
     }
     match payload[0] {
         0x08 => {
-            mark_atvv_mic_open_pending();
+            watchdog.arm_mic_open(Instant::now());
             key_mapping::mark_direct_signal("voice");
             key_mapping::mark_direct_signal("mic");
             if let Some(tx) = tx {
                 atvv_write_tx(tx, &[0x0C, 0x00], "MIC_OPEN");
             }
             log::info!(
-                "XIAOMI ATVV MIC_OPEN request opcode=0x08 watchdog_ms={}",
+                "XIAOMI ATVV stage=mic_open request opcode=0x08 watchdog_ms={}",
                 ATVV_MIC_START_TIMEOUT.as_millis()
             );
         }
         0x04 => {
-            clear_atvv_mic_open_pending();
             key_mapping::mark_direct_signal("voice");
             key_mapping::mark_direct_signal("mic");
             // AUDIO_START: [opcode, reason, codec, stream_id].
             update_atvv_codec(state, payload.get(2).copied(), "AUDIO_START");
-            on_voice_remote_press(app, gate, state);
+            if watchdog.mark_active() {
+                on_voice_remote_press(app, gate, state, "audio_start");
+            }
         }
         0x00 => {
-            clear_atvv_mic_open_pending();
-            on_voice_remote_release(app, gate, state);
+            on_voice_remote_release(app, gate, state, watchdog);
         }
         0x0A if payload.len() >= 7 => {
             // AUDIO_SYNC: [opcode, codec, frame_no_hi, frame_no_lo, predictor_hi, predictor_lo, step].
@@ -2067,8 +2141,8 @@ fn handle_hid_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        atvv_codec_sample_rate, atvv_mic_start_timeout_due, claim_voice_remote_edge,
-        disconnect_confirmed, parse_battery_charging_state, parse_hid_usages,
+        atvv_codec_sample_rate, claim_voice_remote_edge, disconnect_confirmed,
+        parse_battery_charging_state, parse_hid_usages, AtvvStartWatchdog,
         BatteryChargingState, ATVV_MIC_START_TIMEOUT,
     };
 
@@ -2154,14 +2228,56 @@ mod tests {
     #[test]
     fn mic_start_timeout_requires_the_full_recovery_window() {
         let opened_at = std::time::Instant::now();
-        assert!(!atvv_mic_start_timeout_due(
-            Some(opened_at),
-            opened_at + ATVV_MIC_START_TIMEOUT - std::time::Duration::from_millis(1)
-        ));
-        assert!(atvv_mic_start_timeout_due(
-            Some(opened_at),
-            opened_at + ATVV_MIC_START_TIMEOUT
-        ));
-        assert!(!atvv_mic_start_timeout_due(None, opened_at + ATVV_MIC_START_TIMEOUT));
+        let watchdog = AtvvStartWatchdog::new(40);
+        watchdog.arm_mic_open(opened_at);
+        assert_eq!(
+            watchdog.take_timeout(
+                40,
+                opened_at + ATVV_MIC_START_TIMEOUT - std::time::Duration::from_millis(1)
+            ),
+            None
+        );
+        assert!(watchdog
+            .take_timeout(40, opened_at + ATVV_MIC_START_TIMEOUT)
+            .is_some());
+    }
+
+    #[test]
+    fn explicit_or_implicit_audio_start_activates_only_once_and_cancels_timeout() {
+        let opened_at = std::time::Instant::now();
+        let watchdog = AtvvStartWatchdog::new(41);
+        watchdog.arm_mic_open(opened_at);
+
+        assert!(watchdog.mark_active());
+        assert!(!watchdog.mark_active());
+        assert_eq!(
+            watchdog.take_timeout(41, opened_at + ATVV_MIC_START_TIMEOUT),
+            None
+        );
+    }
+
+    #[test]
+    fn timeout_is_consumed_once_scoped_to_session_and_cancelled_by_cleanup() {
+        let opened_at = std::time::Instant::now();
+        let watchdog = AtvvStartWatchdog::new(42);
+        watchdog.arm_mic_open(opened_at);
+        assert_eq!(
+            watchdog.take_timeout(43, opened_at + ATVV_MIC_START_TIMEOUT),
+            None
+        );
+        watchdog.clear();
+        assert_eq!(
+            watchdog.take_timeout(42, opened_at + ATVV_MIC_START_TIMEOUT),
+            None
+        );
+
+        watchdog.arm_mic_open(opened_at);
+        assert!(watchdog
+            .take_timeout(42, opened_at + ATVV_MIC_START_TIMEOUT)
+            .is_some());
+        assert_eq!(
+            watchdog.take_timeout(42, opened_at + ATVV_MIC_START_TIMEOUT),
+            None
+        );
     }
 }
