@@ -272,46 +272,58 @@ fn flush_pending_locked() {
 }
 
 fn send_pcm_now(samples: &[i16], source_rate_hz: u32, ratio: usize) {
-    let mut guard = CLIENT.lock();
-    let Some(c) = guard.as_mut() else {
-        READY.store(false, Ordering::Release);
-        enqueue_pending(samples, source_rate_hz);
-        return;
-    };
-    if c.source_rate_hz != Some(source_rate_hz) {
-        c.have_prev = false;
-        c.source_rate_hz = Some(source_rate_hz);
-        log::info!("XIAOMI VOICE PCM source_rate={source_rate_hz}Hz -> 48000Hz ratio={ratio}");
-    }
-    let mut previous = if c.have_prev { c.prev } else { samples[0] };
-    let mut out = Vec::with_capacity(samples.len() * ratio * 2);
-    for &current in samples {
-        let delta = current as i32 - previous as i32;
-        for step in 1..=ratio {
-            let s = if step == ratio {
-                current
-            } else {
-                (previous as i32 + delta * step as i32 / ratio as i32) as i16
-            };
-            out.extend_from_slice(&s.to_le_bytes());
-        }
-        previous = current;
-    }
-    c.prev = samples[samples.len() - 1];
-    c.have_prev = true;
-    let peer = c.peer;
-    let udp_ok = match c.sock.send_to(&out, peer) {
-        Ok(_) => {
-            c.sent.fetch_add(1, Ordering::Relaxed);
-            FIRST_SEND_AT.lock().get_or_insert_with(Instant::now);
-            true
-        }
-        Err(_) => {
-            c.dropped.fetch_add(1, Ordering::Relaxed);
+    let mut router_lost = false;
+    let udp_ok = {
+        let mut guard = CLIENT.lock();
+        if let Some(c) = guard.as_mut() {
+            if c.source_rate_hz != Some(source_rate_hz) {
+                c.have_prev = false;
+                c.source_rate_hz = Some(source_rate_hz);
+                log::info!(
+                    "XIAOMI VOICE PCM source_rate={source_rate_hz}Hz -> 48000Hz ratio={ratio}"
+                );
+            }
+            let mut previous = if c.have_prev { c.prev } else { samples[0] };
+            let mut out = Vec::with_capacity(samples.len() * ratio * 2);
+            for &current in samples {
+                let delta = current as i32 - previous as i32;
+                for step in 1..=ratio {
+                    let s = if step == ratio {
+                        current
+                    } else {
+                        (previous as i32 + delta * step as i32 / ratio as i32) as i16
+                    };
+                    out.extend_from_slice(&s.to_le_bytes());
+                }
+                previous = current;
+            }
+            c.prev = samples[samples.len() - 1];
+            c.have_prev = true;
+            let peer = c.peer;
+            match c.sock.send_to(&out, peer) {
+                Ok(_) => {
+                    c.sent.fetch_add(1, Ordering::Relaxed);
+                    FIRST_SEND_AT.lock().get_or_insert_with(Instant::now);
+                    true
+                }
+                Err(error) => {
+                    c.dropped.fetch_add(1, Ordering::Relaxed);
+                    router_lost = true;
+                    log::warn!("XIAOMI VOICE PCM router send failed; restarting: {error}");
+                    false
+                }
+            }
+        } else {
+            router_lost = true;
             false
         }
     };
-    drop(guard);
+    if router_lost {
+        READY.store(false, Ordering::Release);
+        let _ = CLIENT.lock().take();
+        enqueue_pending(samples, source_rate_hz);
+        warmup_async();
+    }
     crate::bridges::xiaomi::voice_meter::on_pcm(samples, udp_ok);
 }
 
