@@ -2367,10 +2367,13 @@ fn fallback_injection_route(vks: &[u16]) -> FallbackInjectionRoute {
 
 fn should_try_virtual_hid(vks: &[u16]) -> bool {
     let bypass_virtual_hid = has_alt_modifier(vks)
-        // Enter 与四向键的物理原键会被 special_keys 在映射窗口内抑制。
-        // 这五个键必须走带 EXTRA_INFO 的 SendInput，才能让钩子放行本应用注入。
+        // 任何包含 Enter 的组合（包括左右 Shift+Enter）都必须走带 EXTRA_INFO
+        // 的 SendInput，才能让钩子放行本应用注入。
+        || vks.contains(&0x0D)
+        // 四向键和媒体键的物理原键会被 special_keys 在映射窗口内抑制。
+        // 这些单键也必须走带 EXTRA_INFO 的 SendInput。
         || (vks.len() == 1
-            && matches!(vks[0], 0x0D | 0x20 | 0x25..=0x28 | 0xAD | 0xAE | 0xAF));
+            && matches!(vks[0], 0x20 | 0x25..=0x28 | 0xAD | 0xAE | 0xAF));
     !bypass_virtual_hid
 }
 
@@ -3021,6 +3024,22 @@ mod gesture_tests {
             assert_eq!(fallback_injection_route(&[vk]), FallbackInjectionRoute::SendInput);
         }
         assert!(should_try_virtual_hid(&[0x41]));
+    }
+
+    #[test]
+    fn enter_chords_use_marked_send_input_but_other_chords_keep_virtual_hid() {
+        for shift in [0x10, 0xA0, 0xA1] {
+            assert!(
+                !should_try_virtual_hid(&[shift, 0x0D]),
+                "shift=0x{shift:02X}"
+            );
+            assert_eq!(
+                fallback_injection_route(&[shift, 0x0D]),
+                FallbackInjectionRoute::SendInput
+            );
+        }
+
+        assert!(should_try_virtual_hid(&[0x10, 0x41]));
     }
 
     #[test]
