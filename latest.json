@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.4.6",
-  "name": "Nexus Prime v0.4.6",
-  "body": "- 修复虚拟键盘强制重绑触发系统蓝屏重启的问题；WinUHid 已可用时不再重装或扫描设备。\n- 修复语音键可用但方向、确认等普通按键全部失灵的问题，并新增 HID Tap 完成状态遥测。\n- 虚拟声卡自动修复在确认一次 UAC 后自动完成官方安装器点击、端点检测与默认麦克风校正。",
+  "tag_name": "v0.4.7",
+  "name": "Nexus Prime v0.4.7",
+  "body": "- 修复 ATVV MIC_OPEN 后未收到 AUDIO_START 时的会话卡住：首个有效 PCM 会隐式启动语音，800ms 未启动会安全清理并重连。\n- 修复普通按键映射的通用、左、右 Shift+Enter：所有含 Enter 组合都使用带标记的 SendInput，避免 WinUHid 路由造成按键失效或粘键。\n- 保留 PCM UDP 失败时的有界预滚和 PING/PONG 重热恢复。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.4.6_x64-setup.exe",
-      "size": 13367506,
-      "digest": "sha256:4485efd12c7493e80450ccc0baed77b60206db6615dd2c4af293c7bce5c8b1fd",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.6/Nexus.Prime_0.4.6_x64-setup.exe"
+      "name": "Nexus.Prime_0.4.7_x64-setup.exe",
+      "size": 13368240,
+      "digest": "sha256:3a78679eabcf9a3984190a25090fc734ac025b72a8656d11158e2e3fffe2a716",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.7/Nexus.Prime_0.4.7_x64-setup.exe"
     }
   ]
 }
