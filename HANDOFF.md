@@ -6,7 +6,7 @@
 
 - PR #12 已承接并保留 SummerSec 在原 PR #11 中的 ATVV 恢复贡献：`MIC_OPEN` 看门狗现在带连接会话代号和 `Idle / MicOpenPending / Active` 状态。`AUDIO_START` 或首个有效 PCM 都经过同一启动逻辑且仅能执行一次；800ms 内没有启动事件时结束当前输入会话并复用自动重连，同时清理语音组合键、PCM 和 F5 抑制。旧连接回调不能影响后续会话；日志按会话标注启动来源、耗时及超时/重连原因。
 - PR #13 独立修复 Issue #9：普通映射内任意含 Enter 的组合（通用、左、右 Shift+Enter）跳过 WinUHid，走带 `EXTRA_INFO` 的 SendInput。语音快捷键的 WinUHid 专用路径、单 Enter/方向/音量现有语义和 Alt+Tab 分流未改；`VK observe ... (no map)` 仍只是诊断。
-- 自动化：Gadget 10/10、前端 60/60、Rust 150 通过且 2 项环境 smoke ignored；前端生产构建、Cargo workspace 全目标检查、Tauri release 与 `git diff --check` 通过。本地唯一正式 NSIS 资产为 `Nexus.Prime_0.4.7_x64-setup.exe`，13,368,240 bytes，SHA-256 `3A78679EABCF9A3984190A25090FC734AC025B72A8656D11158E2E3FFFE2A716`，安装包产品/文件版本均为 `0.4.7`。远端 `main` 与注释标签 `v0.4.7` 均指向发布源 `10653f6b6425aac47bb7092b6eb2f0a388b8c558`；正式 Release 公开、非草稿、非预发布，且仅上传该安装包与同版 `latest.json`。Release 清单、`main/latest.json` 和公开下载后复算均为同一大小、摘要与产品版本。
+- 自动化：Gadget 10/10、前端 60/60、Rust 150 通过且 2 项环境 smoke ignored；前端生产构建、Cargo workspace 全目标检查、Tauri release 与 `git diff --check` 通过。本地唯一正式 NSIS 资产为 `Nexus.Prime_0.4.7_x64-setup.exe`，13,368,240 bytes，SHA-256 `3A78679EABCF9A3984190A25090FC734AC025B72A8656D11158E2E3FFFE2A716`，安装包产品/文件版本均为 `0.4.7`。注释标签 `v0.4.7` 指向发布源 `10653f6b6425aac47bb7092b6eb2f0a388b8c558`；随后 `main` 追加本条远端复核记录。正式 Release 公开、非草稿、非预发布，且仅上传该安装包与同版 `latest.json`。Release 清单、`main/latest.json` 和公开下载后复算均为同一大小、摘要与产品版本。
 - 真机验收仍待执行：Home、菜单各绑定三种 Shift+Enter 并与语音键交替至少 30 轮；RC003 语音启停至少 50 轮，空闲 10 分钟后复测；并回归方向、确认、主页、菜单、音量、返回和微信/千问/豆包预设。若未再遇到 ATVV 丢失，只能记录状态机模拟通过，不能宣称现场故障已复现。
 
 ## v0.4.6：虚拟键盘蓝屏、普通按键与声卡全自动修复（2026-09-12）
