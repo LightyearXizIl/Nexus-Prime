@@ -12,6 +12,8 @@ const { invoke, listen } = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
+// Keep component tests independent of the logger's delayed batch timer.
+vi.mock("../utils/appLogger", () => ({ loggedInvoke: invoke }));
 
 const config = {
   button_aliases: {},
@@ -84,7 +86,7 @@ async function mountView() {
 
 describe("XiaomiSettings virtual keyboard repair", () => {
   beforeEach(() => {
-    invoke.mockReset();
+    invoke.mockReset().mockResolvedValue(undefined);
     listen.mockClear();
     i18n.global.locale.value = "zh-CN";
   });

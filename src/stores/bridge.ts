@@ -60,6 +60,9 @@ export const useBridgeStore = defineStore("bridge", () => {
     try {
       await invoke("stop_bridge", { bridgeType: type });
       devices.value[type].status = "Disconnected";
+      devices.value[type].auto_connect_enabled = false;
+      devices.value[type].bluetooth_connected = false;
+      await refreshStatus(type);
     } catch (e) {
       console.error(`Failed to stop ${type}:`, e);
     } finally {

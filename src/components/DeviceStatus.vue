@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { BridgeStatus } from "../types";
+import type { BridgeStatus, DeviceInfo } from "../types";
 import { useI18n } from "vue-i18n";
 import { connectionStatusPresentation } from "../utils/connectionStatus";
 
@@ -9,17 +9,20 @@ const { t } = useI18n();
 const props = defineProps<{
   status: BridgeStatus;
   loading: boolean;
+  device?: DeviceInfo;
+  atvvOk?: boolean;
 }>();
 
 const emit = defineEmits<{
   toggle: [];
 }>();
 
-const presentation = computed(() => connectionStatusPresentation(props.status));
+const presentation = computed(() => connectionStatusPresentation(props.status, props.device ? { ...props.device, atvv_ok: props.atvvOk } : undefined));
 const statusText = computed(() => t(presentation.value.labelKey));
 const statusDetail = computed(() => presentation.value.detail);
 
 function buttonText(status: BridgeStatus): string {
+  if (props.device?.auto_connect_enabled) return t("status.disconnect");
   if (status === "Connected") return t("status.disconnect");
   if (status === "Connecting") return t("status.connecting");
   return t("status.connect");
@@ -37,8 +40,8 @@ function buttonText(status: BridgeStatus): string {
       {{ statusText }}
     </span>
     <button
-      :class="['connection-action', status === 'Connected' ? 'disconnect' : 'connect']"
-      :disabled="loading || status === 'Connecting'"
+      :class="['connection-action', (device?.auto_connect_enabled || status === 'Connected') ? 'disconnect' : 'connect']"
+      :disabled="loading || (status === 'Connecting' && device?.auto_connect_enabled === undefined)"
       @click="emit('toggle')"
     >
       {{ loading ? t("common.processing") : buttonText(status) }}

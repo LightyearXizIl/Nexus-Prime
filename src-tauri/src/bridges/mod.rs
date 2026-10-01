@@ -76,6 +76,12 @@ pub struct DeviceInfo {
     /// `Some(true)` only when the device explicitly reports that it is charging.
     /// `None` means the BLE peripheral does not expose, or cannot determine, charge state.
     pub battery_charging: Option<bool>,
+    #[serde(default)]
+    pub bluetooth_paired: Option<bool>,
+    #[serde(default)]
+    pub bluetooth_connected: Option<bool>,
+    #[serde(default)]
+    pub auto_connect_enabled: bool,
 }
 
 /// Global bridge state shared across the application
@@ -93,6 +99,9 @@ impl BridgeState {
                 device_address: None,
                 battery_level: None,
                 battery_charging: None,
+                bluetooth_paired: None,
+                bluetooth_connected: None,
+                auto_connect_enabled: false,
             }),
         }
     }
@@ -105,6 +114,7 @@ impl BridgeState {
         let should_clear_device = status != BridgeStatus::Connected;
         guard.status = status;
         if should_clear_device {
+            guard.bluetooth_connected = Some(false);
             guard.device_name = None;
             guard.device_address = None;
             guard.battery_level = None;
@@ -112,8 +122,38 @@ impl BridgeState {
         }
     }
 
-    /// Update full device info (name, address, battery) after successful connection.
-    /// Also sets the status to Connected.
+    /// Device objects and pairing records are metadata, never connection proof.
+    pub fn update_link_state(&self, paired: Option<bool>, connected: Option<bool>, enabled: bool) -> bool {
+        let mut info = self.xiaomi.write();
+        let status = if connected == Some(true) {
+            BridgeStatus::Connected
+        } else if enabled {
+            BridgeStatus::Connecting
+        } else {
+            BridgeStatus::Disconnected
+        };
+        let changed = info.bluetooth_paired != paired
+            || info.bluetooth_connected != connected
+            || info.auto_connect_enabled != enabled
+            || info.status != status;
+        info.bluetooth_paired = paired;
+        info.bluetooth_connected = connected;
+        info.auto_connect_enabled = enabled;
+        info.status = status;
+        if connected != Some(true) {
+            info.battery_level = None;
+            info.battery_charging = None;
+        }
+        changed
+    }
+
+    pub fn update_device_identity(&self, name: Option<String>, address: Option<String>) {
+        let mut info = self.xiaomi.write();
+        info.device_name = name;
+        info.device_address = address;
+    }
+
+    /// Metadata never changes link status; offline callbacks cannot restore old battery data.
     pub fn update_device_info(
         &self,
         bridge_type: BridgeType,
@@ -125,7 +165,8 @@ impl BridgeState {
             BridgeType::Xiaomi => &self.xiaomi,
         };
         let mut guard = info.write();
-        guard.status = BridgeStatus::Connected;
+        // Metadata and battery notifications must never promote an offline device.
+        if guard.bluetooth_connected == Some(false) { return; }
         if let Some(n) = name { guard.device_name = Some(n); }
         if let Some(a) = address { guard.device_address = Some(a); }
         if let Some(b) = battery { guard.battery_level = Some(b); }
@@ -137,7 +178,7 @@ impl BridgeState {
             BridgeType::Xiaomi => &self.xiaomi,
         };
         let mut guard = info.write();
-        guard.battery_charging = charging;
+        if guard.bluetooth_connected != Some(false) { guard.battery_charging = charging; }
     }
 
     pub fn get_info(&self, bridge_type: BridgeType) -> DeviceInfo {
@@ -163,6 +204,27 @@ pub fn emit_device_status(app: &tauri::AppHandle, bridge_type: BridgeType) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_authoritative_online_link_is_connected_and_offline_clears_battery() {
+        let state = BridgeState::new();
+        state.update_device_identity(Some("paired".into()), Some("00:11:22:33:44:55".into()));
+        state.update_link_state(Some(true), Some(false), true);
+        state.update_device_info(BridgeType::Xiaomi, None, None, Some(90));
+        assert_eq!(state.get_info(BridgeType::Xiaomi).status, BridgeStatus::Connecting);
+        assert_eq!(state.get_info(BridgeType::Xiaomi).battery_level, None);
+        state.update_link_state(Some(true), Some(true), true);
+        state.update_device_info(BridgeType::Xiaomi, None, None, Some(80));
+        state.update_battery_charging(BridgeType::Xiaomi, Some(true));
+        assert_eq!(state.get_info(BridgeType::Xiaomi).status, BridgeStatus::Connected);
+        state.update_link_state(Some(true), Some(false), true);
+        let offline = state.get_info(BridgeType::Xiaomi);
+        assert_eq!(offline.battery_level, None);
+        assert_eq!(offline.battery_charging, None);
+        state.update_link_state(Some(true), Some(false), false);
+        assert_eq!(state.get_info(BridgeType::Xiaomi).status, BridgeStatus::Disconnected);
+        assert!(!state.get_info(BridgeType::Xiaomi).auto_connect_enabled);
+    }
 
     #[test]
     fn non_connected_statuses_clear_stale_device_metadata() {

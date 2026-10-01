@@ -39,3 +39,14 @@ describe("connection status presentation", () => {
     expect(connectedDeviceName("Error|连接失败", "小米蓝牙遥控器 2 Pro")).toBeNull();
   });
 });
+describe("authoritative link snapshot", () => {
+  it("paired and unknown devices cannot be green even if a legacy worker says Connected", () => {
+    expect(connectionStatusPresentation("Connected", { auto_connect_enabled: true, bluetooth_paired: true, bluetooth_connected: false })).toMatchObject({ tone: "connecting", labelKey: "status.waitingRemote" });
+    expect(connectionStatusPresentation("Connected", { auto_connect_enabled: true, bluetooth_paired: null, bluetooth_connected: null })).toMatchObject({ tone: "connecting", labelKey: "status.detecting" });
+    expect(connectionStatusPresentation("Connecting", { auto_connect_enabled: true, bluetooth_paired: false })).toMatchObject({ labelKey: "status.pairRequired" });
+  });
+  it("separates the link from voice readiness and respects manual disconnect", () => {
+    expect(connectionStatusPresentation("Connected", { auto_connect_enabled: true, bluetooth_connected: true, atvv_ok: false })).toMatchObject({ labelKey: "status.voiceConnecting" });
+    expect(connectionStatusPresentation("Connected", { auto_connect_enabled: false, bluetooth_connected: true })).toMatchObject({ tone: "disconnected" });
+  });
+});

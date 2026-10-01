@@ -70,6 +70,12 @@ pub struct XiaomiRuntime {
     /// 否则会在旧会话尚未清理时启动第二个 worker。
     pub stop: AtomicBool,
     pub running: AtomicBool,
+    pub probe_requested: AtomicBool,
+    pub resume_requested: AtomicBool,
+    pub callback_gate: parking_lot::Mutex<()>,
+    pub health: parking_lot::Mutex<super::recovery::RecoveryHealth>,
+    #[cfg(target_os = "windows")]
+    pub maintained: parking_lot::Mutex<Option<(u64, windows::Devices::Bluetooth::GenericAttributeProfile::GattSession)>>,
     sessions: crate::bridges::xiaomi::session_state::SessionState,
 }
 
@@ -79,11 +85,16 @@ impl XiaomiRuntime {
     }
 
     pub fn request_stop(&self) {
+        let _callback = self.callback_gate.lock();
         self.stop.store(true, Ordering::SeqCst);
+        let mut health = self.health.lock();
+        health.connected = Some(false);
+        health.key_bridge = "waiting";
     }
 
     pub fn clear_stop(&self) {
         self.stop.store(false, Ordering::SeqCst);
+        self.probe_requested.store(true, Ordering::SeqCst);
     }
 
     pub fn should_stop(&self) -> bool {
@@ -92,8 +103,10 @@ impl XiaomiRuntime {
 
     /// 为一次实际设备连接分配唯一会话号。所有输入子线程都必须持有该号。
     pub fn begin_session(&self) -> u64 {
+        let _callback = self.callback_gate.lock();
         let id = self.sessions.begin();
         log::info!("XIAOMI SESSION start id={id}");
+        { let mut health = self.health.lock(); health.key_bridge = "waiting"; health.raw_ready = false; }
         id
     }
 
@@ -103,6 +116,7 @@ impl XiaomiRuntime {
 
     /// 仅允许当前会话把自己标为结束，避免旧回调误杀新连接。
     pub fn end_session(&self, id: u64, reason: &str) -> bool {
+        let _callback = self.callback_gate.lock();
         if self.sessions.end(id) {
             log::info!("XIAOMI SESSION stop id={id} reason={reason}");
             true
@@ -112,9 +126,29 @@ impl XiaomiRuntime {
     }
 
     pub fn cancel_active_session(&self, reason: &str) {
+        let _callback = self.callback_gate.lock();
         let id = self.sessions.cancel();
         if id != 0 {
             log::info!("XIAOMI SESSION stop id={id} reason={reason}");
+        }
+    }
+}
+
+pub fn publish_link_state(app: &tauri::AppHandle, runtime: &XiaomiRuntime, paired: Option<bool>, connected: Option<bool>) {
+    use tauri::Manager;
+    let connected = if runtime.should_stop() { Some(false) } else { connected };
+    {
+        let mut health = runtime.health.lock();
+        health.paired = paired;
+        health.connected = connected;
+        if connected != Some(true) {
+            health.key_bridge = "waiting";
+        }
+    }
+    if let Some(state) = app.try_state::<crate::bridges::BridgeState>() {
+        if state.update_link_state(paired, connected, !runtime.should_stop()) {
+            log::info!("XIAOMI LINK paired={paired:?} connected={connected:?} auto={}", !runtime.should_stop());
+            crate::bridges::emit_device_status(app, crate::bridges::BridgeType::Xiaomi);
         }
     }
 }
