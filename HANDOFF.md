@@ -22,7 +22,9 @@
 - 空闲期间没有按键或音频不是断连证据；公开记录不包含用户蓝牙地址和完整配置。
 - 自动化通过：Gadget 10/10、前端 63/63、Rust workspace 153 项通过，2 项真实环境 smoke ignored；前端生产构建、Cargo 全目标检查、git diff --check 和最终 x64 NSIS 构建通过。
 - 唯一正式安装包：Nexus.Prime_0.4.8_x64-setup.exe，13,378,845 bytes；SHA-256：C3B51394A6363FE294BF1A16AF919D91F7681C61B2C8CC5AE75B89AD0241CF86。主程序及安装包的文件/产品版本均为 0.4.8。
-- 本次跟踪 Issue #15；PR、注释标签、Release 与公开资产复算记录在发布后补充。
+- [PR #16](https://github.com/LightyearXizIl/Nexus-Prime/pull/16) 已 squash 合入；发布源提交为 `309779e16e3e6afdf40d619f3f9ec4bc8842d169`，与本地构建源码的树一致。注释标签 `v0.4.8` 指向该提交，后续 main 仅追加本次复核文档。
+- [v0.4.8 正式 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.4.8) 已公开，非草稿、非预发布，仅包含安装包与同版 latest.json。公开 API 无鉴权重新下载后，安装包大小、SHA-256、文件/产品版本全部一致；Release latest.json 与 main/latest.json 字节一致（清单 SHA-256：933B9270938DFC1855135B217B24FFF3CFD3F908FE166686083885148B0E66DB）。普通浏览器资产地址在本机网络下曾连接重置，改用公共 API 下载成功，不把失败请求当验证证据。
+- GitHub Release / PR / Issue #15 均使用标题、列表、验证结果和真机边界分段排版，留言使用真实换行。Issue #9/#10 已同步后续版本和回归边界，未改既有关闭状态；[Issue #15](https://github.com/LightyearXizIl/Nexus-Prime/issues/15) 保持开放。Issue #14 的快捷键录入问题不属于本版修复范围。
 - 真机待验收：10 轮遥控器开关、蓝牙关闭/开启、睡眠恢复、Shift+Enter 和方向/确认/主页/菜单/音量/返回与语音交替，微信/千问/豆包预设回归。
 - 本次相关 Issue 不自动关闭；不将状态机模拟描述为故障现场复现，不覆盖已有 Release。
 
