@@ -1,10 +1,14 @@
-import type { BridgeStatus } from "../types";
+import type { BridgeStatus, DeviceInfo } from "../types";
 
 export type ConnectionTone = "connected" | "connecting" | "disconnected" | "error";
 
 export interface ConnectionStatusPresentation {
   tone: ConnectionTone;
   labelKey:
+    | "status.waitingRemote"
+    | "status.detecting"
+    | "status.pairRequired"
+    | "status.voiceConnecting"
     | "status.connected"
     | "status.connectingDevice"
     | "status.disconnected"
@@ -13,7 +17,16 @@ export interface ConnectionStatusPresentation {
 }
 
 /** Keeps operational UI copy short while preserving backend diagnostics for details and logs. */
-export function connectionStatusPresentation(status: BridgeStatus): ConnectionStatusPresentation {
+export function connectionStatusPresentation(status: BridgeStatus, device?: Partial<DeviceInfo> & { atvv_ok?: boolean }): ConnectionStatusPresentation {
+  if (device && device.auto_connect_enabled !== undefined) {
+    if (!device.auto_connect_enabled) return { tone: "disconnected", labelKey: "status.disconnected", detail: null };
+    if (device.bluetooth_connected !== true) {
+      const labelKey = device.bluetooth_paired === true ? "status.waitingRemote"
+        : device.bluetooth_paired === false ? "status.pairRequired" : "status.detecting";
+      return { tone: "connecting", labelKey, detail: null };
+    }
+    if (device.atvv_ok === false) return { tone: "connected", labelKey: "status.voiceConnecting", detail: null };
+  }
   if (status === "Connected") {
     return { tone: "connected", labelKey: "status.connected", detail: null };
   }

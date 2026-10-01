@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.4.7",
-  "name": "Nexus Prime v0.4.7",
-  "body": "- 修复 ATVV MIC_OPEN 后未收到 AUDIO_START 时的会话卡住：首个有效 PCM 会隐式启动语音，800ms 未启动会安全清理并重连。\n- 修复普通按键映射的通用、左、右 Shift+Enter：所有含 Enter 组合都使用带标记的 SendInput，避免 WinUHid 路由造成按键失效或粘键。\n- 保留 PCM UDP 失败时的有界预滚和 PING/PONG 重热恢复。",
+  "tag_name": "v0.4.8",
+  "name": "Nexus Prime v0.4.8",
+  "body": "## 本次修复\n\n- **连接状态更准确**：已配对但遥控器未开机时显示“已配对，等待遥控器”，不再误显示绿色“已连接”。\n- **上线后自动恢复**：遥控器延后开机、重新连接或系统唤醒后，自动恢复 ATVV 和按键桥接，无需分别点击两个修复按钮。\n- **语音与按键分别检测**：Control 和 Audio 都订阅成功才算语音就绪；ATVV 后台恢复后会补启动 HID Tap。\n- **清理与重试更安全**：撤销部分失败的订阅，防止旧会话回调和重复恢复请求污染新连接；手动断开会停止自动恢复。\n\n## 升级与兼容性\n\n- 直接运行新版安装包覆盖升级，保留现有配置、按键映射和输入法预设。\n- 不改 PCM 协议、语音快捷键专用 WinUHid 路径和现有驱动安全防护。\n- 普通 Shift+Enter 与 Alt+Tab 分流保持既有行为。\n\n## 已完成验证\n\n- Gadget：10 项通过。\n- 前端：63 项通过；生产构建通过。\n- Rust workspace：153 项通过，2 项依赖真实环境的 smoke 测试保持忽略。\n- Cargo 全目标检查、差异检查和最终 x64 NSIS 安装包构建：通过。\n\n## 下载与完整性\n\n- 安装包：`Nexus.Prime_0.4.8_x64-setup.exe`。\n- 大小：13,378,845 bytes。\n- SHA-256：`c3b51394a6363fe294bf1a16af919d91f7681c61b2c8cc5ae75b89ad0241cf86`。\n- 发布资产仅包含上述安装包与同版 `latest.json`。\n\n## 真机验收边界\n\n本轮完成的是自动化与构建验证，**不代表已完成真机全场景验收**。\n\n- 遥控器开关与自动恢复至少 10 轮：待验收。\n- 蓝牙关闭/开启、睡眠恢复：待验收。\n- 普通按键与语音交替、微信/千问/豆包预设：待验收。\n- 空闲时不应因没有按键或音频误判断连。\n\n本次追踪 [Issue #15](https://github.com/LightyearXizIl/Nexus-Prime/issues/15)，验收通过前保持开放。[Issue #14](https://github.com/LightyearXizIl/Nexus-Prime/issues/14) 的快捷键录入问题不属于本版修复范围。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.4.7_x64-setup.exe",
-      "size": 13368240,
-      "digest": "sha256:3a78679eabcf9a3984190a25090fc734ac025b72a8656d11158e2e3fffe2a716",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.7/Nexus.Prime_0.4.7_x64-setup.exe"
+      "name": "Nexus.Prime_0.4.8_x64-setup.exe",
+      "size": 13378845,
+      "digest": "sha256:c3b51394a6363fe294bf1a16af919d91f7681c61b2c8cc5ae75b89ad0241cf86",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.8/Nexus.Prime_0.4.8_x64-setup.exe"
     }
   ]
 }

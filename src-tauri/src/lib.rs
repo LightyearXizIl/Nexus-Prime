@@ -244,29 +244,14 @@ pub fn run() {
                 .name("xiaomi-auto-connect".into())
                 .spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(2));
-                    if let (Some(config_manager), Some(runtime)) = (
+                    if let (Some(config_manager), Some(state)) = (
                         auto_app.try_state::<config::manager::ConfigManager>(),
-                        auto_app
-                            .try_state::<std::sync::Arc<bridges::xiaomi::connect::XiaomiRuntime>>(),
+                        auto_app.try_state::<bridges::BridgeState>(),
                     ) {
-                        if runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
-                            return;
+                        if auto_app.state::<std::sync::Arc<bridges::xiaomi::connect::XiaomiRuntime>>().should_stop() { return; }
+                        if let Err(e) = ipc::commands::start_xiaomi_bridge(auto_app.clone(), &state, &config_manager) {
+                            log::warn!("Automatic connection startup failed: {e}");
                         }
-                        let cfg = config_manager.get_device_config("xiaomi").ok();
-                        let retry = std::time::Duration::from_secs_f32(
-                            cfg.as_ref().map(|c| c.retry_delay).unwrap_or(3.0).max(0.5),
-                        );
-                        let configured = cfg.and_then(|c| c.bluetooth_address);
-                        runtime.clear_stop();
-                        runtime
-                            .running
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        ipc::commands::xiaomi_reconnect_loop_public(
-                            auto_app.clone(),
-                            std::sync::Arc::clone(&runtime),
-                            configured,
-                            retry,
-                        );
                     }
                 })?;
 

@@ -23,14 +23,14 @@ const isMappingPage = computed(() => route.path === "/xiaomi/mapping");
 const themeToggleLabel = computed(() =>
   theme.effectiveTheme === "dark" ? t("nav.light") : t("nav.dark")
 );
-const devicePresentation = computed(() => connectionStatusPresentation(device.value.status));
+const devicePresentation = computed(() => connectionStatusPresentation(device.value.status, device.value));
 const deviceLabel = computed(() => {
   const name = connectedDeviceName(device.value.status, device.value.device_name);
-  return name ?? t(device.value.status === "Connecting" ? "status.connectingDevice" : "status.deviceNotConnected");
+  return devicePresentation.value.tone === "connected" && name ? name : t(devicePresentation.value.labelKey === "status.disconnected" ? "status.deviceNotConnected" : devicePresentation.value.labelKey);
 });
 
 function statusClass(status: BridgeStatus): string {
-  return connectionStatusPresentation(status).tone;
+  return connectionStatusPresentation(status, device.value).tone;
 }
 
 function navigate(path: "/xiaomi" | "/xiaomi/mapping" | "/settings") {

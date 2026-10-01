@@ -471,6 +471,7 @@ fn handle_ioctl(
     active: &Mutex<HashSet<u16>>,
     data: &[u8],
 ) {
+    if !crate::bridges::xiaomi::key_mapping::input_session_active() { return; }
     let Some(payload) = decode_rc003_ioctl_output(data) else {
         return;
     };

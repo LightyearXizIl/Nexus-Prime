@@ -45,6 +45,7 @@ interface HostStatus {
   audio_alive: boolean;
   cable_ready: boolean;
   atvv_ok?: boolean;
+  key_bridge_state?: "waiting" | "starting" | "ready" | "fallback" | "failed";
   status_text: string;
   detail: string;
   tone: string;
@@ -467,12 +468,11 @@ const showAtvvFailLabel = computed(
   () => isDeviceConnected.value && Boolean(host.value.bridge_alive) && !(voiceMeter.value.atvvOk || host.value.atvv_ok)
 );
 
-const connectionPresentation = computed(() => connectionStatusPresentation(device.value.status));
+const connectionPresentation = computed(() => connectionStatusPresentation(device.value.status, { ...device.value, atvv_ok: host.value?.atvv_ok }));
 const isDeviceConnected = computed(() => connectionPresentation.value.tone === "connected");
 const connectedName = computed(() => connectedDeviceName(device.value.status, device.value.device_name));
-const deviceDisplayName = computed(() => connectedName.value ?? t("status.noDeviceConnected"));
+const deviceDisplayName = computed(() => isDeviceConnected.value && connectedName.value ? connectedName.value : t("dashboard.device"));
 const deviceModelLabel = computed(() => {
-  if (connectedName.value) return t("status.connected");
   return t(connectionPresentation.value.labelKey);
 });
 const batteryLabel = computed(() =>
@@ -490,10 +490,12 @@ const audioSignalLabel = computed(() => {
   if (showAtvvFailLabel.value) return t("dashboard.atvvDisconnected");
   if (voiceMeter.value.bleState === "receiving") return t("dashboard.receiving");
   if (voiceMeter.value.bleState === "session") return t("dashboard.voiceSession");
+  if (host.value.atvv_ok === false) return t("status.voiceConnecting");
   if (host.value.audio_alive) return t("dashboard.stable");
   return t("dashboard.noSignal");
 });
 const servicesSummary = computed(() => {
+  if (!isDeviceConnected.value || host.value.atvv_ok === false || host.value.key_bridge_state && host.value.key_bridge_state !== "ready") return t("dashboard.checking");
   if (host.value.items.some((item) => item.tone === "error")) return t("dashboard.needsAttention");
   if (host.value.items.some((item) => item.tone === "warn")) return t("dashboard.checking");
   return t("dashboard.normal");
@@ -509,6 +511,9 @@ function hostItemState(item: HostStatusItem) {
   if (item.id === "injection") {
     if (item.state_label.includes("SendInput")) return t("dashboard.sendInputFallback");
     return t(item.tone === "ok" ? "dashboard.hardwareKeyboard" : "dashboard.inputWaiting");
+  }
+  if (item.id === "bridge" && host.value?.key_bridge_state) {
+    return t("dashboard.key_" + host.value.key_bridge_state);
   }
   return t(item.tone === "ok" ? "dashboard.listening" : "dashboard.notStarted");
 }
@@ -1190,7 +1195,7 @@ watch(
 );
 
 function toggleConnection() {
-  if (device.value.status === "Connected") {
+  if (device.value.auto_connect_enabled || device.value.status === "Connected") {
     bridge.stopBridge(type);
   } else {
     bridge.startBridge(type);
@@ -1233,6 +1238,8 @@ watch(
       <DeviceStatus
         :status="device.status"
         :loading="bridge.loading[type]"
+        :device="device"
+        :atvv-ok="host?.atvv_ok"
         @toggle="toggleConnection"
       />
     </header>

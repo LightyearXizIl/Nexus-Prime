@@ -9,6 +9,23 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
+#[cfg(target_os = "windows")]
+fn device_matches(handle: u64, token: &str) -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::UI::Input::{GetRawInputDeviceInfoW, RIDI_DEVICENAME};
+    if handle == 0 || token.is_empty() { return false; }
+    unsafe {
+        let handle = HANDLE(handle as usize as *mut std::ffi::c_void);
+        let mut size = 0;
+        if GetRawInputDeviceInfoW(handle, RIDI_DEVICENAME, None, &mut size) == u32::MAX || size == 0 { return false; }
+        let mut name = vec![0u16; size as usize + 1];
+        if GetRawInputDeviceInfoW(handle, RIDI_DEVICENAME, Some(name.as_mut_ptr().cast()), &mut size) == u32::MAX { return false; }
+        String::from_utf16_lossy(&name[..size as usize]).to_ascii_lowercase().contains(token)
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn device_matches(_: u64, _: &str) -> bool { false }
+
 /// VK → button_id（与 Python BUTTON_ALIASES / 常见 HID 翻译对应）
 fn vk_to_button(vk: u16) -> Option<&'static str> {
     match vk {
@@ -87,16 +104,20 @@ fn run_raw_mapping(
 
     let mut last_down: HashMap<u16, bool> = HashMap::new();
 
+    let mut tap_was_ready = false;
     let runtime_for_callback = Arc::clone(&runtime);
     if let Err(e) = bridge.start(move |ev: RawInputEvent| {
-        if !runtime_for_callback.session_active(session_id) {
+        if !runtime_for_callback.session_active(session_id)
+            || runtime_for_callback.health.lock().connected != Some(true) {
             return;
         }
+        let tap_ready = crate::bridges::xiaomi::special_keys::hid_tap_ready();
+        if tap_ready != tap_was_ready { last_down.clear(); tap_was_ready = tap_ready; }
+        if tap_ready { return; }
         if ev.device_type != RawInputDeviceType::Keyboard {
             return;
         }
-        // 无 device_match 时仍允许动作（开发便利）；有 token 时仅作日志提示
-        let _ = &token;
+        if !device_matches(ev.device_handle, &token) { return; }
         let Some(id) = vk_to_button(ev.usage_id) else {
             return;
         };
@@ -124,9 +145,11 @@ fn run_raw_mapping(
         return;
     }
 
+    runtime.health.lock().raw_ready = true;
     log::info!("XIAOMI RAW MAPPING READY");
     while runtime.session_active(session_id) {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+    runtime.health.lock().raw_ready = false;
     bridge.stop();
 }

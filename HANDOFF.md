@@ -1,6 +1,30 @@
 # 交接记录
 
-更新时间：2026-09-21
+更新时间：2026-10-01
+
+## v0.4.8：自动恢复与真实连接状态（2026-10-01）
+
+### 根因与实现
+
+- 用户报告遥控器关机时仍显示已连接。运行日志确认设备对象打开后直接设置 Connected，随后 ATVV CCCD 为 Unreachable；ATVV 后台恢复后也没有补启动 HID Tap。
+- 在安全仓库隔离分支 fix/auto-recovery-v048 实现，不操作损坏旧 checkout，不改用户配置、映射、输入法 profile 或驱动策略。
+- 串行生命周期负责启动/连接/重启/修复；DeviceWatcher 与蓝牙事件只提交请求，每 5 秒核对真实链路，MaintainConnection 等待已配对遥控器。
+- 链路变化、句柄失效和 Windows 睡眠恢复通知要求重建会话；三次连续在线订阅失败同样重建，保留 retry_delay。
+- Control 与 Audio 都成功才提交 ATVV 订阅，部分失败撤销回调与 CCCD。会话号及回调互斥保护阻止旧回调改写新连接。
+- 持续协调 HID Tap，后台语音恢复后自动补启动；Raw Input 只接收目标设备，Tap 就绪时停止兜底映射并清理旧手势。
+- 手动断开停止自动恢复；离线清除电量、语音组合键、PCM、F5，保留地址与全部用户配置。
+
+### 日志与验收
+
+- 离线：XIAOMI LINK paired=Some(true) connected=Some(false) auto=true；界面不得绿色显示“已连接”。
+- 重建原因：bluetooth_online_refresh_handles / system_resume_refresh_handles / three_online_subscription_failures；按 XIAOMI SESSION 代号检查日志链。
+- 语音就绪需要 Control 和 Audio 都订阅成功；按键就绪需要 HID TAP READY 和 KEY BRIDGE state=ready。worker 存活及 VK observe (no map) 不代表映射就绪或重复映射。
+- 空闲期间没有按键或音频不是断连证据；公开记录不包含用户蓝牙地址和完整配置。
+- 自动化通过：Gadget 10/10、前端 63/63、Rust workspace 153 项通过，2 项真实环境 smoke ignored；前端生产构建、Cargo 全目标检查、git diff --check 和最终 x64 NSIS 构建通过。
+- 唯一正式安装包：Nexus.Prime_0.4.8_x64-setup.exe，13,378,845 bytes；SHA-256：C3B51394A6363FE294BF1A16AF919D91F7681C61B2C8CC5AE75B89AD0241CF86。主程序及安装包的文件/产品版本均为 0.4.8。
+- 本次跟踪 Issue #15；PR、注释标签、Release 与公开资产复算记录在发布后补充。
+- 真机待验收：10 轮遥控器开关、蓝牙关闭/开启、睡眠恢复、Shift+Enter 和方向/确认/主页/菜单/音量/返回与语音交替，微信/千问/豆包预设回归。
+- 本次相关 Issue 不自动关闭；不将状态机模拟描述为故障现场复现，不覆盖已有 Release。
 
 ## v0.4.7：ATVV 会话恢复与 Shift+Enter 注入路由（2026-09-21）
 

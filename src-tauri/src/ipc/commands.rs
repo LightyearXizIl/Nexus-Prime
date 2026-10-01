@@ -48,14 +48,12 @@ pub async fn start_bridge(
     config_manager: State<'_, ConfigManager>,
 ) -> Result<(), String> {
     let bt = parse_bridge_type(&bridge_type)?;
-    state.update_status(bt, BridgeStatus::Connecting);
-
     match bt {
-        BridgeType::Xiaomi => start_xiaomi_bridge(app, &state, &config_manager).await,
+        BridgeType::Xiaomi => start_xiaomi_bridge(app, &state, &config_manager),
     }
 }
 
-async fn start_xiaomi_bridge(
+pub(crate) fn start_xiaomi_bridge(
     app: AppHandle,
     state: &BridgeState,
     config_manager: &ConfigManager,
@@ -63,26 +61,29 @@ async fn start_xiaomi_bridge(
     let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     let runtime = app.state::<Arc<XiaomiRuntime>>();
     if runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
-        return Err("小米桥接已在运行".into());
+        if runtime.should_stop() { return Err("旧连接正在停止，请稍后重试".into()); }
+        runtime.probe_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+        return Ok(());
     }
+    let config = config_manager.get_device_config("xiaomi")?;
     runtime.clear_stop();
     runtime
         .running
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let config = config_manager.get_device_config("xiaomi")?;
     let retry = std::time::Duration::from_secs_f32(config.retry_delay.max(0.5));
     let configured = config.bluetooth_address.clone();
 
-    let runtime = Arc::clone(&runtime);
+    connect::publish_link_state(&app, &runtime, None, None);
+    let runtime_for_worker = Arc::clone(&runtime);
     let app_handle = app.clone();
 
     std::thread::Builder::new()
         .name("xiaomi-worker".into())
         .spawn(move || {
-            xiaomi_reconnect_loop(app_handle, runtime, configured, retry);
+            xiaomi_reconnect_loop(app_handle, runtime_for_worker, configured, retry);
         })
-        .map_err(|e| format!("启动小米 worker 失败: {e}"))?;
+        .map_err(|e| { runtime.running.store(false, std::sync::atomic::Ordering::SeqCst); runtime.request_stop(); format!("启动小米 worker 失败: {e}") })?;
 
     let _ = state; // 状态由 worker 更新
     Ok(())
@@ -105,6 +106,10 @@ fn xiaomi_reconnect_loop(
     mut configured: Option<String>,
     retry: std::time::Duration,
 ) {
+    #[cfg(target_os = "windows")]
+    let _watcher = crate::bridges::xiaomi::recovery::PresenceWatcher::start(runtime.clone(), configured.as_deref()).map_err(|e| log::warn!("Presence watcher unavailable: {e}")).ok();
+    #[cfg(target_os = "windows")]
+    let _power = crate::bridges::xiaomi::recovery::PowerSubscription::start(&runtime).map_err(|e| log::warn!("Power notifications unavailable: {e}")).ok();
     while !runtime.should_stop() {
         if let Some(state) = app.try_state::<BridgeState>() {
             state.update_status(BridgeType::Xiaomi, BridgeStatus::Connecting);
@@ -115,6 +120,10 @@ fn xiaomi_reconnect_loop(
         let connection = match connect_result {
             Ok(c) => c,
             Err(e) => {
+                #[cfg(target_os = "windows")]
+                if !runtime.should_stop() {
+                    connect::publish_link_state(&app, &runtime, crate::bridges::xiaomi::recovery::paired_record(configured.as_deref()), Some(false));
+                }
                 log::warn!("Xiaomi connect failed: {e}; retry in {retry:?}");
                 if let Some(state) = app.try_state::<BridgeState>() {
                     if !runtime.should_stop() {
@@ -139,16 +148,13 @@ fn xiaomi_reconnect_loop(
             }
         }
         if let Some(state) = app.try_state::<BridgeState>() {
-            state.update_device_info(
-                BridgeType::Xiaomi,
+            state.update_device_identity(
                 Some(connection.name.clone()),
                 Some(connection.address.clone()),
-                None,
             );
-            state.update_status(BridgeType::Xiaomi, BridgeStatus::Connected);
         }
         log::info!(
-            "Xiaomi bridge ready name={} address={}",
+            "Xiaomi paired device opened name={} address={}",
             connection.name,
             connection.address
         );
@@ -179,6 +185,13 @@ fn xiaomi_reconnect_loop(
             break;
         }
     }
+    #[cfg(target_os = "windows")]
+    { drop(_power); drop(_watcher); }
+    #[cfg(target_os = "windows")]
+    if let Some((_, session)) = runtime.maintained.lock().take() {
+        let _ = session.SetMaintainConnection(false);
+        let _ = session.Close();
+    }
     runtime
         .running
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -205,13 +218,17 @@ pub async fn stop_bridge(
     app: AppHandle,
     state: State<'_, BridgeState>,
 ) -> Result<(), String> {
+    let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     let bt = parse_bridge_type(&bridge_type)?;
     if bt == BridgeType::Xiaomi {
         if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
             runtime.request_stop();
             runtime.cancel_active_session("stop_bridge");
+            connect::mark_atvv_subscribed(false);
+            let paired = runtime.health.lock().paired;
+            connect::publish_link_state(&app, &runtime, paired, Some(false));
         }
-        crate::bridges::xiaomi::key_mapping::reset_voice_input_state("stop_bridge");
+        crate::bridges::xiaomi::key_mapping::set_input_session_active(false);
     }
     state.update_status(bt, BridgeStatus::Disconnected);
     Ok(())
@@ -403,6 +420,7 @@ pub struct XiaomiHostStatusItem {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct XiaomiHostStatus {
     pub bridge_alive: bool,
+    pub key_bridge_state: String,
     pub audio_alive: bool,
     pub cable_ready: bool,
     /// 输入会话在跑且 ATVV 已订阅
@@ -432,10 +450,14 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         .try_state::<Arc<XiaomiRuntime>>()
         .map(|r| r.running.load(std::sync::atomic::Ordering::SeqCst))
         .unwrap_or(false);
+    let (bluetooth_online, key_bridge_state) = app.try_state::<Arc<XiaomiRuntime>>()
+        .map(|r| { let h = r.health.lock(); (h.connected == Some(true) && !r.should_stop(), h.key_bridge.to_string()) })
+        .unwrap_or((false, "waiting".into()));
+    let key_ready = bluetooth_online && matches!(key_bridge_state.as_str(), "ready" | "fallback");
     let audio_alive = crate::audio::pcm_router::audio_router_ready_cached()
         || crate::audio::pcm_router::audio_router_process_alive();
     let cable_ready = crate::audio::vb_cable::voice_env_status_cached().ready;
-    let atvv_ok = crate::bridges::xiaomi::connect::atvv_subscribed();
+    let atvv_ok = bluetooth_online && crate::bridges::xiaomi::connect::atvv_subscribed();
     let injection = crate::bridges::xiaomi::key_mapping::input_injection_health();
     let (injection_state, injection_tone) = if injection.virtual_hid_ready {
         (
@@ -484,15 +506,11 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         XiaomiHostStatusItem {
             id: "bridge".into(),
             label: "按键桥接".into(),
-            state_label: if bridge_alive {
-                "监听中".into()
-            } else {
-                "未启动".into()
-            },
-            tone: if bridge_alive {
+            state_label: key_bridge_state.clone(),
+            tone: if key_ready {
                 "ok".into()
             } else {
-                "error".into()
+                "warn".into()
             },
         },
         XiaomiHostStatusItem {
@@ -503,12 +521,16 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         },
     ];
 
-    let (status_text, detail, tone) = if bridge_alive && audio_alive && cable_ready && atvv_ok && injection.virtual_hid_ready {
+    let (status_text, detail, tone) = if key_ready && key_bridge_state == "ready" && audio_alive && cable_ready && atvv_ok && injection.virtual_hid_ready {
         (
             "运行正常".into(),
             String::new(),
             "ok".into(),
         )
+    } else if bridge_alive && !bluetooth_online {
+        ("等待遥控器上线".into(), "已配对设备上线后将自动恢复，无需点击修复。".into(), "warn".into())
+    } else if bluetooth_online && !key_ready && atvv_ok {
+        ("按键桥接启动中".into(), "正在恢复 HID Tap。".into(), "warn".into())
     } else if bridge_alive && !atvv_ok {
         (
             "ATVV 未连接".into(),
@@ -555,6 +577,7 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
 
     XiaomiHostStatus {
         bridge_alive,
+        key_bridge_state,
         audio_alive,
         cable_ready,
         atvv_ok,
@@ -592,6 +615,8 @@ pub fn restart_xiaomi_bridge_inner(
     log::info!("XIAOMI host: restart bridge requested");
     append_host_log(config_manager, "bridge restart requested");
 
+    // Stop the coordinator before teardown, so it cannot reattach Tap during restart.
+    if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() { runtime.request_stop(); }
     // HID Tap 和 BLE worker 共用一次锁内 teardown，保证重启会重建 Gadget 会话。
     run_restart_teardown(
         crate::bridges::xiaomi::hid_report_tap::stop_and_join,
@@ -640,13 +665,14 @@ pub fn restart_xiaomi_bridge_inner(
     state.update_status(BridgeType::Xiaomi, BridgeStatus::Connecting);
 
     let app_handle = app.clone();
-    let runtime = Arc::clone(&runtime);
+    connect::publish_link_state(app, &runtime, None, None);
+    let runtime_for_worker = Arc::clone(&runtime);
     std::thread::Builder::new()
         .name("xiaomi-worker".into())
         .spawn(move || {
-            xiaomi_reconnect_loop(app_handle, runtime, configured, retry);
+            xiaomi_reconnect_loop(app_handle, runtime_for_worker, configured, retry);
         })
-        .map_err(|e| format!("重启 worker 失败: {e}"))?;
+        .map_err(|e| { runtime.request_stop(); runtime.running.store(false, std::sync::atomic::Ordering::SeqCst); format!("重启 worker 失败: {e}") })?;
 
     append_host_log(config_manager, "bridge restart spawned");
     Ok(())

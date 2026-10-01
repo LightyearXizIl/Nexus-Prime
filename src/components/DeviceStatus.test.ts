@@ -25,3 +25,22 @@ describe("DeviceStatus", () => {
     expect(indicator.attributes("title")).toBe("打开 BLE 设备失败：设备对象为空");
   });
 });
+describe("automatic recovery controls", () => {
+  it("shows paired waiting without green and allows stopping automatic recovery", async () => {
+    const wrapper = mount(DeviceStatus, {
+      props: { status: "Connecting", loading: false, device: {
+        bridge_type: "xiaomi", status: "Connecting", device_name: "paired", device_address: null,
+        battery_level: null, battery_charging: null, bluetooth_paired: true,
+        bluetooth_connected: false, auto_connect_enabled: true,
+      } },
+      global: { plugins: [i18n] },
+    });
+    expect(wrapper.get(".status-indicator").classes()).not.toContain("connected");
+    expect(wrapper.text()).toContain("已配对，等待遥控器");
+    const button = wrapper.get("button");
+    expect(button.attributes("disabled")).toBeUndefined();
+    expect(button.text()).toBe("断开连接");
+    await button.trigger("click");
+    expect(wrapper.emitted("toggle")).toHaveLength(1);
+  });
+});

@@ -21,6 +21,7 @@ pub struct KeyLoggerSession {
     input: Option<std::thread::JoinHandle<()>>,
     vk_poll: Option<std::thread::JoinHandle<()>>,
     raw_mapping: Option<std::thread::JoinHandle<()>>,
+    coordinator: Option<std::thread::JoinHandle<()>>,
 }
 
 impl KeyLoggerSession {
@@ -30,6 +31,7 @@ impl KeyLoggerSession {
             input: None,
             vk_poll: None,
             raw_mapping: None,
+            coordinator: None,
         }
     }
 
@@ -41,7 +43,7 @@ impl KeyLoggerSession {
     ) {
         runtime.end_session(session_id, reason);
         crate::bridges::xiaomi::key_mapping::reset_voice_input_state(reason);
-        for handle in [self.input.take(), self.vk_poll.take(), self.raw_mapping.take()]
+        for handle in [self.coordinator.take(), self.input.take(), self.vk_poll.take(), self.raw_mapping.take()]
             .into_iter()
             .flatten()
         {
@@ -49,28 +51,6 @@ impl KeyLoggerSession {
         }
         log::info!("XIAOMI SESSION workers joined id={session_id} reason={reason}");
     }
-}
-
-/// HID Tap 附着等待决策：返回 true 表示可以附着。
-///
-/// - `atvv_ok`：ATVV 已订阅成功 → 立即附着（无 WUDFHost 竞争）
-/// - `diagnosed_failed`：ATVV 首轮诊断已失败（进入降级模式）→ 等 `fail_grace` 宽限窗口
-///   让后台重试，仍失败才附着（此时蓝牙栈已稳定，竞争风险低）
-/// - `hard_limit`：硬上限兜底，防止 ATVV 长时间无结论时返回/音量键永久不可用
-fn tap_attach_due(
-    atvv_ok: bool,
-    diagnosed_failed: bool,
-    elapsed: Duration,
-    fail_grace: Duration,
-    hard_limit: Duration,
-) -> bool {
-    if atvv_ok {
-        return true;
-    }
-    if elapsed >= hard_limit {
-        return true;
-    }
-    diagnosed_failed && elapsed >= fail_grace
 }
 
 #[derive(Clone, Serialize)]
@@ -217,10 +197,10 @@ pub fn start_key_logger(
                         session_id,
                         gate2,
                     );
-                    crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
-                        "input_session_end",
-                    );
                     runtime2.end_session(session_id, "input_session_end");
+                    crate::bridges::xiaomi::key_mapping::set_input_session_active(false);
+                    crate::bridges::xiaomi::voice_pcm::stop();
+                    crate::bridges::xiaomi::connect::mark_atvv_subscribed(false);
                     if let Err(e) = result {
                         log::warn!("ATVV input session unavailable session={session_id}: {e}");
                         emit_message(&app2, &format!("ATVV 语音通道不可用: {e}"));
@@ -229,61 +209,55 @@ pub fn start_key_logger(
                 .ok()
         };
 
-        // HID Tap 附着时机以 ATVV 订阅结果为准（避免并发抢占 WUDFHost）：
-        // - ATVV 订阅成功 → 立即附着（无竞争）
-        // - ATVV 首轮诊断失败 → 给后台重试 15 秒窗口；仍失败才附着（此时蓝牙栈已稳定，
-        //   竞争风险低；返回/音量优先于语音的妥协，ATVV 后台仍继续重试）
-        // - 30 秒硬上限兜底；会话结束即放弃
-        let wait_start = Instant::now();
-        let atvv_fail_grace = Duration::from_secs(15);
-        while runtime.session_active(session_id)
-            && !tap_attach_due(
-                crate::bridges::xiaomi::connect::atvv_subscribed(),
-                crate::bridges::xiaomi::connect::atvv_diagnosed_failed(),
-                wait_start.elapsed(),
-                atvv_fail_grace,
-                Duration::from_secs(30),
-            )
-        {
-            std::thread::sleep(Duration::from_millis(50));
+        // Ongoing coordination: late ATVV recovery must also attach the key bridge.
+        let coordinator = {
+            let app2 = app.clone();
+            let runtime2 = runtime.clone();
+            let gate2 = gate.clone();
+            std::thread::Builder::new().name(format!("xiaomi-key-coordinator-{session_id}"))
+                .spawn(move || {
+                    let mut last_attempt = Instant::now() - Duration::from_secs(10);
+                    let mut previous = "waiting";
+                    while runtime2.session_active(session_id) {
+                        let connected = runtime2.health.lock().connected == Some(true)
+                            && crate::bridges::xiaomi::key_mapping::input_session_active();
+                        let atvv = crate::bridges::xiaomi::connect::atvv_subscribed();
+                        let state = if !connected { "waiting" }
+                        else if !tap_enabled { if runtime2.health.lock().raw_ready { "fallback" } else { "starting" } }
+                        else if crate::bridges::xiaomi::special_keys::hid_tap_ready() { "ready" }
+                        else if atvv {
+                            if crate::bridges::xiaomi::recovery::tap_attach_due(connected, atvv, tap_enabled, crate::bridges::xiaomi::hid_report_tap::is_running())
+                                && last_attempt.elapsed() >= Duration::from_secs(5) {
+                                last_attempt = Instant::now();
+                                if !ensure_started(app2.clone(), gate2.clone()) {
+                                    runtime2.health.lock().key_bridge = "failed";
+                                }
+                            }
+                            if crate::bridges::xiaomi::hid_report_tap::is_running() { "starting" } else if runtime2.health.lock().raw_ready { "fallback" } else { "failed" }
+                        } else { "waiting" };
+                        runtime2.health.lock().key_bridge = state;
+                        if state != previous {
+                            if state == "ready" || previous == "ready" {
+                                crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
+                            }
+                            log::info!("XIAOMI KEY BRIDGE session={session_id} state={state}");
+                            crate::bridges::emit_device_status(&app2, crate::bridges::BridgeType::Xiaomi);
+                            previous = state;
+                        }
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
+                    stop_and_join();
+                }).ok()
+        };
+        if input.is_none() || coordinator.is_none() {
+            runtime.end_session(session_id, "input_worker_spawn_failed");
         }
-        if runtime.session_active(session_id)
-            && !crate::bridges::xiaomi::connect::atvv_subscribed()
-            && wait_start.elapsed() >= Duration::from_secs(30)
-        {
-            log::warn!("XIAOMI HID TAP attach wait timeout (ATVV not ready)");
-        }
-
-        let atvv_ok = crate::bridges::xiaomi::connect::atvv_subscribed();
-        let mut tap_started = false;
-        if runtime.session_active(session_id) && tap_enabled {
-            if atvv_ok {
-                let app2 = app.clone();
-                let gate2 = Arc::clone(&gate);
-                tap_started = ensure_started(app2, gate2);
-                if !tap_started {
-                    emit_message(
-                        &app,
-                        "HID Tap 未启动：返回/音量键不可用（请确认 Frida Gadget 资源）",
-                    );
-                }
-            } else {
-                emit_message(
-                    &app,
-                    "ATVV 语音通道未就绪，暂不附着 HID Tap（语音优先）；返回/音量走系统原生键",
-                );
-            }
-        } else if !tap_enabled {
-            stop_and_join();
-            emit_message(&app, "HID Tap 已按配置禁用");
-        }
-
         let raw_mapping = crate::bridges::xiaomi::raw_mapping::maybe_start_raw_mapping(
             app.clone(),
             Arc::clone(&runtime),
             session_id,
             Arc::clone(&gate),
-            tap_started,
+            false,
         );
 
         let vk_poll = {
@@ -298,21 +272,12 @@ pub fn start_key_logger(
                 .ok()
         };
 
-        let mode_desc = if tap_started {
-            "HID-Tap 返回/音量 + ATVV 语音/音频".to_string()
-        } else if atvv_ok {
-            "ATVV 语音/音频".to_string()
-        } else {
-            "Battery/ATVV 后台重试中（语音与返回/音量受限）".to_string()
-        };
-        emit_message(
-            &app,
-            &format!("按键监听已启动 session={session_id}（{mode_desc}）"),
-        );
+        emit_message(&app, &format!("输入恢复管理器已启动 session={session_id}"));
         return KeyLoggerSession {
             input,
             vk_poll,
             raw_mapping,
+            coordinator,
         };
     }
     #[cfg(not(target_os = "windows"))]
@@ -372,33 +337,19 @@ fn windows_vk_poll_logger(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const GRACE: Duration = Duration::from_secs(15);
-    const HARD: Duration = Duration::from_secs(30);
-
     #[test]
-    fn tap_attach_due_attaches_immediately_when_atvv_ok() {
-        assert!(tap_attach_due(true, false, Duration::ZERO, GRACE, HARD));
-        assert!(tap_attach_due(true, true, Duration::ZERO, GRACE, HARD));
-    }
-
-    #[test]
-    fn tap_attach_due_waits_while_atvv_diagnosing() {
-        // 诊断中（未失败也未成功）：即使超过 hard_limit 之前的任意时刻都不附着
-        assert!(!tap_attach_due(false, false, Duration::from_secs(10), GRACE, HARD));
-    }
-
-    #[test]
-    fn tap_attach_due_grace_window_after_diagnosed_failure() {
-        // 诊断失败后 15 秒宽限窗口内不附着（给 ATVV 后台重试机会）
-        assert!(!tap_attach_due(false, true, Duration::from_secs(14), GRACE, HARD));
-        // 超过宽限窗口才附着（返回/音量优先于语音的妥协）
-        assert!(tap_attach_due(false, true, Duration::from_secs(15), GRACE, HARD));
-    }
-
-    #[test]
-    fn tap_attach_due_hard_limit_always_attaches() {
-        assert!(tap_attach_due(false, false, HARD, GRACE, HARD));
-        assert!(tap_attach_due(false, false, Duration::from_secs(31), GRACE, HARD));
+    fn repeated_requests_and_manual_disconnect_cannot_revive_old_session() {
+        let runtime = XiaomiRuntime::new();
+        let first = runtime.begin_session();
+        for _ in 0..100 { runtime.probe_requested.store(true, std::sync::atomic::Ordering::SeqCst); }
+        assert!(runtime.probe_requested.swap(false, std::sync::atomic::Ordering::SeqCst));
+        assert!(!runtime.probe_requested.swap(false, std::sync::atomic::Ordering::SeqCst));
+        runtime.request_stop();
+        assert!(!runtime.session_active(first));
+        runtime.cancel_active_session("test");
+        runtime.clear_stop();
+        let second = runtime.begin_session();
+        assert!(!runtime.end_session(first, "stale"));
+        assert!(runtime.session_active(second));
     }
 }

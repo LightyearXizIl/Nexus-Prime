@@ -23,3 +23,4 @@ pub mod config;
 pub mod connect;
 pub mod key_log;
 pub mod input_session;
+pub(crate) mod recovery;
