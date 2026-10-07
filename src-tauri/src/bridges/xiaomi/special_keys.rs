@@ -125,22 +125,39 @@ pub fn start_special_key_hook() {
     if RUNNING.swap(true, Ordering::AcqRel) {
         return;
     }
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("xiaomi-special-keys".into())
         .spawn(|| {
             #[cfg(target_os = "windows")]
             hook_loop();
             RUNNING.store(false, Ordering::Release);
             HOOK_THREAD_ID.store(0, Ordering::Release);
-        })
-        .ok();
+        });
+    if let Err(error) = spawned {
+        RUNNING.store(false, Ordering::Release);
+        HOOK_THREAD_ID.store(0, Ordering::Release);
+        log::error!("XIAOMI SPECIAL KEY hook thread spawn failed: {error}");
+        return;
+    }
     log::info!("XIAOMI SPECIAL KEY hook starting");
 }
 
 pub fn stop_special_key_hook() {
     HID_TAP_READY.store(false, Ordering::Release);
     replay_tv_events_async(tv_native_guard::reset(), "hook_stop");
-    if !RUNNING.swap(false, Ordering::AcqRel) {
+    let was_running = RUNNING.swap(false, Ordering::AcqRel);
+    if !was_running {
+        HOOK_THREAD_ID.store(0, Ordering::Release);
+        #[cfg(target_os = "windows")]
+        unsafe {
+            let hook = load_hook();
+            store_hook(windows::Win32::UI::WindowsAndMessaging::HHOOK(
+                std::ptr::null_mut(),
+            ));
+            if !hook.is_invalid() {
+                let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
+            }
+        }
         return;
     }
     #[cfg(target_os = "windows")]

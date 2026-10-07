@@ -2,7 +2,7 @@
 
 Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具。它通过蓝牙读取遥控器按键与 ATVV 语音数据，把按键转换为可自定义的键盘快捷键，并将语音路由到虚拟声卡，供输入法或其他语音软件使用。
 
-当前版本：**v0.4.8**
+当前版本：**v0.4.9**
 
 技术栈：**Rust · Tauri 2 · Vue 3 · TypeScript**
 
@@ -70,9 +70,9 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 项目发布后，可从 GitHub Releases 下载 NSIS 安装包：
 
-- NSIS：`Nexus.Prime_0.4.8_x64-setup.exe`
+- NSIS：`Nexus.Prime_0.4.9_x64-setup.exe`
 
-当前正式版：[v0.4.8 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.4.8)。
+当前正式版：[v0.4.9 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.4.9)。
 
 从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
 
@@ -87,7 +87,7 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 - 手动点击“断开连接”会停止本次自动恢复；再次点击连接或下次启动应用才重新启用。
 - 状态依据 Windows 蓝牙链路，不依据是否最近按键或发送音频；离线清除电量，不删除配置、映射或输入法预设。
 
-> v0.4.8 自动化与真机验收分开记录。遥控器开关 10 轮、蓝牙切换、睡眠恢复及按键/语音交替回归仍待真机确认，相关 Issue 不自动关闭。
+> v0.4.9 自动化与真机验收分开记录。遥控器开关 10 轮、蓝牙切换、睡眠恢复及按键/语音交替回归仍待真机确认，相关 Issue 不自动关闭。
 
 详细变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
 

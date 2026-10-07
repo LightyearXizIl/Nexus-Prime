@@ -4,8 +4,9 @@
 //! 创建隐藏消息窗口，在独立线程中运行消息循环。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 // Windows FFI 声明
 #[cfg(target_os = "windows")]
@@ -34,6 +35,7 @@ mod win32 {
     pub const HWND_MESSAGE: isize = -3;
     pub const GWLP_USERDATA: i32 = -21;
     pub const RIDEV_INPUTSINK: DWORD = 0x100;
+    pub const RIDEV_REMOVE: DWORD = 0x00000001;
     pub const RID_INPUT: DWORD = 0x10000003;
     pub const RIM_TYPEKEYBOARD: DWORD = 1;
     pub const RIM_TYPEMOUSE: DWORD = 0;
@@ -69,7 +71,7 @@ mod win32 {
         pub Reserved: u16,
         pub VKey: u16,
         pub Message: UINT,
-        pub ExtraInformation: ULONG_PTR,
+        pub ExtraInformation: DWORD,
     }
 
     #[derive(Copy, Clone)]
@@ -77,16 +79,16 @@ mod win32 {
     pub struct RAWMOUSE {
         pub usFlags: u16,
         pub Anonymous: RAWMOUSE_UNION,
-        pub ulRawButtons: ULONG_PTR,
+        pub ulRawButtons: DWORD,
         pub lLastX: i32,
         pub lLastY: i32,
-        pub ulExtraInformation: ULONG_PTR,
+        pub ulExtraInformation: DWORD,
     }
 
     #[derive(Copy, Clone)]
     #[repr(C)]
     pub union RAWMOUSE_UNION {
-        pub ulButtons: ULONG_PTR,
+        pub ulButtons: DWORD,
         pub usButtonFlags: u16,
     }
 
@@ -134,6 +136,7 @@ mod win32 {
     extern "system" {
         pub fn GetModuleHandleW(lpModuleName: *const u16) -> HMODULE;
         pub fn RegisterClassExW(lpWndClass: *const WNDCLASSEXW) -> ATOM;
+        pub fn UnregisterClassW(lpClassName: *const u16, hInstance: HINSTANCE) -> i32;
         pub fn CreateWindowExW(
             dwExStyle: DWORD, lpClassName: *const u16, lpWindowName: *const u16,
             dwStyle: DWORD, x: i32, y: i32, nWidth: i32, nHeight: i32,
@@ -142,7 +145,7 @@ mod win32 {
         pub fn DestroyWindow(hWnd: HWND) -> i32;
         pub fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
         pub fn RegisterRawInputDevices(
-            pRawInputDevices: *const RAWINPUTDEVICE, uiNumDevices: UINT,
+            pRawInputDevices: *const RAWINPUTDEVICE, uiNumDevices: UINT, cbSize: UINT,
         ) -> i32;
         pub fn GetRawInputData(
             hRawInput: HRAWINPUT, uiCommand: UINT, pData: LPVOID,
@@ -154,9 +157,35 @@ mod win32 {
         pub fn TranslateMessage(lpMsg: *const MSG) -> i32;
         pub fn DispatchMessageW(lpMsg: *const MSG) -> LRESULT;
         pub fn GetCurrentThreadId() -> DWORD;
+        pub fn GetLastError() -> DWORD;
         pub fn PostThreadMessageW(idThread: DWORD, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> i32;
         pub fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: LONG_PTR) -> LONG_PTR;
         pub fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> LONG_PTR;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_input_bridge_can_start_stop_and_start_again() {
+        let mut bridge = RawInputBridge::new();
+        assert!(!bridge.is_running());
+        let first = bridge.start(|_| {});
+        if cfg!(target_os = "windows") {
+            assert!(first.is_ok(), "Raw Input startup failed: {first:?}");
+            assert!(bridge.is_running());
+            bridge.stop();
+            assert!(!bridge.is_running());
+
+            let second = bridge.start(|_| {});
+            assert!(second.is_ok(), "Raw Input restart failed: {second:?}");
+            bridge.stop();
+            assert!(!bridge.is_running());
+        } else {
+            assert!(first.is_err());
+        }
     }
 }
 
@@ -205,20 +234,52 @@ impl RawInputBridge {
         let running = Arc::clone(&self.running);
         let thread_id = Arc::clone(&self.thread_id);
         let cb: EventCallback = Arc::new(Mutex::new(callback));
+        let (startup_tx, startup_rx) = mpsc::channel();
 
         self.thread_handle = Some(thread::spawn(move || {
             #[cfg(target_os = "windows")]
-            raw_input_thread_impl(running, thread_id, cb);
+            raw_input_thread_impl(running, thread_id, cb, startup_tx);
             #[cfg(not(target_os = "windows"))]
-            { log::warn!("RawInput only on Windows"); let _ = (running, thread_id, cb); }
+            {
+                log::warn!("RawInput only on Windows");
+                let _ = startup_tx.send(Err("RawInput only on Windows".into()));
+                let _ = (running, thread_id, cb);
+            }
         }));
 
-        log::info!("RawInputBridge started");
-        Ok(())
+        match startup_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => {
+                log::info!("RawInputBridge started");
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                if let Some(handle) = self.thread_handle.take() {
+                    let _ = handle.join();
+                }
+                self.thread_id.store(0, Ordering::SeqCst);
+                self.running.store(false, Ordering::SeqCst);
+                Err(error)
+            }
+            Err(_) => {
+                self.running.store(false, Ordering::SeqCst);
+                let thread_id = self.thread_id.load(Ordering::SeqCst);
+                #[cfg(target_os = "windows")]
+                if thread_id != 0 {
+                    unsafe { win32::PostThreadMessageW(thread_id, win32::WM_QUIT, 0, 0); }
+                }
+                if let Some(handle) = self.thread_handle.take() {
+                    let _ = handle.join();
+                }
+                self.thread_id.store(0, Ordering::SeqCst);
+                Err("RawInputBridge startup timed out".into())
+            }
+        }
     }
 
     pub fn stop(&mut self) {
-        if !self.running.load(Ordering::SeqCst) { return; }
+        if !self.running.load(Ordering::SeqCst) && self.thread_handle.is_none() {
+            return;
+        }
         self.running.store(false, Ordering::SeqCst);
         #[cfg(target_os = "windows")]
         {
@@ -244,6 +305,7 @@ fn raw_input_thread_impl(
     running: Arc<AtomicBool>,
     thread_id: Arc<AtomicU32>,
     callback: EventCallback,
+    startup_tx: mpsc::Sender<Result<(), String>>,
 ) {
     use win32::*;
     use std::mem;
@@ -264,7 +326,10 @@ fn raw_input_thread_impl(
     wc.lpszClassName = class_name.as_ptr();
 
     if unsafe { RegisterClassExW(&wc) } == 0 {
-        log::error!("RegisterClassExW failed");
+        let error = unsafe { GetLastError() };
+        log::error!("RegisterClassExW failed error={error}");
+        let _ = startup_tx.send(Err(format!("RegisterClassExW failed error={error}")));
+        running.store(false, Ordering::SeqCst);
         thread_id.store(0, Ordering::SeqCst);
         return;
     }
@@ -278,7 +343,11 @@ fn raw_input_thread_impl(
     };
 
     if hwnd.is_null() {
-        log::error!("CreateWindowExW failed");
+        let error = unsafe { GetLastError() };
+        log::error!("CreateWindowExW failed error={error}");
+        unsafe { UnregisterClassW(class_name.as_ptr(), hinstance); }
+        let _ = startup_tx.send(Err(format!("CreateWindowExW failed error={error}")));
+        running.store(false, Ordering::SeqCst);
         thread_id.store(0, Ordering::SeqCst);
         return;
     }
@@ -306,20 +375,27 @@ fn raw_input_thread_impl(
         },
     ];
 
-    if unsafe { RegisterRawInputDevices(devices.as_ptr(), devices.len() as u32) } == 0 {
-        log::error!("RegisterRawInputDevices failed");
+    if unsafe {
+        RegisterRawInputDevices(devices.as_ptr(), devices.len() as u32, mem::size_of::<RAWINPUTDEVICE>() as u32)
+    } == 0 {
+        let error = unsafe { GetLastError() };
+        log::error!("RegisterRawInputDevices failed error={error}");
         unsafe {
             let cb_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if cb_ptr != 0 {
                 let _ = Arc::from_raw(cb_ptr as *const EventCallback);
             }
             DestroyWindow(hwnd);
+            UnregisterClassW(class_name.as_ptr(), hinstance);
         }
+        let _ = startup_tx.send(Err(format!("RegisterRawInputDevices failed error={error}")));
+        running.store(false, Ordering::SeqCst);
         thread_id.store(0, Ordering::SeqCst);
         return;
     }
 
     log::info!("RawInput registered, message loop started");
+    let _ = startup_tx.send(Ok(()));
 
     // Message loop
     let mut msg: MSG = unsafe { mem::zeroed() };
@@ -337,14 +413,38 @@ fn raw_input_thread_impl(
 
     // Cleanup
     unsafe {
+        let remove_devices = [
+            RAWINPUTDEVICE {
+                usUsagePage: 0x01,
+                usUsage: 0x06,
+                dwFlags: RIDEV_REMOVE,
+                hwndTarget: ptr::null_mut(),
+            },
+            RAWINPUTDEVICE {
+                usUsagePage: 0x01,
+                usUsage: 0x02,
+                dwFlags: RIDEV_REMOVE,
+                hwndTarget: ptr::null_mut(),
+            },
+        ];
+        if RegisterRawInputDevices(remove_devices.as_ptr(), remove_devices.len() as u32, mem::size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+            log::warn!(
+                "RegisterRawInputDevices remove failed error={}",
+                GetLastError()
+            );
+        }
         let cb_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if cb_ptr != 0 {
             let _ = Arc::from_raw(cb_ptr as *const EventCallback);
         }
         DestroyWindow(hwnd);
+        if UnregisterClassW(class_name.as_ptr(), hinstance) == 0 {
+            log::warn!("UnregisterClassW failed error={}", GetLastError());
+        }
     }
 
     log::info!("RawInput message loop exited");
+    running.store(false, Ordering::SeqCst);
     thread_id.store(0, Ordering::SeqCst);
 
     // ======== Window Procedure ========
@@ -370,57 +470,61 @@ fn raw_input_thread_impl(
                         let raw = &*(buf.as_ptr() as *const RAWINPUT);
                         let device = raw.header.hDevice as u64;
 
+                        let mut events = Vec::new();
                         if raw.header.dwType == RIM_TYPEKEYBOARD {
                             let kb = &raw.data.keyboard;
                             let vk = kb.VKey;
                             let pressed = (kb.Flags & RI_KEY_BREAK) == 0;
-                            if let Ok(mut cb) = cb_arc.lock() {
-                                cb(RawInputEvent {
-                                    device_type: RawInputDeviceType::Keyboard,
-                                    usage_id: vk, usage_page: 0x01, pressed,
-                                    device_handle: device, delta_x: 0, delta_y: 0,
-                                });
-                            }
+                            events.push(RawInputEvent {
+                                device_type: RawInputDeviceType::Keyboard,
+                                usage_id: vk, usage_page: 0x01, pressed,
+                                device_handle: device, delta_x: 0, delta_y: 0,
+                            });
                         } else if raw.header.dwType == RIM_TYPEMOUSE {
                             let mouse = &raw.data.mouse;
                             let flags = unsafe { mouse.Anonymous.usButtonFlags };
 
+                            if (flags & RI_MOUSE_LEFT_BUTTON_DOWN) != 0 {
+                                events.push(RawInputEvent {
+                                    device_type: RawInputDeviceType::Mouse,
+                                    usage_id: 1, usage_page: 0x01, pressed: true,
+                                    device_handle: device, delta_x: 0, delta_y: 0,
+                                });
+                            }
+                            if (flags & RI_MOUSE_LEFT_BUTTON_UP) != 0 {
+                                events.push(RawInputEvent {
+                                    device_type: RawInputDeviceType::Mouse,
+                                    usage_id: 1, usage_page: 0x01, pressed: false,
+                                    device_handle: device, delta_x: 0, delta_y: 0,
+                                });
+                            }
+                            if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN) != 0 {
+                                events.push(RawInputEvent {
+                                    device_type: RawInputDeviceType::Mouse,
+                                    usage_id: 2, usage_page: 0x01, pressed: true,
+                                    device_handle: device, delta_x: 0, delta_y: 0,
+                                });
+                            }
+                            if (flags & RI_MOUSE_RIGHT_BUTTON_UP) != 0 {
+                                events.push(RawInputEvent {
+                                    device_type: RawInputDeviceType::Mouse,
+                                    usage_id: 2, usage_page: 0x01, pressed: false,
+                                    device_handle: device, delta_x: 0, delta_y: 0,
+                                });
+                            }
+                            if mouse.lLastX != 0 || mouse.lLastY != 0 {
+                                events.push(RawInputEvent {
+                                    device_type: RawInputDeviceType::Mouse,
+                                    usage_id: 0, usage_page: 0x01, pressed: false,
+                                    device_handle: device,
+                                    delta_x: mouse.lLastX, delta_y: mouse.lLastY,
+                                });
+                            }
+                        }
+                        if !events.is_empty() {
                             if let Ok(mut cb) = cb_arc.lock() {
-                                if (flags & RI_MOUSE_LEFT_BUTTON_DOWN) != 0 {
-                                    cb(RawInputEvent {
-                                        device_type: RawInputDeviceType::Mouse,
-                                        usage_id: 1, usage_page: 0x01, pressed: true,
-                                        device_handle: device, delta_x: 0, delta_y: 0,
-                                    });
-                                }
-                                if (flags & RI_MOUSE_LEFT_BUTTON_UP) != 0 {
-                                    cb(RawInputEvent {
-                                        device_type: RawInputDeviceType::Mouse,
-                                        usage_id: 1, usage_page: 0x01, pressed: false,
-                                        device_handle: device, delta_x: 0, delta_y: 0,
-                                    });
-                                }
-                                if (flags & RI_MOUSE_RIGHT_BUTTON_DOWN) != 0 {
-                                    cb(RawInputEvent {
-                                        device_type: RawInputDeviceType::Mouse,
-                                        usage_id: 2, usage_page: 0x01, pressed: true,
-                                        device_handle: device, delta_x: 0, delta_y: 0,
-                                    });
-                                }
-                                if (flags & RI_MOUSE_RIGHT_BUTTON_UP) != 0 {
-                                    cb(RawInputEvent {
-                                        device_type: RawInputDeviceType::Mouse,
-                                        usage_id: 2, usage_page: 0x01, pressed: false,
-                                        device_handle: device, delta_x: 0, delta_y: 0,
-                                    });
-                                }
-                                if mouse.lLastX != 0 || mouse.lLastY != 0 {
-                                    cb(RawInputEvent {
-                                        device_type: RawInputDeviceType::Mouse,
-                                        usage_id: 0, usage_page: 0x01, pressed: false,
-                                        device_handle: device,
-                                        delta_x: mouse.lLastX, delta_y: mouse.lLastY,
-                                    });
+                                for event in events {
+                                    cb(event);
                                 }
                             }
                         }

@@ -1075,9 +1075,12 @@ fn start_hold_detector(
                             if state.gen != gen || !state.active {
                                 false
                             } else {
-                                begin_held_alt_tab(alt_vk);
-                                state.held_alt_tab_modifier = Some(alt_vk);
-                                true
+                                if begin_held_alt_tab(alt_vk) {
+                                    state.held_alt_tab_modifier = Some(alt_vk);
+                                    true
+                                } else {
+                                    false
+                                }
                             }
                         } else if button_id == "mic" {
                             // 语音长按的键盘动作必须持续到物理抬起，不能像普通
@@ -1095,7 +1098,12 @@ fn start_hold_detector(
                                     state.held_keys = Some(keys);
                                     true
                                 } else {
-                                    let _ = key_chord(&keys, true);
+                                    if !key_chord(&keys, true) {
+                                        log::error!(
+                                            "XIAOMI MAPPING voice long-hold cleanup release failed \
+                                             keys={keys:?}"
+                                        );
+                                    }
                                     log::warn!(
                                         "XIAOMI MAPPING voice long-hold DOWN failed keys={keys:?}"
                                     );
@@ -1346,19 +1354,10 @@ fn perform_button_action(config: &DeviceConfig, button_id: &str) -> bool {
 fn perform_action(action: &KeyAction) -> bool {
     match action {
         KeyAction::None => false,
-        KeyAction::SingleKey(vk) => {
-            tap_vks(&[*vk], 20);
-            true
-        }
-        KeyAction::ComboKey(vks) if !vks.is_empty() => {
-            tap_vks(vks, 70);
-            true
-        }
+        KeyAction::SingleKey(vk) => tap_vks(&[*vk], 20),
+        KeyAction::ComboKey(vks) if !vks.is_empty() => tap_vks(vks, 70),
         KeyAction::ComboKey(_) => false,
-        KeyAction::TextInput(text) => {
-            tap_unicode_text(text);
-            true
-        }
+        KeyAction::TextInput(text) => tap_unicode_text(text),
         KeyAction::LaunchApp(path) => {
             let _ = std::process::Command::new(path).spawn();
             true
@@ -1913,7 +1912,9 @@ fn release_wechat_start_voice_tap(
 
 fn compensate_voice_shortcut_down(vks: &[u16]) {
     let _ = crate::bridges::xiaomi::hid_injector::release_ready(vks);
-    let _ = key_chord(vks, true);
+    if !key_chord(vks, true) {
+        log::error!("XIAOMI VOICE compensation KEYUP failed vks={vks:?}");
+    }
 }
 
 fn release_voice_shortcut(
@@ -2294,25 +2295,51 @@ fn take_held_alt_tab_modifier(state: &mut PressState) -> Option<u16> {
 
 /// 打开 Windows 任务切换器：Alt 保持按下，Tab 仅点按一次。
 /// 不武装 ALT_CHORD_ACTIVE，确保这是系统可识别的真实 Alt+Tab。
-fn begin_held_alt_tab(alt_vk: u16) {
-    key_chord(&[alt_vk], false);
-    key_chord(&[0x09], false);
-    key_chord(&[0x09], true);
+fn begin_held_alt_tab(alt_vk: u16) -> bool {
+    if !key_chord(&[alt_vk], false) {
+        log::error!("XIAOMI MAPPING Alt+Tab hold DOWN failed alt_vk=0x{alt_vk:02X}");
+        if !key_chord(&[alt_vk], true) {
+            log::error!("XIAOMI MAPPING Alt+Tab hold cleanup failed alt_vk=0x{alt_vk:02X}");
+        }
+        return false;
+    }
+    let tab_down = key_chord(&[0x09], false);
+    let tab_up = tab_down && key_chord(&[0x09], true);
+    if !tab_up {
+        log::error!("XIAOMI MAPPING Alt+Tab tap failed alt_vk=0x{alt_vk:02X}");
+        if !key_chord(&[0x09], true) {
+            log::error!("XIAOMI MAPPING Alt+Tab Tab cleanup failed");
+        }
+        if !key_chord(&[alt_vk], true) {
+            log::error!("XIAOMI MAPPING Alt+Tab Alt cleanup failed alt_vk=0x{alt_vk:02X}");
+        }
+        return false;
+    }
     ALT_TAB_HOLD_ACTIVE.store(true, Ordering::Release);
     let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
     log::info!("XIAOMI MAPPING Alt+Tab hold down alt_vk=0x{alt_vk:02X}");
+    true
 }
 
 fn release_held_alt_tab(alt_vk: u16, reason: &str) {
-    key_chord(&[alt_vk], true);
+    let released = key_chord(&[alt_vk], true);
     ALT_TAB_HOLD_ACTIVE.store(false, Ordering::Release);
-    log::info!("XIAOMI MAPPING Alt+Tab hold release alt_vk=0x{alt_vk:02X} reason={reason}");
+    if released {
+        log::info!("XIAOMI MAPPING Alt+Tab hold release alt_vk=0x{alt_vk:02X} reason={reason}");
+    } else {
+        log::error!("XIAOMI MAPPING Alt+Tab hold release failed alt_vk=0x{alt_vk:02X} reason={reason}");
+    }
 }
 
 /// LL 钩子或 VK 轮询兜底调用：Alt+Tab 会话打开时转发四个方向键。
 pub fn relay_alt_tab_navigation(vk: u16, key_up: bool) {
     if ALT_TAB_HOLD_ACTIVE.load(Ordering::Acquire) && matches!(vk, 0x25..=0x28) {
-        key_chord(&[vk], key_up);
+        if !key_chord(&[vk], key_up) {
+            log::warn!(
+                "XIAOMI MAPPING Alt+Tab navigation {} failed vk=0x{vk:02X}",
+                if key_up { "KEYUP" } else { "KEYDOWN" }
+            );
+        }
     }
 }
 
@@ -2379,6 +2406,10 @@ fn should_try_virtual_hid(vks: &[u16]) -> bool {
 
 fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) -> bool {
     let down = key_chord(vks, false);
+    if !down {
+        log::error!("XIAOMI MAPPING SendInput chord press failed; cleanup already attempted vks={vks:?}");
+        return false;
+    }
     std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
     let mut up = false;
     for _ in 0..3 {
@@ -2390,10 +2421,10 @@ fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) -> bool {
     if !up {
         log::error!("XIAOMI MAPPING SendInput chord release exhausted retries vks={vks:?}");
     }
-    down && up
+    up
 }
 
-pub fn tap_vks(vks: &[u16], hold_ms: u64) {
+pub fn tap_vks(vks: &[u16], hold_ms: u64) -> bool {
     // 音量/静音与 Space：优先走 SendInput。
     // 某些全屏 Web 播放器会把虚拟 HID 的 Space 误判为播放器菜单触发，
     // SendInput 可保持标准的空格键语义。
@@ -2415,39 +2446,48 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) {
                 // the stale virtual device and issue KEYUP only for the chord
                 // this call owns.
                 crate::bridges::xiaomi::hid_injector::reset_and_retry();
-                let _ = key_chord(vks, true);
-                log::error!("XIAOMI MAPPING virtual chord release recovery vks={vks:?}");
+                let recovered = key_chord(vks, true) && wait_for_owned_modifiers_released(vks);
+                if !recovered {
+                    log::error!("XIAOMI MAPPING virtual chord release recovery failed vks={vks:?}");
+                } else {
+                    log::warn!("XIAOMI MAPPING virtual chord release recovered vks={vks:?}");
+                }
+                let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+                return recovered;
             }
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
-            return;
+            return true;
         }
     }
 
-    tap_vks_fallback(vks, hold_ms);
+    tap_vks_fallback(vks, hold_ms)
 }
 
-fn tap_vks_fallback(vks: &[u16], hold_ms: u64) {
+fn tap_vks_fallback(vks: &[u16], hold_ms: u64) -> bool {
     match fallback_injection_route(vks) {
         FallbackInjectionRoute::SystemAltTabSendInput => {
             // Do not arm ALT_CHORD_ACTIVE here. Windows system Alt chords must
             // reach the shell as genuine WM_SYSKEY input rather than being
             // swallowed by our LL hook.
-            inject_chord_via_send_input(vks, hold_ms);
+            let result = inject_chord_via_send_input(vks, hold_ms);
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
             log::debug!(
                 "XIAOMI MAPPING inject system Alt+Tab via SendInput vks={vks:?} hold_ms={hold_ms}"
             );
+            result
         }
         FallbackInjectionRoute::AltWindowMessage => {
             // Alt 组合键（如 Alt+Space, Alt+S）：使用 SendMessage(WM_KEYDOWN) 注入，
             // 避免 SendInput 触发 WM_SYSKEYDOWN → 系统菜单/全局热键
             inject_alt_chord_via_message(vks, hold_ms);
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+            true
         }
         FallbackInjectionRoute::SendInput => {
-            inject_chord_via_send_input(vks, hold_ms);
+            let result = inject_chord_via_send_input(vks, hold_ms);
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
             log::debug!("XIAOMI MAPPING inject SendInput vks={vks:?} hold_ms={hold_ms}");
+            result
         }
     }
 }
@@ -2544,18 +2584,23 @@ fn make_key_lparam(vk: u16, key_up: bool) -> u32 {
 #[cfg(not(target_os = "windows"))]
 fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
     // 非 Windows 回退
-    key_chord(vks, false);
+    let down = key_chord(vks, false);
     std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-    key_chord(vks, true);
+    let up = key_chord(vks, true);
+    if !down || !up {
+        log::warn!("XIAOMI MAPPING fallback chord failed down={down} up={up} vks={vks:?}");
+    }
 }
 
-fn tap_unicode_text(text: &str) {
+fn tap_unicode_text(text: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
             SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
             KEYEVENTF_UNICODE, VIRTUAL_KEY,
         };
+        let action_seq = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+        let mut complete = true;
         for ch in text.encode_utf16() {
             let inputs = [
                 INPUT {
@@ -2583,14 +2628,32 @@ fn tap_unicode_text(text: &str) {
                     },
                 },
             ];
-            unsafe {
-                let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+            if !send_input_complete(sent, inputs.len()) {
+                complete = false;
+                let error = std::io::Error::last_os_error();
+                log::warn!(
+                    "XIAOMI MAPPING unicode SendInput incomplete action_seq={action_seq} \
+                     sent={sent} expected={} error_code={} error={error}",
+                    inputs.len(),
+                    error.raw_os_error().unwrap_or_default()
+                );
             }
         }
+        record_send_input_result(
+            complete,
+            if complete {
+                String::new()
+            } else {
+                format!("unicode SendInput incomplete action_seq={action_seq}")
+            },
+        );
+        complete
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = text;
+        true
     }
 }
 
@@ -2602,14 +2665,7 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
             KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, VIRTUAL_KEY,
         };
 
-        let iter: Box<dyn Iterator<Item = &u16>> = if key_up {
-            Box::new(vks.iter().rev())
-        } else {
-            Box::new(vks.iter())
-        };
-
-        let mut inputs: Vec<INPUT> = Vec::with_capacity(vks.len());
-        for &vk in iter {
+        fn send_one(vk: u16, key_up: bool) -> (bool, i32, String) {
             let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
             let mut flags = if is_extended(vk) {
                 KEYEVENTF_EXTENDEDKEY
@@ -2619,7 +2675,7 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
             if key_up {
                 flags |= KEYEVENTF_KEYUP;
             }
-            inputs.push(INPUT {
+            let input = INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
                     ki: KEYBDINPUT {
@@ -2630,25 +2686,27 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
                         dwExtraInfo: EXTRA_INFO,
                     },
                 },
-            });
+            };
+            let sent = unsafe {
+                SendInput(std::slice::from_ref(&input), std::mem::size_of::<INPUT>() as i32)
+            };
+            let error = std::io::Error::last_os_error();
+            (sent == 1, error.raw_os_error().unwrap_or_default(), error.to_string())
         }
-        if inputs.is_empty() {
+
+        if vks.is_empty() {
             return true;
         }
-        // Release modifiers one by one.  A partial SendInput batch used to
-        // leave LWin/RWin behind while reporting only a generic failure.  With
-        // individual KEYUP records every owned key receives its own retry.
+
         if key_up {
             let mut released = true;
-            for (index, input) in inputs.iter().enumerate() {
-                let sent = unsafe {
-                    SendInput(std::slice::from_ref(input), std::mem::size_of::<INPUT>() as i32)
-                } as usize;
-                if sent != 1 {
+            for vk in reverse_key_order(vks) {
+                let (ok, error_code, error) = send_one(vk, true);
+                if !ok {
                     released = false;
-                    let vk = vks[vks.len() - 1 - index];
                     log::warn!(
-                        "XIAOMI MAPPING SendInput KEYUP failed vk=0x{vk:02X} vks={vks:?}"
+                        "XIAOMI MAPPING SendInput KEYUP failed vk=0x{vk:02X} \
+                         vks={vks:?} error_code={error_code} error={error}"
                     );
                 }
             }
@@ -2660,17 +2718,35 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
             return released;
         }
 
-        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
-        if sent != inputs.len() {
-            let detail = format!(
-                "SendInput incomplete sent={sent} expected={} key_up={key_up} vks={vks:?}",
-                inputs.len()
-            );
-            record_send_input_result(false, detail.clone());
-            log::warn!(
-                "XIAOMI MAPPING {detail}"
-            );
-            return false;
+        let mut pressed = Vec::with_capacity(vks.len());
+        for &vk in vks {
+            let (ok, error_code, error) = send_one(vk, false);
+            if !ok {
+                log::warn!(
+                    "XIAOMI MAPPING SendInput KEYDOWN failed vk=0x{vk:02X} \
+                     pressed={pressed:?} expected={} error_code={error_code} error={error}",
+                    vks.len(),
+                );
+                for owned_vk in release_order(&pressed, pressed.len()) {
+                    let (released, cleanup_error_code, cleanup_error) = send_one(owned_vk, true);
+                    if !released {
+                        log::error!(
+                            "XIAOMI MAPPING SendInput KEYDOWN cleanup failed \
+                             vk=0x{owned_vk:02X} error_code={cleanup_error_code} \
+                             error={cleanup_error}"
+                        );
+                    }
+                }
+                record_send_input_result(
+                    false,
+                    format!(
+                        "SendInput KEYDOWN failed vk=0x{vk:02X} vks={vks:?} \
+                         error_code={error_code} error={error}"
+                    ),
+                );
+                return false;
+            }
+            pressed.push(vk);
         }
         record_send_input_result(true, String::new());
         true
@@ -2685,6 +2761,44 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
 
 fn send_input_complete(sent: u32, expected: usize) -> bool {
     sent == expected as u32
+}
+
+fn reverse_key_order(keys: &[u16]) -> Vec<u16> {
+    keys.iter().rev().copied().collect()
+}
+
+fn release_order(keys: &[u16], successful_count: usize) -> Vec<u16> {
+    reverse_key_order(&keys[..successful_count.min(keys.len())])
+}
+
+fn mouse_click_succeeded(down_ok: bool, up_ok: bool) -> bool {
+    down_ok && up_ok
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseClickPhase {
+    Down,
+    Up,
+}
+
+fn execute_mouse_click<F>(mut send: F) -> (bool, bool, usize)
+where
+    F: FnMut(MouseClickPhase) -> bool,
+{
+    let down_ok = send(MouseClickPhase::Down);
+    let mut up_ok = false;
+    let mut up_attempts = 0;
+    for attempt in 1..=3 {
+        up_attempts = attempt;
+        if send(MouseClickPhase::Up) {
+            up_ok = true;
+            break;
+        }
+        if attempt < 3 {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    (down_ok, up_ok, up_attempts)
 }
 
 fn mouse_move_speed(step: u32, frame: u32, accelerate: bool) -> u32 {
@@ -2730,19 +2844,42 @@ fn mouse_left_click() -> bool {
                 },
             },
         };
-        let inputs = [down, up];
-        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-        if send_input_complete(sent, inputs.len()) {
-            log::debug!("XIAOMI MAPPING mouse left click");
-            true
-        } else {
-            log::warn!(
-                "XIAOMI MAPPING mouse left click SendInput incomplete sent={sent} expected={} error={}",
-                inputs.len(),
-                std::io::Error::last_os_error()
+        let action_seq = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
+        let send_button = |input: &INPUT, phase: &str| {
+            let sent = unsafe { SendInput(std::slice::from_ref(input), std::mem::size_of::<INPUT>() as i32) };
+            let ok = sent == 1;
+            if !ok {
+                let error = std::io::Error::last_os_error();
+                log::warn!(
+                    "XIAOMI MAPPING mouse left click action_seq={action_seq} \
+                     phase={phase} sent={sent} expected=1 error_code={} error={error}",
+                    error.raw_os_error().unwrap_or_default()
+                );
+            }
+            ok
+        };
+        let (down_ok, up_ok, up_attempts) = execute_mouse_click(|phase| match phase {
+            MouseClickPhase::Down => send_button(&down, "down"),
+            MouseClickPhase::Up => send_button(&up, "up"),
+        });
+        if up_ok && up_attempts > 1 {
+            log::info!(
+                "XIAOMI MAPPING mouse left click action_seq={action_seq} \
+                 up_recovered_attempt={up_attempts}"
             );
-            false
         }
+        if mouse_click_succeeded(down_ok, up_ok) {
+            log::debug!("XIAOMI MAPPING mouse left click action_seq={action_seq}");
+        }
+        record_send_input_result(
+            mouse_click_succeeded(down_ok, up_ok),
+            if mouse_click_succeeded(down_ok, up_ok) {
+                String::new()
+            } else {
+                format!("mouse click down_ok={down_ok} up_ok={up_ok} action_seq={action_seq}")
+            },
+        );
+        mouse_click_succeeded(down_ok, up_ok)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -2839,6 +2976,61 @@ mod gesture_tests {
         assert!(send_input_complete(2, 2));
         assert!(!send_input_complete(1, 2));
         assert!(!send_input_complete(0, 1));
+    }
+
+    #[test]
+    fn partial_keydown_cleanup_releases_only_owned_keys_in_reverse_order() {
+        assert_eq!(release_order(&[0x11, 0x10, 0x44], 2), vec![0x10, 0x11]);
+        assert_eq!(release_order(&[0x11, 0x10, 0x44], 3), vec![0x44, 0x10, 0x11]);
+        assert_eq!(release_order(&[0xA2], 1), vec![0xA2]);
+    }
+
+    #[test]
+    fn mouse_click_requires_both_edges_to_succeed() {
+        assert!(mouse_click_succeeded(true, true));
+        assert!(!mouse_click_succeeded(true, false));
+        assert!(!mouse_click_succeeded(false, true));
+        assert!(!mouse_click_succeeded(false, false));
+    }
+
+    #[test]
+    fn mouse_click_mock_retries_up_without_repeating_down() {
+        use std::cell::RefCell;
+
+        let phases = RefCell::new(Vec::new());
+        let outcomes = RefCell::new(vec![false, false, false, false]);
+        let (down_ok, up_ok, up_attempts) = execute_mouse_click(|phase| {
+            phases.borrow_mut().push(phase);
+            outcomes.borrow_mut().remove(0)
+        });
+
+        assert!(!down_ok);
+        assert!(!up_ok);
+        assert_eq!(up_attempts, 3);
+        assert_eq!(
+            phases.into_inner(),
+            vec![MouseClickPhase::Down, MouseClickPhase::Up, MouseClickPhase::Up, MouseClickPhase::Up]
+        );
+    }
+
+    #[test]
+    fn mouse_click_mock_recovers_up_after_down_success() {
+        use std::cell::RefCell;
+
+        let phases = RefCell::new(Vec::new());
+        let outcomes = RefCell::new(vec![true, false, true]);
+        let (down_ok, up_ok, up_attempts) = execute_mouse_click(|phase| {
+            phases.borrow_mut().push(phase);
+            outcomes.borrow_mut().remove(0)
+        });
+
+        assert!(down_ok);
+        assert!(up_ok);
+        assert_eq!(up_attempts, 2);
+        assert_eq!(
+            phases.into_inner(),
+            vec![MouseClickPhase::Down, MouseClickPhase::Up, MouseClickPhase::Up]
+        );
     }
 
     #[test]

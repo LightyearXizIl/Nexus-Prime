@@ -402,6 +402,7 @@ pub fn press_ready(vks: &[u16]) -> Result<(), String> {
                     submit(dev, dev.keyboard, &[0u8; 8])
                 };
             }
+            log::warn!("WinUHid press stage failed; neutral report submitted before reset: {error}");
             record_failure(error)
         }
     }
@@ -429,7 +430,10 @@ pub fn release_ready(vks: &[u16]) -> Result<(), String> {
     };
     match &result {
         Ok(()) => record_success(),
-        Err(error) => record_failure(error),
+        Err(error) => {
+            log::warn!("WinUHid release stage failed: {error}");
+            record_failure(error)
+        }
     }
     result
 }
