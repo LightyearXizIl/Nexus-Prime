@@ -2,6 +2,17 @@
 
 更新时间：2026-10-10
 
+## v0.5.1：麦克风路由闪退修复（2026-10-10）
+
+- 根因：v0.5.0 在主进程内直接调用未公开的 Windows 音频策略 COM vtable；Windows WER 在语音按下和启动应用设置阶段记录 `nexus-prime.exe` 的 `0xc0000005` 访问冲突。
+- 修复：移除主进程裸 COM 调用，新增 `assets/xiaomi/microphone-route.ps1` 隔离辅助进程。Rust 路由状态机通过隐藏 PowerShell 子进程执行 `EnsureCable` / `Restore`，3 秒超时后只记录失败，不结束主进程。
+- 行为：关闭“始终使用遥控器麦克风”时按住语音键切换到 CABLE、松开恢复；开启时持续保持 CABLE。用户手动切换、设备拔出、无效设备 ID、重复按键、断连、桥接重启和退出均有保护。
+- 日志：记录路由动作、结果、是否切换、是否跳过、耗时和失败原因；兼容并清理旧版 `previous-default-microphone.txt`。
+- 自动化：`npm.cmd test`（Gadget 10/10、前端 63/63）、`npm.cmd run build`、`cargo test --workspace`、`cargo check --workspace --all-targets`、`git diff --check` 均通过。
+- Windows 路由脚本实测：Realtek 麦克风 → CABLE → Realtek 麦克风 → CABLE 全部成功；无效设备 ID 安全返回跳过恢复。
+- 正式 NSIS 包：`Nexus.Prime_0.5.1_x64-setup.exe`，13,393,834 bytes；SHA-256：`c23c098b8207181269acdbf8428720357f51b1ac1d88ae98ecbe1cb59d842ef3`。主程序 SHA-256：`c9faf1b2b57107b6eba76fd5ca1c7848c025a24325bc86a04f3b9003b3bf49e8`。
+- 发布边界：安装包和辅助脚本已完成本机验证；遥控器快速连按、真实输入法识别、蓝牙断连、热插拔和退出仍需在安装后的真实设备上验收。
+
 ## v0.5.0：遥控器麦克风自动切换（2026-10-10）
 
 - 设置 → 通用新增“始终使用遥控器麦克风”，旧配置缺失时默认为关闭。关闭时按住语音键切换到 `CABLE Output (VB-Audio Virtual Cable)`，松开、断连、桥接重启或退出时仅在应用仍拥有 CABLE 默认设备时恢复；开启时通过 Windows 原生音频策略接口持续保持 CABLE，并每秒检查热插拔导致的默认设备变化。

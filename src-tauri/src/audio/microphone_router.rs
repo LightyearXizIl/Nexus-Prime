@@ -1,13 +1,15 @@
 //! Windows default-recording-device routing for the remote microphone.
 //!
-//! The voice path calls this module synchronously.  It talks to the Windows
-//! audio policy COM interface directly, so pressing the remote never starts a
-//! PowerShell process.  Non-Windows builds keep the same API for tests and
-//! cross compilation.
+//! Device policy changes run in a short-lived hidden helper process. Windows'
+//! undocumented audio policy COM interface is isolated from the Tauri
+//! process, so a device or COM failure cannot take down the application.
 
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-const CABLE_NAME: &str = "CABLE Output (VB-Audio Virtual Cable)";
+const ROUTE_SCRIPT_NAME: &str = "microphone-route.ps1";
+const ROUTE_TIMEOUT: Duration = Duration::from_secs(3);
+const MONITOR_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -23,77 +25,164 @@ struct State {
     previous: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum RouteAction {
+    EnsureCable,
+    Restore,
+}
+
+impl RouteAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EnsureCable => "EnsureCable",
+            Self::Restore => "Restore",
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RouteResponse {
+    ok: bool,
+    #[serde(default)]
+    changed: bool,
+    #[serde(default)]
+    skipped: bool,
+    #[serde(default)]
+    current_id: Option<String>,
+    #[serde(default)]
+    target_id: Option<String>,
+    #[serde(default)]
+    previous_id: Option<String>,
+    #[serde(default)]
+    message: String,
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.is_empty())
+}
+
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+static ROUTE_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
 static MONITOR: OnceLock<()> = OnceLock::new();
 
 fn state() -> &'static Mutex<State> {
     STATE.get_or_init(|| Mutex::new(State::default()))
 }
 
-/// Apply the saved setting.  This is intentionally idempotent and is safe to
-/// call during startup, settings save, and bridge restart.
+fn route_operation() -> &'static Mutex<()> {
+    ROUTE_OPERATION.get_or_init(|| Mutex::new(()))
+}
+
+fn begin_press(current: &mut State) -> bool {
+    if current.pressed {
+        return false;
+    }
+    current.pressed = true;
+    true
+}
+
+fn end_press(current: &mut State) -> bool {
+    if !current.pressed {
+        return false;
+    }
+    current.pressed = false;
+    current.mode != Some(Mode::AlwaysOn) && current.owned_cable
+}
+
+fn commit_ensure(current: &mut State, response: &RouteResponse) {
+    if response.changed {
+        current.previous = non_empty(response.previous_id.clone())
+            .or_else(|| non_empty(response.current_id.clone()));
+        current.owned_cable = current.previous.is_some();
+    }
+}
+
+fn commit_restore(current: &mut State) {
+    current.owned_cable = false;
+    current.previous = None;
+}
+
+/// Apply the saved setting. This is idempotent and safe during startup,
+/// settings save, and bridge restart.
 pub fn apply_settings(always_on: bool) {
     start_monitor();
-    let mut state = state().lock().expect("microphone router mutex poisoned");
-    let next = if always_on { Mode::AlwaysOn } else { Mode::Off };
-    if !always_on && state.previous.is_none() && legacy_previous().is_some() {
-        state.owned_cable = true;
-        restore_if_owned(&mut state);
-    }
-    if state.mode == Some(next) {
-        if always_on {
-            ensure_cable(&mut state);
+    let _operation = route_operation()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+
+    if !always_on {
+        let legacy = legacy_previous();
+        {
+            let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+            if current.previous.is_none() {
+                if let Some(previous) = legacy {
+                    current.previous = Some(previous);
+                    current.owned_cable = true;
+                }
+            }
         }
+        restore_owned();
+        let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+        current.mode = Some(Mode::Off);
+        current.pressed = false;
         return;
     }
-    if state.owned_cable && !always_on {
-        restore_if_owned(&mut state);
+
+    {
+        let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+        current.mode = Some(Mode::AlwaysOn);
+        current.pressed = false;
     }
-    state.mode = Some(next);
-    state.pressed = false;
-    state.owned_cable = false;
-    state.previous = None;
-    if always_on {
-        ensure_cable(&mut state);
-    }
+    ensure_cable();
 }
 
 /// Switch to CABLE before the voice shortcut is sent.
 pub fn voice_pressed() {
-    let mut state = state().lock().expect("microphone router mutex poisoned");
-    if state.pressed {
-        return;
+    let _operation = route_operation()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    {
+        let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+        if !begin_press(&mut current) {
+            return;
+        }
     }
-    state.pressed = true;
-    if state.mode == Some(Mode::AlwaysOn) {
-        ensure_cable(&mut state);
-    } else {
-        switch_to_cable(&mut state);
-    }
+    ensure_cable();
 }
 
-/// Restore only when the application still owns the default endpoint.  A user
+/// Restore only when the application still owns the default endpoint. A user
 /// selection made while speaking therefore always wins over the old snapshot.
 pub fn voice_released() {
-    let mut state = state().lock().expect("microphone router mutex poisoned");
-    if !state.pressed {
-        return;
-    }
-    state.pressed = false;
-    if state.mode != Some(Mode::AlwaysOn) && state.owned_cable {
-        restore_if_owned(&mut state);
+    let _operation = route_operation()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let should_restore = {
+        let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+        end_press(&mut current)
+    };
+    if should_restore {
+        restore_owned();
     }
 }
 
 /// Used by disconnect, bridge restart, tray quit, and process exit.
 pub fn cleanup(reason: &str) {
-    let mut state = state().lock().expect("microphone router mutex poisoned");
-    if state.owned_cable && state.mode != Some(Mode::AlwaysOn) {
-        restore_if_owned(&mut state);
+    let _operation = route_operation()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let should_restore = {
+        let current = state().lock().unwrap_or_else(|error| error.into_inner());
+        current.owned_cable && current.mode != Some(Mode::AlwaysOn)
+    };
+    if should_restore {
+        restore_owned();
     }
-    state.pressed = false;
-    state.owned_cable = false;
-    state.previous = None;
+    let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+    current.pressed = false;
+    if current.mode != Some(Mode::AlwaysOn) {
+        current.owned_cable = false;
+        current.previous = None;
+    }
     log::debug!("microphone route cleanup reason={reason}");
 }
 
@@ -102,113 +191,195 @@ fn start_monitor() {
         let _ = std::thread::Builder::new()
             .name("microphone-route-monitor".into())
             .spawn(|| loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let mut state = state().lock().expect("microphone router mutex poisoned");
-                if state.mode == Some(Mode::AlwaysOn) {
-                    ensure_cable(&mut state);
+                std::thread::sleep(MONITOR_INTERVAL);
+                let _operation = route_operation()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                let always_on = state()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .mode
+                    == Some(Mode::AlwaysOn);
+                if always_on {
+                    ensure_cable();
                 }
             });
     }
 }
 
-fn switch_to_cable(state: &mut State) {
-    #[cfg(target_os = "windows")]
-    {
-        let Some(cable) = find_cable() else {
-            log::warn!(
-                "CABLE microphone endpoint is unavailable; leaving current default unchanged"
+fn ensure_cable() {
+    let started = Instant::now();
+    match run_route(RouteAction::EnsureCable, None) {
+        Ok(response) if response.ok => {
+            if response.changed {
+                let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+                commit_ensure(&mut current, &response);
+            }
+            log::info!(
+                "microphone route action=EnsureCable result=success changed={} elapsed_ms={} target_present={}",
+                response.changed,
+                started.elapsed().as_millis(),
+                non_empty(response.target_id.clone()).is_some()
             );
-            return;
-        };
-        let current = current_default();
-        if current.as_deref() == Some(cable.as_str()) {
-            return;
         }
-        if let Some(current) = current {
-            state.previous = Some(current);
-        }
-        match set_default(&cable) {
-            Ok(()) => state.owned_cable = true,
-            Err(error) => {
-                log::warn!("unable to set CABLE microphone default: {error}");
-                state.previous = None;
-            }
-        }
+        Ok(response) => log::warn!(
+            "microphone route action=EnsureCable result=failed changed={} skipped={} elapsed_ms={} message={}",
+            response.changed,
+            response.skipped,
+            started.elapsed().as_millis(),
+            response.message
+        ),
+        Err(error) => log::warn!(
+            "microphone route action=EnsureCable result=error elapsed_ms={} error={error}",
+            started.elapsed().as_millis()
+        ),
     }
 }
 
-fn ensure_cable(state: &mut State) {
-    #[cfg(target_os = "windows")]
-    {
-        let Some(cable) = find_cable() else {
-            log::warn!("always-on microphone mode requested but CABLE endpoint is unavailable");
-            return;
-        };
-        if current_default().as_deref() == Some(cable.as_str()) {
-            return;
-        }
-        if state.previous.is_none() {
-            state.previous = current_default();
-        }
-        match set_default(&cable) {
-            Ok(()) => state.owned_cable = true,
-            Err(error) => log::warn!("unable to enforce CABLE microphone default: {error}"),
-        }
-    }
-}
+fn restore_owned() {
+    let previous = state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .previous
+        .clone();
+    let Some(previous) = previous else {
+        let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+        current.owned_cable = false;
+        return;
+    };
 
-fn restore_if_owned(state: &mut State) {
-    #[cfg(target_os = "windows")]
-    {
-        let Some(cable) = find_cable() else { return };
-        if current_default().as_deref() != Some(cable.as_str()) {
-            log::debug!("microphone restore skipped: user selected another endpoint");
+    let started = Instant::now();
+    match run_route(RouteAction::Restore, Some(&previous)) {
+        Ok(response) if response.ok => {
+            let mut current = state().lock().unwrap_or_else(|error| error.into_inner());
+            commit_restore(&mut current);
             remove_legacy_previous();
-            state.owned_cable = false;
-            state.previous = None;
-            return;
+            log::info!(
+                "microphone route action=Restore result={} skipped={} elapsed_ms={} current_present={}",
+                if response.skipped { "skipped" } else { "success" },
+                response.skipped,
+                started.elapsed().as_millis(),
+                non_empty(response.current_id.clone()).is_some()
+            );
         }
-        let previous = state.previous.clone().or_else(legacy_previous);
-        let Some(previous) = previous else { return };
-        if endpoint_exists(&previous) {
-            if let Err(error) = set_default(&previous) {
-                log::warn!("unable to restore previous microphone: {error}");
-            } else {
-                remove_legacy_previous();
-                state.owned_cable = false;
-                state.previous = None;
-            }
-        } else {
-            log::warn!("previous microphone endpoint is no longer present; leaving CABLE selected");
-            remove_legacy_previous();
-            state.owned_cable = false;
-            state.previous = None;
-        }
+        Ok(response) => log::warn!(
+            "microphone route action=Restore result=failed skipped={} elapsed_ms={} message={}",
+            response.skipped,
+            started.elapsed().as_millis(),
+            response.message
+        ),
+        Err(error) => log::warn!(
+            "microphone route action=Restore result=error elapsed_ms={} error={error}",
+            started.elapsed().as_millis()
+        ),
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn current_default() -> Option<String> {
-    None
+#[cfg(target_os = "windows")]
+fn route_script_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("assets").join("xiaomi").join(ROUTE_SCRIPT_NAME));
+            candidates.push(
+                dir.join("resources")
+                    .join("assets")
+                    .join("xiaomi")
+                    .join(ROUTE_SCRIPT_NAME),
+            );
+        }
+    }
+    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
+        candidates.push(
+            std::path::PathBuf::from(manifest)
+                .join("assets")
+                .join("xiaomi")
+                .join(ROUTE_SCRIPT_NAME),
+        );
+    }
+    candidates
 }
-#[cfg(not(target_os = "windows"))]
-fn find_cable() -> Option<String> {
-    None
+
+#[cfg(target_os = "windows")]
+fn find_route_script() -> Option<std::path::PathBuf> {
+    route_script_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
 }
-#[cfg(not(target_os = "windows"))]
-fn endpoint_exists(_: &str) -> bool {
-    false
+
+#[cfg(target_os = "windows")]
+fn run_route(action: RouteAction, previous: Option<&str>) -> Result<RouteResponse, String> {
+    use std::process::{Command, Stdio};
+
+    let script = find_route_script()
+        .ok_or_else(|| format!("microphone route helper is missing: {ROUTE_SCRIPT_NAME}"))?;
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &script.display().to_string(),
+            "-Action",
+            action.as_str(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(previous) = previous {
+        command.args(["-PreviousId", previous]);
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("start microphone route helper failed: {error}"))?;
+    let deadline = Instant::now() + ROUTE_TIMEOUT;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("poll microphone route helper failed: {error}"))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "microphone route helper timed out after {}ms",
+                ROUTE_TIMEOUT.as_millis()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("read microphone route helper failed: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let response: RouteResponse = serde_json::from_str(&stdout).map_err(|error| {
+        format!(
+            "microphone route helper returned invalid JSON: {error}; exit={:?}; stderr={stderr}; stdout={stdout}",
+            output.status.code()
+        )
+    })?;
+    if !output.status.success() && response.ok {
+        return Err(format!(
+            "microphone route helper failed with exit {:?}",
+            output.status.code()
+        ));
+    }
+    Ok(response)
 }
+
 #[cfg(not(target_os = "windows"))]
-fn set_default(_: &str) -> Result<(), String> {
-    Ok(())
+fn run_route(_: RouteAction, _: Option<&str>) -> Result<RouteResponse, String> {
+    Err("microphone routing is only supported on Windows".into())
 }
-#[cfg(not(target_os = "windows"))]
-fn legacy_previous() -> Option<String> {
-    None
-}
-#[cfg(not(target_os = "windows"))]
-fn remove_legacy_previous() {}
 
 #[cfg(target_os = "windows")]
 fn legacy_previous() -> Option<String> {
@@ -218,6 +389,12 @@ fn legacy_previous() -> Option<String> {
     let value = std::fs::read_to_string(path).ok()?.trim().to_string();
     (!value.is_empty()).then_some(value)
 }
+
+#[cfg(not(target_os = "windows"))]
+fn legacy_previous() -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn remove_legacy_previous() {
     if let Some(root) = std::env::var_os("LOCALAPPDATA") {
@@ -227,171 +404,13 @@ fn remove_legacy_previous() {
     }
 }
 
-#[cfg(target_os = "windows")]
-mod windows_impl {
-    use super::CABLE_NAME;
-    use windows::core::{Interface, GUID, PCWSTR};
-    use windows::Win32::Media::Audio::{
-        eCapture, eConsole, eMultimedia, ERole, IMMDeviceEnumerator, MMDeviceEnumerator,
-    };
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
-        COINIT_MULTITHREADED,
-    };
-    use windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY;
-
-    const POLICY_CONFIG_CLSID: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
-    const POLICY_CONFIG_IID: GUID = GUID::from_u128(0xf8679f50_850a_41cf_9c72_430f290290c8);
-    const DEVICE_FRIENDLY_NAME: PROPERTYKEY = PROPERTYKEY {
-        fmtid: GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
-        pid: 14,
-    };
-
-    struct ComGuard {
-        uninit: bool,
-    }
-    impl ComGuard {
-        fn new() -> Result<Self, String> {
-            unsafe {
-                let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
-                if hr.is_ok() {
-                    Ok(Self { uninit: true })
-                } else if hr == windows::Win32::Foundation::RPC_E_CHANGED_MODE {
-                    Ok(Self { uninit: false })
-                } else {
-                    Err(format!("CoInitializeEx failed: {hr:?}"))
-                }
-            }
-        }
-    }
-    impl Drop for ComGuard {
-        fn drop(&mut self) {
-            if self.uninit {
-                unsafe {
-                    CoUninitialize();
-                }
-            }
-        }
-    }
-
-    pub(super) fn endpoints() -> Result<Vec<(String, String)>, String> {
-        let _com = ComGuard::new()?;
-        unsafe {
-            let enumerator: IMMDeviceEnumerator =
-                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-                    .map_err(|e| e.to_string())?;
-            let collection = enumerator
-                .EnumAudioEndpoints(eCapture, windows::Win32::Media::Audio::DEVICE_STATE_ACTIVE)
-                .map_err(|e| e.to_string())?;
-            let count = collection.GetCount().map_err(|e| e.to_string())?;
-            let mut result = Vec::with_capacity(count as usize);
-            for index in 0..count {
-                let device = collection.Item(index).map_err(|e| e.to_string())?;
-                let id = device.GetId().map_err(|e| e.to_string())?;
-                let id_string = id.to_string().map_err(|e| e.to_string())?;
-                CoTaskMemFree(Some(id.0 as _));
-                let store = device
-                    .OpenPropertyStore(windows::Win32::System::Com::STGM_READ)
-                    .map_err(|e| e.to_string())?;
-                let value = store
-                    .GetValue(&DEVICE_FRIENDLY_NAME)
-                    .map_err(|e| e.to_string())?;
-                let name = value.to_string();
-                result.push((id_string, name));
-            }
-            Ok(result)
-        }
-    }
-
-    pub(super) fn default() -> Result<String, String> {
-        let _com = ComGuard::new()?;
-        unsafe {
-            let enumerator: IMMDeviceEnumerator =
-                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-                    .map_err(|e| e.to_string())?;
-            let device = enumerator
-                .GetDefaultAudioEndpoint(eCapture, eConsole)
-                .map_err(|e| e.to_string())?;
-            let id = device.GetId().map_err(|e| e.to_string())?;
-            let result = id.to_string().map_err(|e| e.to_string());
-            CoTaskMemFree(Some(id.0 as _));
-            result
-        }
-    }
-
-    #[repr(C)]
-    struct PolicyConfigVtable {
-        unknown: windows::core::IUnknown_Vtbl,
-        slots: [usize; 10],
-        set_default: unsafe extern "system" fn(
-            *mut core::ffi::c_void,
-            PCWSTR,
-            ERole,
-        ) -> windows::core::HRESULT,
-    }
-    #[repr(transparent)]
-    #[derive(Clone)]
-    struct PolicyConfig(windows::core::IUnknown);
-    unsafe impl windows::core::Interface for PolicyConfig {
-        type Vtable = PolicyConfigVtable;
-        const IID: GUID = POLICY_CONFIG_IID;
-    }
-
-    pub(super) fn set_default(id: &str) -> Result<(), String> {
-        let _com = ComGuard::new()?;
-        let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
-        unsafe {
-            let policy: PolicyConfig = CoCreateInstance(&POLICY_CONFIG_CLSID, None, CLSCTX_ALL)
-                .map_err(|e| e.to_string())?;
-            let method = (*(policy.as_raw() as *mut PolicyConfigVtable)).set_default;
-            for role in [
-                eConsole,
-                eMultimedia,
-                windows::Win32::Media::Audio::eCommunications,
-            ] {
-                let hr = method(policy.as_raw() as _, PCWSTR(wide.as_ptr()), role);
-                if hr.is_err() {
-                    return Err(format!("PolicyConfig SetDefaultEndpoint failed: {hr:?}"));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn cable() -> Option<String> {
-        endpoints()
-            .ok()?
-            .into_iter()
-            .find(|(_, name)| name.eq_ignore_ascii_case(CABLE_NAME))
-            .map(|(id, _)| id)
-    }
-    pub(super) fn exists(id: &str) -> bool {
-        endpoints()
-            .map(|items| items.into_iter().any(|(candidate, _)| candidate == id))
-            .unwrap_or(false)
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn current_default() -> Option<String> {
-    windows_impl::default().ok()
-}
-#[cfg(target_os = "windows")]
-fn find_cable() -> Option<String> {
-    windows_impl::cable()
-}
-#[cfg(target_os = "windows")]
-fn endpoint_exists(id: &str) -> bool {
-    windows_impl::exists(id)
-}
-#[cfg(target_os = "windows")]
-fn set_default(id: &str) -> Result<(), String> {
-    windows_impl::set_default(id)
-}
+#[cfg(not(target_os = "windows"))]
+fn remove_legacy_previous() {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn default_state_is_safe_and_idempotent() {
         let mut value = State::default();
@@ -400,11 +419,46 @@ mod tests {
         assert!(!value.owned_cable);
         assert!(value.previous.is_none());
     }
+
     #[test]
     fn duplicate_edges_do_not_change_press_state() {
         let mut value = State::default();
         value.pressed = true;
         value.pressed = true;
         assert!(value.pressed);
+    }
+
+    #[test]
+    fn route_actions_keep_stable_helper_names() {
+        assert_eq!(RouteAction::EnsureCable.as_str(), "EnsureCable");
+        assert_eq!(RouteAction::Restore.as_str(), "Restore");
+    }
+
+    #[test]
+    fn release_only_restores_owned_cable_in_off_mode() {
+        let mut state = State {
+            mode: Some(Mode::Off),
+            pressed: true,
+            owned_cable: true,
+            previous: Some("previous".into()),
+        };
+        assert!(end_press(&mut state));
+        assert!(!state.pressed);
+
+        state.mode = Some(Mode::AlwaysOn);
+        state.pressed = true;
+        assert!(!end_press(&mut state));
+    }
+
+    #[test]
+    fn duplicate_press_is_ignored_and_restore_commit_clears_ownership() {
+        let mut state = State::default();
+        assert!(begin_press(&mut state));
+        assert!(!begin_press(&mut state));
+        state.owned_cable = true;
+        state.previous = Some("previous".into());
+        commit_restore(&mut state);
+        assert!(!state.owned_cable);
+        assert!(state.previous.is_none());
     }
 }
