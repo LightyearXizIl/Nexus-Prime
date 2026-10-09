@@ -3,3 +3,4 @@ pub mod udp_server;
 pub mod pcm_router;
 pub mod vb_cable;
 pub mod vbcable_download;
+pub mod microphone_router;

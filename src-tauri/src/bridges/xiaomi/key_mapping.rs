@@ -336,6 +336,7 @@ pub fn reset_voice_input_state(reason: &str) {
     *VOICE_F5_POST_TAIL_UNTIL.lock() = None;
     crate::bridges::xiaomi::voice_pcm::end_session();
     crate::bridges::xiaomi::voice_meter::set_session(false);
+    crate::audio::microphone_router::cleanup(reason);
 }
 
 /// 配置变化或连接结束时取消全部未结算手势，防止旧计时器继续触发。
@@ -1421,6 +1422,7 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     if !pressed {
         force_release_voice_shortcut("remote_up");
         end_voice_period("remote_up");
+        crate::audio::microphone_router::voice_released();
         return;
     }
 
@@ -1449,6 +1451,8 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
         log::error!("XIAOMI VOICE shortcut contains firmware F5; refusing to inject it");
         return;
     }
+
+    crate::audio::microphone_router::voice_pressed();
 
     match crate::bridges::xiaomi::special_keys::bump_hook_to_front_and_settle(
         VOICE_HOOK_BUMP_SETTLE_MS,

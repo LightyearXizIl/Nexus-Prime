@@ -226,6 +226,9 @@ pub struct GlobalSettings {
     /// 是否在应用启动时静默检查 GitHub 正式更新；旧配置缺失时默认开启。
     #[serde(default = "default_auto_check_updates")]
     pub auto_check_updates: bool,
+    /// 按住语音时使用 CABLE；开启后持续保持 CABLE 为默认录音设备。
+    #[serde(default)]
+    pub remote_microphone_always_on: bool,
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
@@ -261,6 +264,7 @@ impl Default for GlobalSettings {
             language: "zh-CN".to_string(),
             minimize_to_tray: true,
             auto_check_updates: true,
+            remote_microphone_always_on: false,
             theme: ThemePreference::System,
             log_retention_days: default_log_retention_days(),
         }
@@ -1069,6 +1073,7 @@ mod tests {
         assert_eq!(settings.language, "zh-CN");
         assert!(settings.minimize_to_tray);
         assert!(settings.auto_check_updates);
+        assert!(!settings.remote_microphone_always_on);
         assert_eq!(settings.theme, ThemePreference::System);
         assert_eq!(settings.log_retention_days, 7);
     }
@@ -1081,6 +1086,7 @@ mod tests {
         .unwrap();
         assert_eq!(settings.theme, ThemePreference::System);
         assert!(settings.auto_check_updates);
+        assert!(!settings.remote_microphone_always_on);
         assert!(!settings.autostart_minimized_to_tray);
         assert_eq!(settings.log_retention_days, 7);
     }

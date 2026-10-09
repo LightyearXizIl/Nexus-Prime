@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.4.9",
-  "name": "Nexus Prime v0.4.9",
-  "body": "## 本次修复\n\n- **键盘释放链路**：组合键逐键发送，记录已成功按下的键；部分按下失败时只按逆序释放本次已拥有的键。KEYUP 失败保留有限重试和明确错误日志。\n- **鼠标点击**：左键 DOWN、UP 分开发送；DOWN 失败不重复发送，UP 即使前一步失败也继续有限重试，只有两阶段都成功才报告成功。\n- **WinUHid 释放**：区分 press、release、fallback 阶段，释放失败时只发送当前调用拥有的 KEYUP，并执行 SendInput 兜底和修饰键状态确认。\n- **Raw Input 与键盘钩子生命周期**：启动等待窗口、消息窗口和设备注册完成后再返回；失败时复位运行状态并清理注册、窗口和类；钩子线程创建失败时复位状态，停止时清零并卸载句柄。\n- **诊断日志**：补充 action sequence、阶段、虚拟键、发送数量、期望数量和 Win32 错误码。\n\n## 升级与兼容性\n\n- 直接运行新版安装包覆盖升级，保留现有配置、按键映射、输入法预设、用户数据和驱动安装逻辑。\n- 不改 `xiaomi.json` 配置格式，不新增或修改对外 Tauri 命令，不强制重装或重绑定 WinUHid。\n\n## 已完成验证\n\n- Gadget：10 项通过。\n- 前端：63 项通过；生产构建通过。\n- Rust workspace：156 项通过，2 项依赖真实环境的 smoke 测试保持忽略。\n- Cargo 全目标检查、差异检查和 Tauri release 构建通过。\n- NSIS：`Nexus.Prime_0.4.9_x64-setup.exe`，13,383,614 bytes，SHA-256 `0b66fd2ae65089dc7d8a71c5a00c4eda0cfa35128fc080f7e773f88beba04917`。\n\n## 真机验收边界\n\n本轮完成自动化、构建和安装包完整性验证；另一台电脑的真实键鼠长时间使用仍属于后续验证项。日志中的现场问题已用于静态审计，不能把本地自动测试当作另一台电脑的实机复现。",
+  "tag_name": "v0.5.0",
+  "name": "Nexus Prime v0.5.0",
+  "body": "## 遥控器麦克风自动切换\n\n- 设置 → 通用新增“始终使用遥控器麦克风”，旧配置缺失时默认关闭。\n- 关闭时按住语音键切换到 CABLE，松开、断连、桥接重启或退出时安全恢复原默认录音设备。\n- 开启时持续保持 CABLE，并检测热插拔导致的默认设备变化。\n- 兼容旧版 previous-default-microphone.txt。\n\n## 验证边界\n\n- Gadget 10/10、前端 63/63、Rust workspace 160 项通过。\n- Windows 多麦克风热插拔和生命周期场景仍需真实设备验收。\n\nNSIS：`Nexus.Prime_0.5.0_x64-setup.exe`，13,392,718 bytes，SHA-256 `d30bd19f8b609f93dd3b7fd7811a7a734ed0de8777fd324852fdfce52c4e574a`。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.4.9_x64-setup.exe",
-      "size": 13383614,
-      "digest": "sha256:0b66fd2ae65089dc7d8a71c5a00c4eda0cfa35128fc080f7e773f88beba04917",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.4.9/Nexus.Prime_0.4.9_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.0_x64-setup.exe",
+      "size": 13392718,
+      "digest": "sha256:d30bd19f8b609f93dd3b7fd7811a7a734ed0de8777fd324852fdfce52c4e574a",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.0/Nexus.Prime_0.5.0_x64-setup.exe"
     }
   ]
 }

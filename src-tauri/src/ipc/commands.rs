@@ -376,6 +376,7 @@ pub async fn save_global_settings(
     synced.autostart = crate::bridges::xiaomi::autostart::is_autostart_enabled();
     synced.log_retention_days = normalize_log_retention_days(synced.log_retention_days);
     config_manager.save_global_settings(&synced)?;
+    crate::audio::microphone_router::apply_settings(synced.remote_microphone_always_on);
     crate::logging::set_retention_days(synced.log_retention_days as usize);
     crate::logging::append_event(
         "settings",
@@ -680,10 +681,16 @@ pub fn restart_xiaomi_bridge_inner(
 
 /// 检测小米语音环境（VB-CABLE）；已就绪则直接 Repair，否则前端弹出内嵌/下载选择
 #[tauri::command]
-pub async fn check_xiaomi_voice_env() -> Result<crate::audio::vb_cable::VoiceEnvActionResult, String> {
-    Ok(tokio::task::spawn_blocking(crate::audio::vb_cable::check_or_prompt)
+pub async fn check_xiaomi_voice_env(
+    config_manager: State<'_, ConfigManager>,
+) -> Result<crate::audio::vb_cable::VoiceEnvActionResult, String> {
+    let result = tokio::task::spawn_blocking(crate::audio::vb_cable::check_or_prompt)
         .await
-        .map_err(|e| format!("voice env task: {e}"))?)
+        .map_err(|e| format!("voice env task: {e}"))?;
+    if let Ok(settings) = config_manager.get_global_settings() {
+        crate::audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -695,16 +702,21 @@ pub async fn get_xiaomi_voice_env_status() -> Result<crate::audio::vb_cable::Voi
 #[tauri::command]
 pub async fn repair_xiaomi_voice_env(
     source: String,
+    config_manager: State<'_, ConfigManager>,
 ) -> Result<crate::audio::vb_cable::VoiceEnvActionResult, String> {
     let source = source.to_ascii_lowercase();
-    tokio::task::spawn_blocking(move || match source.as_str() {
+    let result = tokio::task::spawn_blocking(move || match source.as_str() {
         "embedded" => crate::audio::vb_cable::install_embedded(),
         "download_page" => crate::audio::vb_cable::open_download_page(),
         "download_zip" => crate::audio::vb_cable::open_download_zip(),
         other => Err(format!("未知来源: {other}，可选 embedded / download_page / download_zip")),
     })
     .await
-    .map_err(|e| format!("voice repair task: {e}"))?
+        .map_err(|e| format!("voice repair task: {e}"))??;
+    if let Ok(settings) = config_manager.get_global_settings() {
+        crate::audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+    }
+    Ok(result)
 }
 
 /// 将官方 VB-CABLE Pack45 下载到用户通过另存为选择的位置；下载线程只在

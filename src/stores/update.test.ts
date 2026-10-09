@@ -19,6 +19,7 @@ const autoSettings = {
   language: "zh-CN",
   minimize_to_tray: true,
   auto_check_updates: true,
+  remote_microphone_always_on: false,
   theme: "system",
   log_retention_days: 7,
 };

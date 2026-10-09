@@ -29,6 +29,7 @@ fn cleanup_on_exit(app: &tauri::AppHandle) {
         runtime.cancel_active_session("app_exit");
     }
     bridges::xiaomi::key_mapping::reset_voice_input_state("app_exit");
+    audio::microphone_router::cleanup("app_exit");
     bridges::xiaomi::hid_report_tap::stop_and_join();
     bridges::xiaomi::special_keys::stop_special_key_hook();
     audio::pcm_router::stop_audio_router_process();
@@ -111,6 +112,9 @@ pub fn run() {
             std::env::set_var("REMOTE_BRIDGE_LOG_DIR", config_manager.logs_dir());
             std::env::set_var("REMOTE_BRIDGE_LOG_RETENTION_DAYS", log_retention_days.to_string());
             app.manage(config_manager);
+            if let Ok(settings) = app.state::<config::manager::ConfigManager>().get_global_settings() {
+                audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+            }
             app.manage(update::UpdateManager::default());
 
             log::info!("Nexus Prime starting...");

@@ -80,6 +80,7 @@ export interface GlobalSettings {
   language: AppLocale;
   minimize_to_tray: boolean;
   auto_check_updates: boolean;
+  remote_microphone_always_on: boolean;
   theme: ThemePreference;
   log_retention_days: number;
 }

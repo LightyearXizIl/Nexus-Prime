@@ -21,6 +21,7 @@ const settings = ref<GlobalSettings>({
   language: "zh-CN",
   minimize_to_tray: true,
   auto_check_updates: true,
+  remote_microphone_always_on: false,
   theme: "system",
   log_retention_days: 7,
 });
@@ -273,6 +274,17 @@ async function openExternal(url: string) {
               </div>
               <label class="toggle" :title="t('settings.updates')">
                 <input v-model="settings.auto_check_updates" type="checkbox" :aria-label="t('settings.updates')" @change="onSettingChange" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="preference-row">
+              <div class="preference-icon" aria-hidden="true">♩</div>
+              <div class="preference-copy">
+                <strong>{{ t("settings.remoteMicrophoneAlwaysOn") }}</strong>
+                <span>{{ t("settings.remoteMicrophoneAlwaysOnHint") }}</span>
+              </div>
+              <label class="toggle" :title="t('settings.remoteMicrophoneAlwaysOn')">
+                <input v-model="settings.remote_microphone_always_on" type="checkbox" :aria-label="t('settings.remoteMicrophoneAlwaysOn')" @change="onSettingChange" />
                 <span class="toggle-slider"></span>
               </label>
             </div>
