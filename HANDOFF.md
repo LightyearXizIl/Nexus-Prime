@@ -8,6 +8,7 @@
 - 用户在语音期间手动选择新设备、原设备拔出、CABLE 不可用或切换失败时，不强行覆盖当前设备；兼容旧版 `previous-default-microphone.txt`。
 - 自动化：Gadget 10/10、前端 63/63、Rust workspace 160 项通过，2 项真实环境 smoke ignored；前端生产构建、Cargo 全目标检查、`git diff --check` 和 Tauri/NSIS 构建通过。
 - 唯一 NSIS 包：`Nexus.Prime_0.5.0_x64-setup.exe`，13,392,718 bytes；SHA-256：`d30bd19f8b609f93dd3b7fd7811a7a734ed0de8777fd324852fdfce52c4e574a`。文件版本和产品版本均为 0.5.0。
+- 发布记录：使用本地 SSH 密钥推送 `main` 和 `v0.5.0` 标签；提交 `38a625d` 已进入远端 `main`，正式 Release 已公开并上传安装包与 `latest.json`。远程下载后的安装包 SHA-256 与本地构建一致，Release 非草稿、非预发布。
 - 真机边界：Windows 多麦克风热插拔、快速连按、断连、桥接重启和退出仍需在真实设备上验收，自动化结果不等同于系统级默认录音设备现场验收。
 
 ## v0.4.9：输入释放链路与生命周期（2026-10-07）
