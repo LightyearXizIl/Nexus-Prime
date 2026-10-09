@@ -10,7 +10,7 @@
 - 日志：记录路由动作、结果、是否切换、是否跳过、耗时和失败原因；兼容并清理旧版 `previous-default-microphone.txt`。
 - 自动化：`npm.cmd test`（Gadget 10/10、前端 63/63）、`npm.cmd run build`、`cargo test --workspace`、`cargo check --workspace --all-targets`、`git diff --check` 均通过。
 - Windows 路由脚本实测：Realtek 麦克风 → CABLE → Realtek 麦克风 → CABLE 全部成功；无效设备 ID 安全返回跳过恢复。
-- 正式 NSIS 包：`Nexus.Prime_0.5.1_x64-setup.exe`，13,393,834 bytes；SHA-256：`c23c098b8207181269acdbf8428720357f51b1ac1d88ae98ecbe1cb59d842ef3`。主程序 SHA-256：`c9faf1b2b57107b6eba76fd5ca1c7848c025a24325bc86a04f3b9003b3bf49e8`。
+- 正式 NSIS 包：`Nexus.Prime_0.5.1_x64-setup.exe`，13,393,834 bytes；SHA-256：`c23c098b8207181269acfdb8428720357f51b1ac1d88ae98ecbe1cb59d842ef3`。主程序 SHA-256：`c9faf1b2b57107b6eba76fd5ca1c7848c025a24325bc86a04f3b9003b3bf49e8`。
 - 发布边界：安装包和辅助脚本已完成本机验证；遥控器快速连按、真实输入法识别、蓝牙断连、热插拔和退出仍需在安装后的真实设备上验收。
 
 ## v0.5.0：遥控器麦克风自动切换（2026-10-10）

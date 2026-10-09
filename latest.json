@@ -1,7 +1,7 @@
 {
   "tag_name": "v0.5.1",
   "name": "Nexus Prime v0.5.1",
-  "body": "## 麦克风路由闪退修复\n\n- 移除主程序内不安全的 Windows 音频策略 COM 调用，改用隐藏隔离辅助进程。\n- 修复按住语音键切换到 CABLE、松开后恢复原默认麦克风。\n- 增加路由超时、设备拔出、用户手动改设备和辅助进程失败保护。\n- 保留“始终使用遥控器麦克风”的现有语义和旧状态文件兼容。\n\n## 验证\n\n- Gadget 10/10、前端 63/63、Rust workspace 测试、全目标检查和前端生产构建通过。\n- Windows 路由脚本已实测普通麦克风 → CABLE → 普通麦克风 → CABLE。\n- 无效设备 ID 会安全跳过恢复。\n- 真实遥控器快速连按、断连、热插拔和退出仍需用户现场验收。\n\nNSIS：`Nexus.Prime_0.5.1_x64-setup.exe`，13,393,834 bytes，SHA-256 `c23c098b8207181269acdbf8428720357f51b1ac1d88ae98ecbe1cb59d842ef3`。",
+  "body": "## 麦克风路由闪退修复\n\n- 移除主程序内不安全的 Windows 音频策略 COM 调用，改用隐藏隔离辅助进程。\n- 修复按住语音键切换到 CABLE、松开后恢复原默认麦克风。\n- 增加路由超时、设备拔出、用户手动改设备和辅助进程失败保护。\n- 保留“始终使用遥控器麦克风”的现有语义和旧状态文件兼容。\n\n## 验证\n\n- Gadget 10/10、前端 63/63、Rust workspace 测试、全目标检查和前端生产构建通过。\n- Windows 路由脚本已实测普通麦克风 → CABLE → 普通麦克风 → CABLE。\n- 无效设备 ID 会安全跳过恢复。\n- 真实遥控器快速连按、断连、热插拔和退出仍需用户现场验收。\n\nNSIS：`Nexus.Prime_0.5.1_x64-setup.exe`，13,393,834 bytes，SHA-256 `c23c098b8207181269acfdb8428720357f51b1ac1d88ae98ecbe1cb59d842ef3`。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
@@ -9,7 +9,7 @@
     {
       "name": "Nexus.Prime_0.5.1_x64-setup.exe",
       "size": 13393834,
-      "digest": "sha256:c23c098b8207181269acdbf8428720357f51b1ac1d88ae98ecbe1cb59d842ef3",
+      "digest": "sha256:c23c098b8207181269acfdb8428720357f51b1ac1d88ae98ecbe1cb59d842ef3",
       "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.1/Nexus.Prime_0.5.1_x64-setup.exe"
     }
   ]
