@@ -2,10 +2,16 @@
 param(
   [ValidateSet("EnsureCable", "Restore")]
   [string] $Action = "EnsureCable",
-  [string] $PreviousId = ""
+  [string] $PreviousId = "",
+  [switch] $Server
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Server) {
+  [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+}
 
 function Emit-Result([bool] $Ok, [string] $Message, [bool] $Changed = $false, [bool] $Skipped = $false, [string] $CurrentId = "", [string] $TargetId = "", [string] $Previous = "") {
   [pscustomobject]@{
@@ -122,46 +128,66 @@ public static class NexusMicrophoneRoute {
 '@
 }
 
-try {
+function Invoke-Route([string] $RequestedAction, [string] $RequestedPreviousId) {
+  try {
   $cable = Get-VBCableCapture
   if (-not $cable) {
-    Emit-Result $false "CABLE Output is not available"
-    exit 1
+    return Emit-Result $false "CABLE Output is not available"
   }
 
   Initialize-AudioEndpointApi
   $current = [NexusMicrophoneRoute]::GetDefaultCapture()
 
-  if ($Action -eq "EnsureCable") {
+  if ($RequestedAction -eq "EnsureCable") {
     if ($current -eq $cable.Id) {
-      Emit-Result $true "CABLE Output is already the default capture device" $false $false $current $cable.Id ""
-      exit 0
+      return Emit-Result $true "CABLE Output is already the default capture device" $false $false $current $cable.Id ""
     }
     [NexusMicrophoneRoute]::SetDefaultCapture($cable.Id)
     $after = [NexusMicrophoneRoute]::GetDefaultCapture()
     if ($after -ne $cable.Id) { throw "CABLE Output did not become the default capture device" }
-    Emit-Result $true "Default capture device changed to CABLE Output" $true $false $current $cable.Id $current
-    exit 0
+    return Emit-Result $true "Default capture device changed to CABLE Output" $true $false $current $cable.Id $current
   }
 
   if ($current -ne $cable.Id) {
-    Emit-Result $true "User selected another capture device; restore skipped" $false $true $current $cable.Id $PreviousId
-    exit 0
+    return Emit-Result $true "User selected another capture device; restore skipped" $false $true $current $cable.Id $RequestedPreviousId
   }
-  if ([string]::IsNullOrWhiteSpace($PreviousId)) {
-    Emit-Result $true "No previous capture device was recorded; restore skipped" $false $true $current $cable.Id ""
-    exit 0
+  if ([string]::IsNullOrWhiteSpace($RequestedPreviousId)) {
+    return Emit-Result $true "No previous capture device was recorded; restore skipped" $false $true $current $cable.Id ""
   }
-  if (-not [NexusMicrophoneRoute]::CaptureEndpointExists($PreviousId)) {
-    Emit-Result $true "Previous capture device is no longer available; restore skipped" $false $true $current $cable.Id $PreviousId
-    exit 0
+  if (-not [NexusMicrophoneRoute]::CaptureEndpointExists($RequestedPreviousId)) {
+    return Emit-Result $true "Previous capture device is no longer available; restore skipped" $false $true $current $cable.Id $RequestedPreviousId
   }
-  [NexusMicrophoneRoute]::SetDefaultCapture($PreviousId)
+  [NexusMicrophoneRoute]::SetDefaultCapture($RequestedPreviousId)
   $after = [NexusMicrophoneRoute]::GetDefaultCapture()
-  if ($after -ne $PreviousId) { throw "Previous capture device did not become the default capture device" }
-  Emit-Result $true "Previous capture device restored" $true $false $after $cable.Id $PreviousId
+  if ($after -ne $RequestedPreviousId) { throw "Previous capture device did not become the default capture device" }
+  return Emit-Result $true "Previous capture device restored" $true $false $after $cable.Id $RequestedPreviousId
+  } catch {
+    return Emit-Result $false $_.Exception.Message
+  }
+}
+
+if ($Server) {
+  while ($null -ne ($line = [Console]::In.ReadLine())) {
+    try {
+      $request = $line | ConvertFrom-Json
+      $requestedAction = [string]$request.action
+      $requestedPreviousId = [string]$request.previous_id
+      $response = Invoke-Route $requestedAction $requestedPreviousId
+    } catch {
+      $response = Emit-Result $false $_.Exception.Message
+    }
+    [Console]::Out.WriteLine($response)
+    [Console]::Out.Flush()
+  }
+  exit 0
+}
+
+$response = Invoke-Route $Action $PreviousId
+[Console]::Out.WriteLine($response)
+try {
+  $parsed = $response | ConvertFrom-Json
+  if (-not [bool]$parsed.ok) { exit 1 }
   exit 0
 } catch {
-  Emit-Result $false $_.Exception.Message
   exit 1
 }
