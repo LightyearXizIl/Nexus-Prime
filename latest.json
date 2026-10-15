@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.5.3",
-  "name": "Nexus Prime v0.5.3",
-  "body": "## 麦克风恢复延迟与首次启动\n\n- 松开语音键后默认等待 5 秒恢复原麦克风，可在“全局设置 → 通用”关闭或调整为 0–60 秒；快捷键仍立即释放，再次按下取消等待，手动切换设备优先。\n- 提前预热隐藏路由助手并缓存有效端点，减少首次启动开销；补齐超时取消、失败恢复和退出时的进程回收。\n\n## 映射配置与统一日志\n\n- 按键映射页新增“导出配置”和“导入配置”，仅处理映射，校验失败保留现有配置。\n- 电脑环境、设备与配置摘要、会话状态和运行日志写在同一 `.log` 中，复制或导出日志时一起带出并脱敏。\n- 改进 ATVV 订阅失败后的恢复，补充首帧、首次非零音频、UDP 和音频输出计时，便于定位语音等待。\n\n## 验证与已知边界\n\n- Gadget 10 项、前端 71 项、Rust 194 项及示例 7 项通过；2 项依赖现场环境的 Rust 测试跳过。生产前端、Rust 全目标检查、Tauri 调试构建与 Windows NSIS 打包通过。\n- 千问闲置后首次按键“面板已出现，声音波形仍等待 3 秒以上”的根因尚未确认。本版优化可控启动开销并增强诊断，实际输入法识音、文字提交及延迟恢复仍需安装后真机复测。\n- 可直接覆盖升级，保留现有按键映射与全局设置；新延迟选项默认开启、5 秒。\n\nNSIS: Nexus.Prime_0.5.3_x64-setup.exe\n\nSize: 13458599 bytes\n\nSHA-256: 3f8f7308356f0982e28a7a91e59808a8d60b0743bf79426b8e3d923ac44bb6c4\n",
+  "tag_name": "v0.5.4",
+  "name": "Nexus Prime v0.5.4",
+  "body": "## 微信语音快捷键\n\n- 微信“启动语音输入”和“按住说话”使用 SendInput 兼容路线，日志明确显示实际发送方式。\n- Ctrl+Win 每次按压只发送一次启动序列，移除释放时插入的 F24；遥控器松手不会再次切换语音面板。\n- Ctrl+Shift+D 按下时逐键间隔 30 毫秒，松手立即释放；语音开始时先准备固件按键拦截，再读取配置和切换麦克风，并记录各阶段耗时。\n\n## 输入法预设状态\n\n- 修复应用预设后“当前已应用”标记被迟到配置读取覆盖的问题；保存失败保留原配置并提示错误。\n- ChatGPT、微信、千问、豆包统一保留当前预设标记，提示消失或重新打开设置后仍能查看。\n\n## 验证与已知边界\n\n- 本机用户已确认遥控器 Ctrl+Win 可以调用微信语音；“按住说话”在开启“始终使用遥控器麦克风”时可用。\n- 针对关闭“始终使用遥控器麦克风”后面板不弹出的反馈，本版前置了固件按键拦截；用户在最新验证包后确认本次微信语音真机验收已完成。验收依据为用户现场反馈，不代表所有电脑或输入法均已验证。\n- 千问闲置后首次识音延迟的根因尚未确认，本版不宣称已解决。\n- Gadget 10 项、前端 80 项、Rust 库 200 项通过；2 项依赖现场环境的 Rust 测试跳过。全部目标检查、生产前端构建已通过。\n- 可覆盖升级，保留已有按键映射、输入法预设和全局麦克风设置。\n- Windows 调试构建与正式 NSIS 打包通过。\n\nNSIS: Nexus.Prime_0.5.4_x64-setup.exe\n\nSize: 13457687 bytes\n\nSHA-256: d010d3ced30ae85042f4cd32651e1ebd36d70d4e55e030f06cdcbd225c37aac0\n",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.5.3_x64-setup.exe",
-      "size": 13458599,
-      "digest": "sha256:3f8f7308356f0982e28a7a91e59808a8d60b0743bf79426b8e3d923ac44bb6c4",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.3/Nexus.Prime_0.5.3_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.4_x64-setup.exe",
+      "size": 13457687,
+      "digest": "sha256:d010d3ced30ae85042f4cd32651e1ebd36d70d4e55e030f06cdcbd225c37aac0",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.4/Nexus.Prime_0.5.4_x64-setup.exe"
     }
   ]
 }

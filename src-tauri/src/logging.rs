@@ -546,7 +546,7 @@ fn executable_hash(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn foreground_process_name() -> Option<String> {
+pub(crate) fn foreground_process_name() -> Option<String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -592,7 +592,7 @@ fn foreground_process_name() -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn foreground_process_name() -> Option<String> {
+pub(crate) fn foreground_process_name() -> Option<String> {
     None
 }
 

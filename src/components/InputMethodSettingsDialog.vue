@@ -190,10 +190,13 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             </p>
           </div>
           <aside class="ime-panel-action ime-callout">
-            <span class="ime-status">推荐映射</span>
+            <div class="ime-option-head">
+              <span class="ime-status">推荐映射</span>
+              <span v-if="activePreset === 'codex'" class="ime-current">当前已应用</span>
+            </div>
             <strong>左 Ctrl + 左 Shift + D</strong>
             <p>触发模式：按住</p>
-            <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('codex')">
+            <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'codex'" :disabled="!configReady || saving" @click="apply('codex')">
               <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
             </button>
@@ -288,20 +291,26 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           </div>
           <aside class="ime-panel-action ime-doubao-actions">
             <section class="ime-doubao-option">
-              <span class="ime-status">推荐 · 长按模式</span>
+              <div class="ime-option-head">
+                <span class="ime-status">推荐 · 长按模式</span>
+                <span v-if="activePreset === 'doubao-hold'" class="ime-current">当前已应用</span>
+              </div>
               <strong>右 Alt</strong>
               <p>触发模式：按住遥控器语音键说话，松开结束。</p>
-              <button class="ime-button ime-button--primary" type="button" :disabled="!configReady || saving" @click="apply('doubao-hold')">
+              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'doubao-hold'" :disabled="!configReady || saving" @click="apply('doubao-hold')">
                 <span>{{ saving ? "正在应用…" : "应用右 Alt 长按" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
               </button>
               <span v-if="applyHint && lastAppliedPreset === 'doubao-hold'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
             <section class="ime-doubao-option">
-              <span class="ime-status">免按模式</span>
+              <div class="ime-option-head">
+                <span class="ime-status">免按模式</span>
+                <span v-if="activePreset === 'doubao-hands-free'" class="ime-current">当前已应用</span>
+              </div>
               <strong>右 Alt + 空格</strong>
               <p>触发模式：短按启动，随后按任意键结束。</p>
-              <button class="ime-button ime-button--secondary" type="button" :disabled="!configReady || saving" @click="apply('doubao-hands-free')">
+              <button class="ime-button ime-button--secondary" type="button" :aria-pressed="activePreset === 'doubao-hands-free'" :disabled="!configReady || saving" @click="apply('doubao-hands-free')">
                 <span>{{ saving ? "正在应用…" : "应用右 Alt + 空格" }}</span>
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
               </button>

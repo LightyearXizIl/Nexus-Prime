@@ -6,6 +6,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VoiceInjectionRoute {
     VirtualHid,
+    SendInput,
     SendInputFallback,
 }
 

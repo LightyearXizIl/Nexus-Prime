@@ -4,6 +4,8 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import XiaomiSettingsView from "./XiaomiSettings.vue";
+import InputMethodSettingsDialog from "../components/InputMethodSettingsDialog.vue";
+import type { ImePreset } from "../utils/imePreset";
 
 const { invoke, listen, save } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -49,7 +51,7 @@ function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
   return button;
 }
 
-async function mountView() {
+async function mountView(realInputMethodDialog = false) {
   invoke.mockImplementation((command: string) => {
     if (command === "get_device_status") {
       return Promise.resolve({
@@ -79,7 +81,7 @@ async function mountView() {
   const wrapper = mount(XiaomiSettingsView, {
     global: {
       plugins: [pinia, i18n, router],
-      stubs: { DeviceStatus: true, KeyMappingStage: true, InputMethodSettingsDialog: true },
+      stubs: { DeviceStatus: true, KeyMappingStage: true, InputMethodSettingsDialog: !realInputMethodDialog },
     },
   });
   await flushPromises();
@@ -132,6 +134,54 @@ describe("XiaomiSettings virtual keyboard repair", () => {
     finishRepair?.({ ready: true, restartRequired: false, message: "虚拟键盘已修复" });
     await flushPromises();
     expect((virtualKeyboardButton.element as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("XiaomiSettings saved input-method status", () => {
+  it.each([
+    ["wechat", 1, 0], ["wechat-current", 1, 1],
+    ["qianwen-left-win-alt", 2, 2], ["codex", 0, 0],
+    ["doubao-hold", 3, 0], ["doubao-hands-free", 3, 1],
+  ] as const)("keeps %s applied after the transient hint clears and the dialog reopens", async (preset: ImePreset, tab, option) => {
+    vi.useFakeTimers();
+    const wrapper = await mountView(true);
+    try {
+      await wrapper.find(".quick-input-settings").trigger("click");
+      const dialog = wrapper.getComponent(InputMethodSettingsDialog);
+      await dialog.findAll('[role="tab"]')[tab].trigger("click");
+      await dialog.findAll(".ime-panel-action button")[option].trigger("click");
+      await flushPromises();
+      expect(dialog.props("activePreset")).toBe(preset);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(dialog.props("applyHint")).toBe("");
+      expect(dialog.findAll(".ime-current")).toHaveLength(1);
+      await dialog.find(".ime-close").trigger("click");
+      await wrapper.find(".quick-input-settings").trigger("click");
+      expect(dialog.findAll(".ime-current")).toHaveLength(1);
+      expect(dialog.findAll(".ime-panel-action button")[option].attributes("aria-pressed")).toBe("true");
+    } finally {
+      wrapper.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not flash an applied badge or success hint when saving fails", async () => {
+    const wrapper = await mountView(true);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await wrapper.find(".quick-input-settings").trigger("click");
+      const dialog = wrapper.getComponent(InputMethodSettingsDialog);
+      await dialog.findAll('[role="tab"]')[1].trigger("click");
+      invoke.mockRejectedValue(new Error("write failed"));
+      await dialog.findAll(".ime-panel-action button")[0].trigger("click");
+      await flushPromises();
+      expect(dialog.findAll(".ime-current")).toHaveLength(0);
+      expect(dialog.props("applyHint")).toContain("应用失败");
+      expect(dialog.props("activePreset")).toBeNull();
+    } finally {
+      wrapper.unmount();
+      log.mockRestore();
+    }
   });
 });
 

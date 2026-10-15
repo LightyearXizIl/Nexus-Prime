@@ -880,16 +880,17 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
         return;
     }
 
-    let Some(config) = load_xiaomi_config(app) else {
-        log::warn!("XIAOMI MAPPING no config manager");
-        return;
-    };
-
     // Voice is always a dedicated input-method shortcut, never a gesture key.
+    // Its firmware guard must run before any configuration read can block.
     if is_dedicated_voice_button(button_id) {
         handle_voice(app, pressed);
         return;
     }
+
+    let Some(config) = load_xiaomi_config(app) else {
+        log::warn!("XIAOMI MAPPING no config manager");
+        return;
+    };
 
     let multi_enabled = has_multi_click(&config, button_id);
     let long_enabled = has_long_press(&config, button_id);
@@ -1434,6 +1435,29 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
     // 即使快捷键关闭，也要先建立 F5 周期并确保钩子运行，防止固件 F5 漏给前台。
     begin_voice_period();
     crate::bridges::xiaomi::special_keys::ensure_hook_for_capture();
+    // Give the firmware guard priority before configuration or microphone
+    // routing can block this thread. Read-only route checks can also take time.
+    let hook_started = Instant::now();
+    log::info!("XIAOMI VOICE phase=early_hook_bump state=begin");
+    let hook_outcome = crate::bridges::xiaomi::special_keys::bump_hook_to_front_and_settle(
+        VOICE_HOOK_BUMP_SETTLE_MS,
+    );
+    log::info!(
+        "XIAOMI VOICE phase=early_hook_bump result={hook_outcome:?} elapsed_ms={}",
+        hook_started.elapsed().as_millis()
+    );
+    match hook_outcome {
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::Settled => {}
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::TimedOut => {
+            log::warn!("XIAOMI VOICE hook bump timed out; F5 suppression may be late");
+        }
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::SelfDeadlock => {
+            log::error!("XIAOMI VOICE hook bump refused on hook thread");
+        }
+        crate::bridges::xiaomi::hook_bump::BumpOutcome::NoHookThread => {
+            log::debug!("XIAOMI VOICE hook bump skipped; hook thread not ready");
+        }
+    }
     let Some(config) = load_xiaomi_config(app) else {
         return;
     };
@@ -1452,22 +1476,13 @@ fn handle_voice(app: &AppHandle, pressed: bool) {
         return;
     }
 
+    let route_started = Instant::now();
+    log::info!("XIAOMI VOICE phase=microphone_route state=begin");
     crate::audio::microphone_router::voice_pressed();
-
-    match crate::bridges::xiaomi::special_keys::bump_hook_to_front_and_settle(
-        VOICE_HOOK_BUMP_SETTLE_MS,
-    ) {
-        crate::bridges::xiaomi::hook_bump::BumpOutcome::Settled => {}
-        crate::bridges::xiaomi::hook_bump::BumpOutcome::TimedOut => {
-            log::warn!("XIAOMI VOICE hook bump timed out; F5 suppression may be late");
-        }
-        crate::bridges::xiaomi::hook_bump::BumpOutcome::SelfDeadlock => {
-            log::error!("XIAOMI VOICE hook bump refused on hook thread");
-        }
-        crate::bridges::xiaomi::hook_bump::BumpOutcome::NoHookThread => {
-            log::debug!("XIAOMI VOICE hook bump skipped; hook thread not ready");
-        }
-    }
+    log::info!(
+        "XIAOMI VOICE phase=microphone_route state=returned elapsed_ms={} ime_capture=unverified",
+        route_started.elapsed().as_millis()
+    );
     // A WinUHid report is delivered to the low-level hook like a physical
     // keyboard report.  Do not leave the firmware Ctrl/Win capture window open
     // while issuing the target shortcut, otherwise our own virtual Ctrl/Win is
@@ -1599,7 +1614,7 @@ fn press_voice_shortcut(
     let route = state.begin_hold(
         vks,
         profile,
-        inject_voice_shortcut_down,
+        |keys| inject_voice_shortcut_down(keys, profile),
         compensate_voice_shortcut_down,
     );
     if route.is_some() {
@@ -1658,6 +1673,7 @@ pub fn force_release_voice_shortcut(reason: &str) -> bool {
 fn voice_injection_route_label(route: VoiceInjectionRoute) -> &'static str {
     match route {
         VoiceInjectionRoute::VirtualHid => "virtual_hid",
+        VoiceInjectionRoute::SendInput => "send_input",
         VoiceInjectionRoute::SendInputFallback => "send_input_fallback",
     }
 }
@@ -1671,28 +1687,100 @@ pub fn current_voice_route_label() -> &'static str {
         .unwrap_or("none")
 }
 
-/// Voice shortcuts are the only path allowed to bypass the ordinary Alt/Space/media
-/// exclusions. IME global shortcuts such as Doubao's right Alt need hardware origin.
-fn should_try_virtual_hid_for_voice(vks: &[u16]) -> bool {
-    !vks.is_empty()
+fn inject_voice_shortcut_down(
+    vks: &[u16],
+    profile: Option<VoiceInputProfile>,
+) -> Option<VoiceInjectionRoute> {
+    if profile == Some(VoiceInputProfile::WechatCurrent) {
+        let foreground = crate::logging::foreground_process_name();
+        log::info!(
+            "XIAOMI VOICE WeChat hold begin configured_vks={vks:?} route=send_input key_gap_ms=30 release=remote_up foreground={foreground:?} ime_capture=unverified"
+        );
+    }
+    let route = inject_voice_shortcut_down_with(
+        vks,
+        profile,
+        |keys| crate::bridges::xiaomi::hid_injector::press_ready(keys).is_ok(),
+        |keys, gap_ms| {
+            if gap_ms == 0 {
+                key_chord(keys, false)
+            } else {
+                press_paced_voice_chord_with(
+                    keys,
+                    gap_ms,
+                    |key| key_chord(&[key], false),
+                    |owned| {
+                        key_chord(owned, true);
+                    },
+                    std::thread::sleep,
+                )
+            }
+        },
+    );
+    if route == Some(VoiceInjectionRoute::SendInputFallback) {
+        log::warn!("XIAOMI VOICE shortcut primary virtual_hid failed; route=send_input_fallback vks={vks:?}");
+    }
+    route
 }
 
-fn inject_voice_shortcut_down(vks: &[u16]) -> Option<VoiceInjectionRoute> {
-    if should_try_virtual_hid_for_voice(vks)
-        && crate::bridges::xiaomi::hid_injector::press_ready(vks).is_ok()
-    {
+fn inject_voice_shortcut_down_with(
+    vks: &[u16],
+    profile: Option<VoiceInputProfile>,
+    mut virtual_hid: impl FnMut(&[u16]) -> bool,
+    mut send_input: impl FnMut(&[u16], u64) -> bool,
+) -> Option<VoiceInjectionRoute> {
+    if vks.is_empty() {
+        return None;
+    }
+    // On the affected WeChat installation, SendInput reliably activates the
+    // panel while accepted WinUHid reports do not. Use the compatibility route
+    // for both WeChat presets; other IMEs retain their hardware-origin route.
+    if matches!(
+        profile,
+        Some(VoiceInputProfile::Wechat | VoiceInputProfile::WechatCurrent)
+    ) {
+        // Do not retry DOWN through another route after a partial SendInput:
+        // key_chord compensates its owned keys, and replay could toggle twice.
+        // A native probe reproduces the failed hold shortcut with back-to-back
+        // edges; 30ms between Ctrl, Shift and D activates the same installation.
+        // Only DOWN is paced. The session mutex keeps concurrent UP ordered
+        // after this bounded sequence, and the normal release has no delay.
+        let gap_ms = if profile == Some(VoiceInputProfile::WechatCurrent) {
+            30
+        } else {
+            0
+        };
+        return send_input(vks, gap_ms).then_some(VoiceInjectionRoute::SendInput);
+    }
+    if virtual_hid(vks) {
         return Some(VoiceInjectionRoute::VirtualHid);
     }
+    // press_ready compensates a failed report on its original handle before
+    // disposing it. Never synchronously recreate the driver in this callback.
+    send_input(vks, 0).then_some(VoiceInjectionRoute::SendInputFallback)
+}
 
-    // press_ready compensates a failed driver report on its original handle
-    // before disposing it.  Never call release() here: that would synchronously
-    // recreate WinUHid in the same voice-key callback.
-    if key_chord(vks, false) {
-        log::warn!("XIAOMI VOICE shortcut primary virtual_hid failed; route=send_input_fallback vks={vks:?}");
-        Some(VoiceInjectionRoute::SendInputFallback)
-    } else {
-        None
+fn press_paced_voice_chord_with(
+    keys: &[u16],
+    gap_ms: u64,
+    mut press: impl FnMut(u16) -> bool,
+    mut compensate: impl FnMut(&[u16]),
+    mut wait: impl FnMut(Duration),
+) -> bool {
+    let mut owned = Vec::with_capacity(keys.len());
+    for &key in keys {
+        if !owned.is_empty() && gap_ms > 0 {
+            wait(Duration::from_millis(gap_ms));
+        }
+        if !press(key) {
+            // key_chord reverses this exact owned prefix. Do not continue DOWN
+            // after a partial failure or delay the compensation/release.
+            compensate(&owned);
+            return false;
+        }
+        owned.push(key);
     }
+    !owned.is_empty()
 }
 
 fn is_wechat_start_voice_shortcut(vks: &[u16], profile: Option<VoiceInputProfile>) -> bool {
@@ -1886,11 +1974,28 @@ fn voice_guard_vk_covers(guard_vk: u16, event_vk: u16) -> bool {
 }
 
 fn tap_wechat_start_voice_shortcut(vks: &[u16]) -> Option<VoiceInjectionRoute> {
-    // One edge-triggered pulse. Remote UP only closes VoicePressSession and
-    // never emits Ctrl+Win again, so WeChat cannot toggle its panel back off.
-    let route = inject_voice_shortcut_down(vks)?;
-    if !release_wechat_start_voice_tap(vks, route, 120) {
-        compensate_voice_shortcut_down(vks);
+    let foreground = crate::logging::foreground_process_name();
+    log::info!(
+        "XIAOMI VOICE WeChat start-voice begin configured_vks={vks:?} sequence=ctrl_down,win_down,win_up,ctrl_up companion_key=none foreground={foreground:?} ime_capture=unverified"
+    );
+    // Establish Ctrl before Win, just like a physical Ctrl+Win shortcut. HID
+    // reports describe the entire held set; SendInput describes individual edges.
+    let route = inject_voice_shortcut_down(&[0xA2], Some(VoiceInputProfile::Wechat))?;
+    let win_down = match route {
+        VoiceInjectionRoute::VirtualHid => {
+            crate::bridges::xiaomi::hid_injector::press_ready(&[0xA2, 0x5B]).is_ok()
+        }
+        VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback => {
+            key_chord(&[0x5B], false)
+        }
+    };
+    if !win_down {
+        open_voice_chord_release_pass_window();
+        compensate_voice_shortcut_down(&[0xA2, 0x5B]);
+        return None;
+    }
+    if !release_wechat_start_voice_tap(&[0xA2, 0x5B], route, 120) {
+        compensate_voice_shortcut_down(&[0xA2, 0x5B]);
         return None;
     }
     Some(route)
@@ -1902,16 +2007,30 @@ fn release_wechat_start_voice_tap(
     hold_ms: u64,
 ) -> bool {
     std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
-    // 放行 Nexus 自己的 Ctrl/Win 释放；F24 中和 Win 的系统壳行为，避免
-    // 微信未接管快捷键时单独弹出开始菜单。
+    // No F24 companion: it changes the shortcut seen by the IME. Keep the
+    // complete sequence restricted to Ctrl+Win. Lift Win while Ctrl is still
+    // held, then Ctrl; remote UP must not send a second toggle.
     open_voice_chord_release_pass_window();
     let mut released =
-        execute_voice_release_steps(&neutralized_voice_release_steps(vks, route), route);
+        execute_voice_release_steps(&wechat_start_voice_release_steps(route), route);
     if !released && route == VoiceInjectionRoute::VirtualHid {
         crate::bridges::xiaomi::hid_injector::reset_and_retry();
         released = key_chord(vks, true);
     }
     released && wait_for_owned_modifiers_released(vks)
+}
+
+fn wechat_start_voice_release_steps(route: VoiceInjectionRoute) -> Vec<VoiceReleaseStep> {
+    match route {
+        VoiceInjectionRoute::VirtualHid => vec![
+            VoiceReleaseStep::Press(vec![0xA2]),
+            VoiceReleaseStep::Release(vec![0xA2]),
+        ],
+        VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback => vec![
+            VoiceReleaseStep::Release(vec![0x5B]),
+            VoiceReleaseStep::Release(vec![0xA2]),
+        ],
+    }
 }
 
 fn compensate_voice_shortcut_down(vks: &[u16]) {
@@ -1928,8 +2047,8 @@ fn release_voice_shortcut(
 ) -> bool {
     // Pure Win/Alt shortcuts must be turned into a real chord
     // before the modifiers lift, otherwise Windows can open Start/the system
-    // menu. WeChat start-voice Ctrl+Win is handled above as one short tap and
-    // uses the same F24 neutralization on that tap's release.
+    // menu. WeChat start-voice Ctrl+Win is handled separately above and must
+    // never include a companion key.
     let released = execute_voice_release_steps(&voice_release_steps(vks, route, profile), route);
     if profile.is_some_and(VoiceInputProfile::is_qianwen) {
         log::info!(
@@ -1968,7 +2087,7 @@ fn neutralized_voice_release_steps(vks: &[u16], route: VoiceInjectionRoute) -> V
                 VoiceReleaseStep::Release(vec![VK_F24]),
             ]
         }
-        VoiceInjectionRoute::SendInputFallback => vec![
+        VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback => vec![
             VoiceReleaseStep::Press(vec![VK_F24]),
             VoiceReleaseStep::Release(vks.to_vec()),
             VoiceReleaseStep::Release(vec![VK_F24]),
@@ -1999,10 +2118,16 @@ fn execute_voice_release_steps(steps: &[VoiceReleaseStep], route: VoiceInjection
         (VoiceInjectionRoute::VirtualHid, VoiceReleaseStep::Release(keys)) => {
             crate::bridges::xiaomi::hid_injector::release_ready(&keys).is_ok()
         }
-        (VoiceInjectionRoute::SendInputFallback, VoiceReleaseStep::Press(keys)) => {
+        (
+            VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback,
+            VoiceReleaseStep::Press(keys),
+        ) => {
             key_chord(&keys, false)
         }
-        (VoiceInjectionRoute::SendInputFallback, VoiceReleaseStep::Release(keys)) => {
+        (
+            VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback,
+            VoiceReleaseStep::Release(keys),
+        ) => {
             key_chord(&keys, true)
         }
     });
@@ -3239,12 +3364,132 @@ mod gesture_tests {
     }
 
     #[test]
-    fn voice_shortcuts_try_virtual_hid_for_both_ime_presets() {
-        // Doubao/Qianwen: right Alt; WeChat: legacy Ctrl+Win and current Ctrl+Shift+D.
-        assert!(should_try_virtual_hid_for_voice(&[0xA5]));
-        assert!(should_try_virtual_hid_for_voice(&[0xA2, 0x5B]));
-        assert!(should_try_virtual_hid_for_voice(&[0xA2, 0xA0, 0x44]));
-        assert!(!should_try_virtual_hid_for_voice(&[]));
+    fn wechat_presets_use_send_input_even_when_virtual_hid_is_healthy() {
+        for (profile, keys) in [
+            (VoiceInputProfile::Wechat, vec![0xA2, 0x5B]),
+            (VoiceInputProfile::WechatCurrent, vec![0xA2, 0xA0, 0x44]),
+        ] {
+            let mut sent = Vec::new();
+            assert_eq!(
+                inject_voice_shortcut_down_with(
+                    &keys,
+                    Some(profile),
+                    |_| panic!("WeChat must not submit a virtual-HID DOWN"),
+                    |keys, gap_ms| {
+                        sent.push((keys.to_vec(), gap_ms));
+                        true
+                    },
+                ),
+                Some(VoiceInjectionRoute::SendInput)
+            );
+            let expected_gap = if profile == VoiceInputProfile::WechatCurrent {
+                30
+            } else {
+                0
+            };
+            assert_eq!(sent, vec![(keys, expected_gap)]);
+        }
+    }
+
+    #[test]
+    fn failed_wechat_send_input_never_replays_down_via_hid() {
+        assert_eq!(
+            inject_voice_shortcut_down_with(
+                &[0xA2],
+                Some(VoiceInputProfile::Wechat),
+                |_| panic!("must not replay a possibly partial toggle"),
+                |_, _| false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn non_wechat_voice_keeps_virtual_hid_and_fallback_policy() {
+        for profile in [
+            None,
+            Some(VoiceInputProfile::Codex),
+            Some(VoiceInputProfile::Qianwen),
+            Some(VoiceInputProfile::QianwenLeftCtrlWin),
+            Some(VoiceInputProfile::DoubaoHold),
+        ] {
+            let keys = [0xA5];
+            assert_eq!(
+                inject_voice_shortcut_down_with(&keys, profile, |_| true, |_, _| {
+                    panic!("must not duplicate a successful HID DOWN")
+                }),
+                Some(VoiceInjectionRoute::VirtualHid)
+            );
+            assert_eq!(
+                inject_voice_shortcut_down_with(&keys, profile, |_| false, |_, gap_ms| {
+                    assert_eq!(gap_ms, 0);
+                    true
+                }),
+                Some(VoiceInjectionRoute::SendInputFallback)
+            );
+            assert_eq!(
+                inject_voice_shortcut_down_with(&keys, profile, |_| false, |_, _| false),
+                None
+            );
+        }
+        assert_eq!(
+            inject_voice_shortcut_down_with(
+                &[],
+                Some(VoiceInputProfile::Wechat),
+                |_| panic!("empty chord"),
+                |_, _| panic!("empty chord"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn paced_hold_down_has_two_gaps_and_no_wait_after_d() {
+        let events = std::cell::RefCell::new(Vec::new());
+        assert!(press_paced_voice_chord_with(
+            &[0xA2, 0xA0, 0x44],
+            30,
+            |key| { events.borrow_mut().push(("down", key as u64)); true },
+            |_| panic!("successful press must not compensate"),
+            |wait| events.borrow_mut().push(("wait", wait.as_millis() as u64)),
+        ));
+        assert_eq!(events.into_inner(), vec![
+            ("down", 0xA2), ("wait", 30), ("down", 0xA0),
+            ("wait", 30), ("down", 0x44),
+        ]);
+        assert_eq!(
+            voice_release_steps(&[0xA2, 0xA0, 0x44], VoiceInjectionRoute::SendInput,
+                Some(VoiceInputProfile::WechatCurrent)),
+            vec![VoiceReleaseStep::Release(vec![0xA2, 0xA0, 0x44])]
+        );
+    }
+
+    #[test]
+    fn paced_hold_failure_cleans_only_pressed_prefix_and_stops() {
+        let keys = [0xA2, 0xA0, 0x44];
+        for failure_index in 0..keys.len() {
+            let mut attempted = Vec::new();
+            let mut compensated = Vec::new();
+            let mut waits = 0;
+            assert!(!press_paced_voice_chord_with(
+                &keys,
+                30,
+                |key| { attempted.push(key); key != keys[failure_index] },
+                |owned| compensated.extend(reverse_key_order(owned)),
+                |_| waits += 1,
+            ));
+            assert_eq!(attempted, keys[..=failure_index]);
+            assert_eq!(compensated, keys[..failure_index].iter().rev().copied().collect::<Vec<_>>());
+            assert_eq!(waits, failure_index);
+        }
+    }
+
+    #[test]
+    fn paced_hold_empty_chord_does_not_wait_or_press() {
+        assert!(!press_paced_voice_chord_with(
+            &[], 30, |_| panic!("empty press"), |_| panic!("empty compensation"),
+            |_| panic!("empty wait"),
+        ));
     }
 
     #[test]
@@ -3278,19 +3523,38 @@ mod gesture_tests {
             &[0xA5],
             Some(VoiceInputProfile::Wechat)
         ));
-        // DOWN is sent once by inject_voice_shortcut_down; release is neutralized
-        // on the same edge. Remote UP has no second Press step.
-        assert_eq!(
-            neutralized_voice_release_steps(
-                &[0xA2, 0x5B],
-                VoiceInjectionRoute::SendInputFallback
-            ),
-            vec![
-                VoiceReleaseStep::Press(vec![0x87]),
-                VoiceReleaseStep::Release(vec![0xA2, 0x5B]),
-                VoiceReleaseStep::Release(vec![0x87]),
-            ]
-        );
+    }
+
+    #[test]
+    fn wechat_start_voice_lifts_win_before_ctrl_without_extra_keys_on_both_routes() {
+        for route in [
+            VoiceInjectionRoute::VirtualHid,
+            VoiceInjectionRoute::SendInput,
+            VoiceInjectionRoute::SendInputFallback,
+        ] {
+            let mut held = vec![0xA2, 0x5B];
+            let mut observed = Vec::new();
+            for step in wechat_start_voice_release_steps(route) {
+                match step {
+                    VoiceReleaseStep::Press(keys) => {
+                        assert_eq!(route, VoiceInjectionRoute::VirtualHid);
+                        assert!(
+                            keys.iter().all(|key| held.contains(key)),
+                            "no new KEYDOWN on release"
+                        );
+                        held = keys;
+                    }
+                    VoiceReleaseStep::Release(keys) => match route {
+                        VoiceInjectionRoute::VirtualHid => held.clear(),
+                        VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback => {
+                            held.retain(|key| !keys.contains(key))
+                        }
+                    },
+                }
+                observed.push(held.clone());
+            }
+            assert_eq!(observed, vec![vec![0xA2], vec![]]);
+        }
     }
 
     #[test]

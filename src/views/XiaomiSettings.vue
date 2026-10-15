@@ -592,11 +592,16 @@ async function onTriggerModeChanged() {
 }
 
 async function applyImePreset(preset: ImePreset) {
-  if (!config.value) return;
+  if (!config.value || configStore.saving) return;
   const definition = IME_PRESETS[preset];
   const next = applyImePresetConfig(config.value, preset);
-  Object.assign(config.value, next);
-  await configStore.saveConfig(type, next);
+  setupApplyHint.value = "";
+  const saved = await configStore.saveConfig(type, next);
+  if (!saved) {
+    setupApplyHint.value = "应用失败，已保留原来的配置，请重试。";
+    prependLog(`输入法映射保存失败：${preset}`);
+    return;
+  }
   setupApplyHint.value = definition.applyHint;
   prependLog(definition.logMessage);
   window.setTimeout(() => {

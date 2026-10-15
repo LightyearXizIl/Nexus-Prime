@@ -10,27 +10,34 @@ export const useConfigStore = defineStore("config", () => {
   });
 
   const saving = ref(false);
+  let configRevision = 0;
 
   async function loadConfig(type: BridgeType) {
+    const revision = configRevision;
     try {
       const config = await invoke<DeviceConfig>("get_config", {
         bridgeType: type,
       });
-      configs.value[type] = config;
+      // An initial/reopened view's slow read must not replace a newer save.
+      if (revision === configRevision) configs.value[type] = config;
     } catch (e) {
       console.error(`Failed to load ${type} config:`, e);
     }
   }
 
   async function saveConfig(type: BridgeType, config: DeviceConfig) {
+    configRevision += 1;
     saving.value = true;
     const normalizedConfig = normalizeVoiceShortcutConfig(config);
     try {
       await invoke("save_config", { bridgeType: type, config: normalizedConfig });
       configs.value[type] = normalizedConfig;
+      return true;
     } catch (e) {
       console.error(`Failed to save ${type} config:`, e);
+      return false;
     } finally {
+      configRevision += 1;
       saving.value = false;
     }
   }
