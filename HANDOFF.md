@@ -23,6 +23,9 @@
 - 自动化：Gadget 10/10、前端 71/71、Rust 全目标 194 项通过，2 项现场环境 smoke 测试保持 ignored；示例状态机测试另有 7 项通过。`cargo check --locked --all-targets`、生产前端构建、Tauri 调试构建与差异检查通过。
 - 当前机器只读预热探测：首次准备 975ms，同一隐藏辅助进程第二次准备 4ms，两次均为 `changed=false`，默认录音端点一致。此数字仅表示辅助进程准备耗时，不是千问识音耗时。
 - 本地 Windows NSIS 构建通过：`Nexus.Prime_0.5.3_x64-setup.exe`，13,458,599 bytes；SHA-256：`3f8f7308356f0982e28a7a91e59808a8d60b0743bf79426b8e3d923ac44bb6c4`。主程序及安装包产品版本均为 `0.5.3`，打包资源目录的路由脚本与源码 SHA-256 一致。安装包构建及校验不代表已安装或完成输入法真机验收。
+- 发布源提交为 `772a19937c34dab6021b16f6b18e78a99fcc5f7a`，注释标签 `v0.5.3` 指向该提交；源码和标签已通过 SSH 推送。[v0.5.3 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.5.3) 已公开并设为 Latest，非草稿、非预发布，仅含 NSIS 安装包和 `latest.json`；远端安装包大小及 SHA-256 与本地一致。
+- Release 更新清单公开端点与 `main/latest.json` 的公共 API 内容均已下载，和本地清单字节一致，清单 SHA-256 为 `cffd1a7b42f3e8f6ab72af0fbc290dd7d54a3c5eed0cca6f5adedb35a89501b0`。本机访问 raw.githubusercontent.com 曾连接重置，因此 main 清单采用 GitHub 公共 Contents API 验证；不把失败请求当作通过证据。
+- 安装包经无鉴权公共下载并续传完成后复算，仍为 13,458,599 bytes、产品版本 `0.5.3` 和上述 SHA-256；公开 Release 资产、本地构建产物、Release 清单与 main 清单全部一致。本轮未替换当前已安装程序，千问首按波形和真实麦克风恢复仍待新版现场验收。
 
 ## v0.5.2：麦克风路由后台化（2026-10-11）
 
