@@ -81,6 +81,8 @@ export interface GlobalSettings {
   minimize_to_tray: boolean;
   auto_check_updates: boolean;
   remote_microphone_always_on: boolean;
+  remote_microphone_restore_delay_enabled: boolean;
+  remote_microphone_restore_delay_seconds: number;
   theme: ThemePreference;
   log_retention_days: number;
 }

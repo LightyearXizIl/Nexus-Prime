@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.5.2",
-  "name": "Nexus Prime v0.5.2",
-  "body": "## 麦克风路由后台化\n\n- “始终使用遥控器麦克风”模式在启用或启动时执行一次 CABLE 路由，语音按键不再重复启动音频路由进程。\n- 新增全程隐藏、可复用的常驻 PowerShell 路由助手，使用 `CREATE_NO_WINDOW` 创建，异常退出后按退避策略重启。\n- 后台监视发现默认设备被外部改动时自动恢复 CABLE；关闭该模式后继续保持按下切换、抬起恢复。\n- 单次路由请求失败不会终止常驻助手，并补充助手启动、复用、重启、实际改变和无变化日志。\n\n## 验证\n\n- Gadget 10/10、前端 63/63、Rust workspace 165 passed / 2 ignored、全目标检查、生产构建和 Windows NSIS 打包通过。\n- 常驻协议已验证同一助手进程可处理多次请求，当前已是 CABLE 时返回 `changed=false`，单次异常后继续服务。\n- 真实遥控器、Windows 输入框连续按键、外部手动改麦克风、断连和退出场景仍需用户现场验收。\n\nNSIS：`Nexus.Prime_0.5.2_x64-setup.exe`，13403627 bytes，SHA-256 `419a6ebbe1957f1816e06f0b4d9935a19dd5e8b7a8da9c2eed06c75dcdf74d8a`。",
+  "tag_name": "v0.5.3",
+  "name": "Nexus Prime v0.5.3",
+  "body": "## 麦克风恢复延迟与首次启动\n\n- 松开语音键后默认等待 5 秒恢复原麦克风，可在“全局设置 → 通用”关闭或调整为 0–60 秒；快捷键仍立即释放，再次按下取消等待，手动切换设备优先。\n- 提前预热隐藏路由助手并缓存有效端点，减少首次启动开销；补齐超时取消、失败恢复和退出时的进程回收。\n\n## 映射配置与统一日志\n\n- 按键映射页新增“导出配置”和“导入配置”，仅处理映射，校验失败保留现有配置。\n- 电脑环境、设备与配置摘要、会话状态和运行日志写在同一 `.log` 中，复制或导出日志时一起带出并脱敏。\n- 改进 ATVV 订阅失败后的恢复，补充首帧、首次非零音频、UDP 和音频输出计时，便于定位语音等待。\n\n## 验证与已知边界\n\n- Gadget 10 项、前端 71 项、Rust 194 项及示例 7 项通过；2 项依赖现场环境的 Rust 测试跳过。生产前端、Rust 全目标检查、Tauri 调试构建与 Windows NSIS 打包通过。\n- 千问闲置后首次按键“面板已出现，声音波形仍等待 3 秒以上”的根因尚未确认。本版优化可控启动开销并增强诊断，实际输入法识音、文字提交及延迟恢复仍需安装后真机复测。\n- 可直接覆盖升级，保留现有按键映射与全局设置；新延迟选项默认开启、5 秒。\n\nNSIS: Nexus.Prime_0.5.3_x64-setup.exe\n\nSize: 13458599 bytes\n\nSHA-256: 3f8f7308356f0982e28a7a91e59808a8d60b0743bf79426b8e3d923ac44bb6c4\n",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.5.2_x64-setup.exe",
-      "size": 13403627,
-      "digest": "sha256:419a6ebbe1957f1816e06f0b4d9935a19dd5e8b7a8da9c2eed06c75dcdf74d8a",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.2/Nexus.Prime_0.5.2_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.3_x64-setup.exe",
+      "size": 13458599,
+      "digest": "sha256:3f8f7308356f0982e28a7a91e59808a8d60b0743bf79426b8e3d923ac44bb6c4",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.3/Nexus.Prime_0.5.3_x64-setup.exe"
     }
   ]
 }

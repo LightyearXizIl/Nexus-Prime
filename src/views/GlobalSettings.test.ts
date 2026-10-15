@@ -23,6 +23,8 @@ const defaultSettings: GlobalSettings = {
   minimize_to_tray: true,
   auto_check_updates: true,
   remote_microphone_always_on: false,
+  remote_microphone_restore_delay_enabled: true,
+  remote_microphone_restore_delay_seconds: 5,
   theme: "system",
   log_retention_days: 7,
 };
@@ -58,7 +60,7 @@ describe("GlobalSettings autostart tray preference", () => {
     const wrapper = await mountSettings();
     const toggles = wrapper.findAll('input[type="checkbox"]');
 
-    expect(toggles).toHaveLength(5);
+    expect(toggles).toHaveLength(6);
     expect((toggles[0].element as HTMLInputElement).checked).toBe(false);
     expect((toggles[1].element as HTMLInputElement).checked).toBe(false);
     expect((toggles[1].element as HTMLInputElement).disabled).toBe(true);

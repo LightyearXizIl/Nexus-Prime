@@ -7,8 +7,11 @@ import KeyMappingStage from "./KeyMappingStage.vue";
 import VoiceShortcutComposer from "./VoiceShortcutComposer.vue";
 
 const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const dialogOpenMock = vi.hoisted(() => vi.fn());
+const dialogSaveMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: dialogOpenMock, save: dialogSaveMock }));
 
 function createConfig(): DeviceConfig {
   return {
@@ -197,6 +200,47 @@ describe("KeyMappingStage voice mapping", () => {
     expect(invokeMock).toHaveBeenCalledWith("reset_xiaomi_standard_key_bindings");
     expect(latestSave(wrapper)).toBe(resetConfig);
     expect(wrapper.text()).toContain("音量和语音设置已保留");
+    wrapper.unmount();
+  });
+
+  it("exports the mapping-only configuration through the native save dialog", async () => {
+    dialogSaveMock.mockResolvedValue("C:/temp/mappings.json");
+    invokeMock.mockResolvedValue(undefined);
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+
+    await wrapper.findAll("button").find((button) => button.text() === "导出配置")!.trigger("click");
+    await nextTick();
+    expect(dialogSaveMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("export_xiaomi_mappings", { path: "C:/temp/mappings.json" });
+    expect(wrapper.text()).toContain("映射配置已导出");
+    wrapper.unmount();
+  });
+
+  it("imports a validated mapping configuration and emits the returned device config", async () => {
+    dialogOpenMock.mockResolvedValue("C:/temp/mappings.json");
+    const imported = {
+      ...createConfig(),
+      button_bindings: { power: { type: "SingleKey", value: 0x1b } },
+      long_press_bindings: {},
+      multi_click_bindings: {},
+      multi_click_interval_ms: 450,
+    };
+    invokeMock.mockResolvedValue(imported);
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+
+    await wrapper.findAll("button").find((button) => button.text() === "导入配置")!.trigger("click");
+    await nextTick();
+    expect(dialogOpenMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("import_xiaomi_mappings", { path: "C:/temp/mappings.json" });
+    const saves = wrapper.emitted("save") || [];
+    expect(saves[saves.length - 1]?.[0]).toEqual(imported);
+    expect(wrapper.text()).toContain("映射配置已导入");
     wrapper.unmount();
   });
 });

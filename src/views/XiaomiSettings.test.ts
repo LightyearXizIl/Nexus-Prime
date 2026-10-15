@@ -5,13 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import XiaomiSettingsView from "./XiaomiSettings.vue";
 
-const { invoke, listen } = vi.hoisted(() => ({
+const { invoke, listen, save } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listen: vi.fn().mockResolvedValue(() => {}),
+  save: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save }));
 // Keep component tests independent of the logger's delayed batch timer.
 vi.mock("../utils/appLogger", () => ({ loggedInvoke: invoke }));
 
@@ -219,6 +221,162 @@ describe("XiaomiSettings injection health", () => {
     }
     expect(wrapper.findAll(".host-item-state .status-light")).toHaveLength(4);
     expect(wrapper.find(".live .status-light").exists()).toBe(true);
+    wrapper.unmount();
+  });
+});
+
+describe("XiaomiSettings unified logs", () => {
+  const writeText = vi.fn();
+  const combinedLog = "[电脑环境] Windows 11 / remote-PC\n[运行日志] ATVV ready";
+
+  beforeEach(() => {
+    invoke.mockReset();
+    listen.mockClear();
+    save.mockReset();
+    writeText.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    i18n.global.locale.value = "zh-CN";
+  });
+
+  async function openLogView() {
+    const wrapper = await mountView();
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_app_log") {
+        return Promise.resolve({
+          path: "C:\\logs\\app-2026-10-15.log",
+          content: combinedLog,
+          files: [{ name: "app-2026-10-15.log", size: 128, current: true }],
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    await wrapper.get(".activity-footer button").trigger("click");
+    await flushPromises();
+    return wrapper;
+  }
+
+  it("copies environment and runtime records together through one copy action", async () => {
+    const wrapper = await openLogView();
+
+    expect(wrapper.find(".log-viewer").text()).toBe(combinedLog);
+    expect(wrapper.text()).toContain("复制和导出会一起带上");
+    expect(wrapper.findAll("button").some((button) => button.text() === "电脑环境")).toBe(false);
+    expect(wrapper.text()).not.toContain("复制环境");
+    expect(wrapper.text()).not.toContain("导出诊断包");
+    const latestLog = `${combinedLog}\n[运行日志] voice released`;
+    invoke.mockImplementation((command: string) => command === "get_app_log"
+      ? Promise.resolve({ content: latestLog, files: [{ name: "app-2026-10-15.log", size: 160, current: true }] })
+      : Promise.resolve(undefined));
+
+    await buttonByText(wrapper, "复制日志").trigger("click");
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(latestLog);
+    expect(invoke.mock.calls.filter(([command]) => command === "get_app_log")).toHaveLength(2);
+    expect(invoke.mock.calls.some(([command]) => command === "get_diagnostics_snapshot")).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("does not copy an error message or report success if refreshing the log fails", async () => {
+    const wrapper = await openLogView();
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_app_log") return Promise.reject(new Error("log is unavailable"));
+      return Promise.resolve(undefined);
+    });
+
+    await buttonByText(wrapper, "复制日志").trigger("click");
+    await flushPromises();
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("复制失败：无法读取日志");
+    expect(wrapper.text()).not.toContain("已复制");
+    wrapper.unmount();
+  });
+
+  it("selects the returned log segment after refreshing rotates the active log", async () => {
+    const wrapper = await openLogView();
+    const rotatedFile = "app-2026-10-15.1.log";
+    const rotatedLog = `${combinedLog}\n[运行日志] rotated segment`;
+    invoke.mockImplementation((command: string) => command === "get_app_log"
+      ? Promise.resolve({
+        path: rotatedFile,
+        content: rotatedLog,
+        files: [
+          { name: "app-2026-10-15.log", size: 1024, current: false },
+          { name: rotatedFile, size: 160, current: true },
+        ],
+      })
+      : Promise.resolve(undefined));
+
+    await buttonByText(wrapper, "复制日志").trigger("click");
+    await flushPromises();
+
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(rotatedLog);
+    expect((wrapper.get(".log-file-picker select").element as HTMLSelectElement).value).toBe(rotatedFile);
+    save.mockResolvedValue("C:\\reports\\remote.log");
+    await buttonByText(wrapper, "导出日志").trigger("click");
+    await flushPromises();
+    expect(invoke).toHaveBeenCalledWith("export_app_log", {
+      destPath: "C:\\reports\\remote.log",
+      fileName: rotatedFile,
+    });
+    wrapper.unmount();
+  });
+
+  it("exports the selected log as a log file through the unified backend command", async () => {
+    const wrapper = await openLogView();
+    save.mockResolvedValue("C:\\reports\\remote.log");
+
+    await buttonByText(wrapper, "导出日志").trigger("click");
+    await flushPromises();
+
+    expect(save).toHaveBeenCalledWith({
+      defaultPath: "app-2026-10-15.log",
+      filters: [{ name: "日志文件", extensions: ["log"] }],
+    });
+    expect(invoke).toHaveBeenCalledWith("export_app_log", {
+      destPath: "C:\\reports\\remote.log",
+      fileName: "app-2026-10-15.log",
+    });
+    expect(wrapper.text()).toContain("日志已导出，包含电脑环境和运行记录");
+    wrapper.unmount();
+  });
+
+  it("prevents duplicate actions while the clipboard write is pending", async () => {
+    const wrapper = await openLogView();
+    let finishCopy: (() => void) | undefined;
+    writeText.mockReturnValue(new Promise<void>((resolve) => { finishCopy = resolve; }));
+
+    await buttonByText(wrapper, "复制日志").trigger("click");
+    await flushPromises();
+
+    expect((buttonByText(wrapper, "复制中").element as HTMLButtonElement).disabled).toBe(true);
+    expect((buttonByText(wrapper, "导出日志").element as HTMLButtonElement).disabled).toBe(true);
+    expect((wrapper.find(".log-file-picker select").element as HTMLSelectElement).disabled).toBe(true);
+    finishCopy?.();
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect((buttonByText(wrapper, "导出日志").element as HTMLButtonElement).disabled).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("clears the busy state when the export dialog is cancelled", async () => {
+    const wrapper = await openLogView();
+    let finishSave: ((path: string | null) => void) | undefined;
+    save.mockReturnValue(new Promise<string | null>((resolve) => { finishSave = resolve; }));
+
+    await buttonByText(wrapper, "导出日志").trigger("click");
+    await flushPromises();
+    expect((buttonByText(wrapper, "复制日志").element as HTMLButtonElement).disabled).toBe(true);
+    expect((buttonByText(wrapper, "导出中").element as HTMLButtonElement).disabled).toBe(true);
+
+    finishSave?.(null);
+    await flushPromises();
+    expect(invoke.mock.calls.some(([command]) => command === "export_app_log")).toBe(false);
+    expect((buttonByText(wrapper, "复制日志").element as HTMLButtonElement).disabled).toBe(false);
     wrapper.unmount();
   });
 });

@@ -8,6 +8,9 @@ import {
   watch,
 } from "vue";
 import { loggedInvoke as invoke } from "../utils/appLogger";
+import { recordAppEvent } from "../utils/appLogger";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DeviceConfig, KeyAction } from "../types";
 import RemoteHotspot from "./RemoteHotspot.vue";
@@ -92,6 +95,9 @@ const manualEditor = ref<{
 const resetting = ref(false);
 const resetStatus = ref<string | null>(null);
 const resetError = ref<string | null>(null);
+const mappingTransferBusy = ref(false);
+const mappingTransferStatus = ref<string | null>(null);
+const mappingTransferError = ref<string | null>(null);
 const showResetTip = ref(false);
 const resetInfoBtn = ref<HTMLElement | null>(null);
 const resetTipEl = ref<HTMLElement | null>(null);
@@ -545,6 +551,74 @@ async function resetStandardMappings() {
     resetError.value = `重置失败：${String(error)}`;
   } finally {
     resetting.value = false;
+  }
+}
+
+async function exportMappings() {
+  if (mappingTransferBusy.value || capturing.value || props.saving) return;
+  const path = await save({
+    defaultPath: "nexus-prime-xiaomi-mappings.json",
+    filters: [{ name: "Nexus Prime 映射配置", extensions: ["json"] }],
+  });
+  if (!path) return;
+  mappingTransferBusy.value = true;
+  mappingTransferStatus.value = null;
+  mappingTransferError.value = null;
+  try {
+    await rawInvoke("export_xiaomi_mappings", { path });
+    recordAppEvent({
+      category: "mapping_config",
+      action: "export",
+      details: { schemaVersion: 1 },
+    });
+    mappingTransferStatus.value = t("mapping.exportSuccess");
+  } catch (error) {
+    recordAppEvent({
+      category: "mapping_config",
+      action: "export",
+      outcome: "error",
+      details: { schemaVersion: 1, error: String(error) },
+    });
+    mappingTransferError.value = `${t("mapping.exportFailed")}：${String(error)}`;
+  } finally {
+    mappingTransferBusy.value = false;
+  }
+}
+
+async function importMappings() {
+  if (mappingTransferBusy.value || capturing.value || props.saving) return;
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Nexus Prime 映射配置", extensions: ["json"] }],
+  });
+  const path = Array.isArray(selected) ? selected[0] : selected;
+  if (!path) return;
+  mappingTransferBusy.value = true;
+  mappingTransferStatus.value = null;
+  mappingTransferError.value = null;
+  try {
+    const next = await rawInvoke<DeviceConfig>("import_xiaomi_mappings", { path });
+    closeManualShortcutEditor();
+    closeActionMenus();
+    selectedClickById.value = {};
+    emit("save", next);
+    recordAppEvent({
+      category: "mapping_config",
+      action: "import",
+      details: { schemaVersion: 1, buttonCount: Object.keys(next.button_bindings || {}).length },
+    });
+    mappingTransferStatus.value = t("mapping.importSuccess");
+  } catch (error) {
+    recordAppEvent({
+      category: "mapping_config",
+      action: "import",
+      outcome: "error",
+      details: { schemaVersion: 1, error: String(error) },
+    });
+    mappingTransferError.value = `${t("mapping.importFailed")}：${String(error)}`;
+  } finally {
+    mappingTransferBusy.value = false;
   }
 }
 
@@ -1208,8 +1282,20 @@ onUnmounted(() => {
         <div class="mapping-list-actions">
           <button
             type="button"
+            class="selection-action"
+            :disabled="capturing || resetting || saving || mappingTransferBusy"
+            @click="exportMappings"
+          >{{ mappingTransferBusy ? t("mapping.processingConfig") : t("mapping.exportConfig") }}</button>
+          <button
+            type="button"
+            class="selection-action"
+            :disabled="capturing || resetting || saving || mappingTransferBusy"
+            @click="importMappings"
+          >{{ t("mapping.importConfig") }}</button>
+          <button
+            type="button"
             class="selection-action mapping-reset-all"
-            :disabled="capturing || resetting || saving"
+            :disabled="capturing || resetting || saving || mappingTransferBusy"
             @click="resetStandardMappings"
           >{{ resetting ? "重置中…" : "一键重置" }}</button>
           <button
@@ -1248,6 +1334,8 @@ onUnmounted(() => {
       </Teleport>
       <p v-if="resetStatus" class="mapping-reset-status" role="status">{{ resetStatus }}</p>
       <p v-if="resetError" class="mapping-reset-error" role="alert">{{ resetError }}</p>
+      <p v-if="mappingTransferStatus" class="mapping-reset-status" role="status">{{ mappingTransferStatus }}</p>
+      <p v-if="mappingTransferError" class="mapping-reset-error" role="alert">{{ mappingTransferError }}</p>
 
       <VoiceShortcutComposer
         v-if="manualEditor"

@@ -1,12 +1,14 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("EnsureCable", "Restore")]
+  [ValidateSet("Warmup", "EnsureCable", "Restore")]
   [string] $Action = "EnsureCable",
   [string] $PreviousId = "",
   [switch] $Server
 )
 
 $ErrorActionPreference = "Stop"
+$script:CachedVBCableCapture = $null
+$script:VBCableCacheHit = $false
 
 if ($Server) {
   [Console]::InputEncoding = [System.Text.Encoding]::UTF8
@@ -22,7 +24,21 @@ function Emit-Result([bool] $Ok, [string] $Message, [bool] $Changed = $false, [b
     target_id = $TargetId
     previous_id = $Previous
     message = $Message
+    cache_hit = $script:VBCableCacheHit
   } | ConvertTo-Json -Compress
+}
+
+function Get-ValidatedVBCableCapture {
+  $script:VBCableCacheHit = $false
+  if ($null -ne $script:CachedVBCableCapture) {
+    if ([NexusMicrophoneRoute]::CaptureEndpointExists($script:CachedVBCableCapture.Id)) {
+      $script:VBCableCacheHit = $true
+      return $script:CachedVBCableCapture
+    }
+    $script:CachedVBCableCapture = $null
+  }
+  $script:CachedVBCableCapture = Get-VBCableCapture
+  return $script:CachedVBCableCapture
 }
 
 function Get-VBCableCapture {
@@ -128,20 +144,40 @@ public static class NexusMicrophoneRoute {
 '@
 }
 
-function Invoke-Route([string] $RequestedAction, [string] $RequestedPreviousId) {
+function Assert-RouteDeadline([long] $DeadlineUtcMs) {
+  if ($DeadlineUtcMs -gt 0 -and [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $DeadlineUtcMs) {
+    throw "Microphone route request deadline expired"
+  }
+}
+
+function Invoke-Route([string] $RequestedAction, [string] $RequestedPreviousId, [long] $DeadlineUtcMs = 0) {
   try {
-  $cable = Get-VBCableCapture
+  Assert-RouteDeadline $DeadlineUtcMs
+  if ($RequestedAction -notin @("Warmup", "EnsureCable", "Restore")) {
+    return Emit-Result $false "Unknown microphone route action"
+  }
+  Initialize-AudioEndpointApi
+  $cable = Get-ValidatedVBCableCapture
   if (-not $cable) {
     return Emit-Result $false "CABLE Output is not available"
   }
 
-  Initialize-AudioEndpointApi
   $current = [NexusMicrophoneRoute]::GetDefaultCapture()
+
+  # Compile the endpoint API and validate/cache CABLE while idle. Never change
+  # the user's default device until the actual voice press requests it.
+  if ($RequestedAction -eq "Warmup") {
+    return Emit-Result $true "Microphone route helper is ready" $false $false $current $cable.Id ""
+  }
 
   if ($RequestedAction -eq "EnsureCable") {
     if ($current -eq $cable.Id) {
       return Emit-Result $true "CABLE Output is already the default capture device" $false $false $current $cable.Id ""
     }
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPreviousId) -and $current -ne $RequestedPreviousId) {
+      return Emit-Result $false "Default capture device changed after preparation; route skipped" $false $true $current $cable.Id ""
+    }
+    Assert-RouteDeadline $DeadlineUtcMs
     [NexusMicrophoneRoute]::SetDefaultCapture($cable.Id)
     $after = [NexusMicrophoneRoute]::GetDefaultCapture()
     if ($after -ne $cable.Id) { throw "CABLE Output did not become the default capture device" }
@@ -157,6 +193,7 @@ function Invoke-Route([string] $RequestedAction, [string] $RequestedPreviousId) 
   if (-not [NexusMicrophoneRoute]::CaptureEndpointExists($RequestedPreviousId)) {
     return Emit-Result $true "Previous capture device is no longer available; restore skipped" $false $true $current $cable.Id $RequestedPreviousId
   }
+  Assert-RouteDeadline $DeadlineUtcMs
   [NexusMicrophoneRoute]::SetDefaultCapture($RequestedPreviousId)
   $after = [NexusMicrophoneRoute]::GetDefaultCapture()
   if ($after -ne $RequestedPreviousId) { throw "Previous capture device did not become the default capture device" }
@@ -172,7 +209,7 @@ if ($Server) {
       $request = $line | ConvertFrom-Json
       $requestedAction = [string]$request.action
       $requestedPreviousId = [string]$request.previous_id
-      $response = Invoke-Route $requestedAction $requestedPreviousId
+      $response = Invoke-Route $requestedAction $requestedPreviousId ([long]$request.deadline_utc_ms)
     } catch {
       $response = Emit-Result $false $_.Exception.Message
     }

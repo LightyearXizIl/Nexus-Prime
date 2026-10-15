@@ -75,7 +75,12 @@ pub struct XiaomiRuntime {
     pub callback_gate: parking_lot::Mutex<()>,
     pub health: parking_lot::Mutex<super::recovery::RecoveryHealth>,
     #[cfg(target_os = "windows")]
-    pub maintained: parking_lot::Mutex<Option<(u64, windows::Devices::Bluetooth::GenericAttributeProfile::GattSession)>>,
+    pub maintained: parking_lot::Mutex<
+        Option<(
+            u64,
+            windows::Devices::Bluetooth::GenericAttributeProfile::GattSession,
+        )>,
+    >,
     sessions: crate::bridges::xiaomi::session_state::SessionState,
 }
 
@@ -106,12 +111,24 @@ impl XiaomiRuntime {
         let _callback = self.callback_gate.lock();
         let id = self.sessions.begin();
         log::info!("XIAOMI SESSION start id={id}");
-        { let mut health = self.health.lock(); health.key_bridge = "waiting"; health.raw_ready = false; }
+        {
+            let mut health = self.health.lock();
+            health.key_bridge = "waiting";
+            health.raw_ready = false;
+        }
         id
     }
 
     pub fn session_active(&self, id: u64) -> bool {
         !self.should_stop() && self.sessions.is_active(id)
+    }
+
+    /// 当前 BLE 会话号，0 表示当前没有活动会话。仅用于诊断关联异步日志。
+    pub fn active_session_id(&self) -> Option<u64> {
+        match self.sessions.active_id() {
+            0 => None,
+            id => Some(id),
+        }
     }
 
     /// 仅允许当前会话把自己标为结束，避免旧回调误杀新连接。
@@ -134,9 +151,18 @@ impl XiaomiRuntime {
     }
 }
 
-pub fn publish_link_state(app: &tauri::AppHandle, runtime: &XiaomiRuntime, paired: Option<bool>, connected: Option<bool>) {
+pub fn publish_link_state(
+    app: &tauri::AppHandle,
+    runtime: &XiaomiRuntime,
+    paired: Option<bool>,
+    connected: Option<bool>,
+) {
     use tauri::Manager;
-    let connected = if runtime.should_stop() { Some(false) } else { connected };
+    let connected = if runtime.should_stop() {
+        Some(false)
+    } else {
+        connected
+    };
     {
         let mut health = runtime.health.lock();
         health.paired = paired;
@@ -147,7 +173,10 @@ pub fn publish_link_state(app: &tauri::AppHandle, runtime: &XiaomiRuntime, paire
     }
     if let Some(state) = app.try_state::<crate::bridges::BridgeState>() {
         if state.update_link_state(paired, connected, !runtime.should_stop()) {
-            log::info!("XIAOMI LINK paired={paired:?} connected={connected:?} auto={}", !runtime.should_stop());
+            log::info!(
+                "XIAOMI LINK paired={paired:?} connected={connected:?} auto={}",
+                !runtime.should_stop()
+            );
             crate::bridges::emit_device_status(app, crate::bridges::BridgeType::Xiaomi);
         }
     }
@@ -192,7 +221,9 @@ pub fn normalize_bluetooth_address(value: &str) -> Result<String, String> {
 }
 
 pub fn device_token_from_address(value: &str) -> Result<String, String> {
-    Ok(normalize_bluetooth_address(value)?.replace(':', "").to_lowercase())
+    Ok(normalize_bluetooth_address(value)?
+        .replace(':', "")
+        .to_lowercase())
 }
 
 pub fn address_to_u64(address: &str) -> Result<u64, String> {
@@ -299,9 +330,7 @@ pub fn choose_xiaomi_2_pro_candidate(
 }
 
 /// 发现 + 连接（阻塞，应在专用线程中调用）
-pub fn discover_and_connect(
-    configured_address: Option<&str>,
-) -> Result<XiaomiConnection, String> {
+pub fn discover_and_connect(configured_address: Option<&str>) -> Result<XiaomiConnection, String> {
     #[cfg(target_os = "windows")]
     {
         return windows_discover_and_connect(configured_address);
@@ -392,7 +421,9 @@ fn windows_discover_and_connect(
                 candidates.len()
             ));
         }
-        return Err("未找到已配对的小米遥控器 2 Pro。请先在 Windows 蓝牙设置中配对「MI RC」".into());
+        return Err(
+            "未找到已配对的小米遥控器 2 Pro。请先在 Windows 蓝牙设置中配对「MI RC」".into(),
+        );
     };
 
     windows_open_and_verify(&candidate)
@@ -403,9 +434,7 @@ fn map_winrt_null(context: &str, err: windows::core::Error) -> String {
     // WinRT 异步成功但返回 null 时，windows-rs 常报 0x00000000「操作成功完成」
     let code = err.code().0 as u32;
     if code == 0 {
-        format!(
-            "{context}：设备对象为空。请确认遥控器已开机、已在 Windows 配对，并靠近电脑后重试"
-        )
+        format!("{context}：设备对象为空。请确认遥控器已开机、已在 Windows 配对，并靠近电脑后重试")
     } else {
         format!("{context}: {err}")
     }
@@ -433,10 +462,7 @@ fn windows_discover_candidates() -> Result<Vec<XiaomiCandidate>, String> {
         let info = collection
             .GetAt(i)
             .map_err(|e| format!("GetAt({i}) 失败: {e}"))?;
-        let name = info
-            .Name()
-            .map(|n| n.to_string())
-            .unwrap_or_default();
+        let name = info.Name().map(|n| n.to_string()).unwrap_or_default();
         let id = info.Id().map(|n| n.to_string()).unwrap_or_default();
         if let Some(candidate) = xiaomi_candidate_from_interface(&name, &id) {
             let replace = match by_token.get(&candidate.device_token) {
@@ -497,7 +523,9 @@ fn windows_open_via_gatt_interface(
     // 新版 WinRT 需要显式 Open
     match service.OpenAsync(GattSharingMode::SharedReadOnly) {
         Ok(op) => match op.get() {
-            Ok(status) if status == GattOpenStatus::Success || status == GattOpenStatus::AlreadyOpened => {}
+            Ok(status)
+                if status == GattOpenStatus::Success || status == GattOpenStatus::AlreadyOpened => {
+            }
             Ok(status) => {
                 return Err(format!("打开 ATVV 服务状态异常: {status:?}"));
             }
@@ -522,11 +550,12 @@ fn windows_open_via_gatt_interface(
         .Name()
         .map(|n| n.to_string())
         .unwrap_or_else(|_| candidate.name.clone());
-    let addr = device
-        .BluetoothAddress()
-        .unwrap_or(candidate.address_u64);
+    let addr = device.BluetoothAddress().unwrap_or(candidate.address_u64);
 
-    log::info!("CONNECTED via GATT interface remote={name} address={}", format_address(addr));
+    log::info!(
+        "CONNECTED via GATT interface remote={name} address={}",
+        format_address(addr)
+    );
 
     let atvv_iface = service
         .DeviceId()
@@ -551,8 +580,8 @@ fn windows_open_via_gatt_interface(
 
 #[cfg(target_os = "windows")]
 fn windows_open_via_address(candidate: &XiaomiCandidate) -> Result<XiaomiConnection, String> {
-    use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothLEDevice};
     use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
+    use windows::Devices::Bluetooth::{BluetoothCacheMode, BluetoothLEDevice};
 
     let device = BluetoothLEDevice::FromBluetoothAddressAsync(candidate.address_u64)
         .map_err(|e| format!("FromBluetoothAddressAsync 失败: {e}"))?
@@ -588,13 +617,17 @@ fn windows_open_via_address(candidate: &XiaomiCandidate) -> Result<XiaomiConnect
     let services = services_result
         .Services()
         .map_err(|e| format!("读取 Services 失败: {e}"))?;
-    let count = services.Size().map_err(|e| format!("Services.Size 失败: {e}"))?;
+    let count = services
+        .Size()
+        .map_err(|e| format!("Services.Size 失败: {e}"))?;
 
     let target_guid = windows::core::GUID::from_u128(0xab5e0001_5a21_4f05_bc7d_af01f617b664);
     let mut found_atvv = false;
     let mut atvv_interface_id = String::new();
     for i in 0..count {
-        let svc = services.GetAt(i).map_err(|e| format!("Service.GetAt 失败: {e}"))?;
+        let svc = services
+            .GetAt(i)
+            .map_err(|e| format!("Service.GetAt 失败: {e}"))?;
         let uuid = svc.Uuid().map_err(|e| format!("Service.Uuid 失败: {e}"))?;
         if uuid == target_guid {
             found_atvv = true;

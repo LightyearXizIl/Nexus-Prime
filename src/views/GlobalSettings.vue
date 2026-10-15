@@ -22,6 +22,8 @@ const settings = ref<GlobalSettings>({
   minimize_to_tray: true,
   auto_check_updates: true,
   remote_microphone_always_on: false,
+  remote_microphone_restore_delay_enabled: true,
+  remote_microphone_restore_delay_seconds: 5,
   theme: "system",
   log_retention_days: 7,
 });
@@ -288,6 +290,23 @@ async function openExternal(url: string) {
                 <span class="toggle-slider"></span>
               </label>
             </div>
+            <div class="preference-row" :class="{ 'is-disabled': settings.remote_microphone_always_on }">
+              <div class="preference-icon" aria-hidden="true">◷</div>
+              <div class="preference-copy">
+                <strong>{{ t("settings.remoteMicrophoneRestoreDelay") }}</strong>
+                <span>{{ settings.remote_microphone_always_on ? t("settings.remoteMicrophoneRestoreDelayAlwaysOnHint") : t("settings.remoteMicrophoneRestoreDelayHint") }}</span>
+              </div>
+              <div class="microphone-delay-controls">
+                <label class="toggle" :title="t('settings.remoteMicrophoneRestoreDelay')">
+                  <input v-model="settings.remote_microphone_restore_delay_enabled" type="checkbox" :disabled="settings.remote_microphone_always_on" :aria-label="t('settings.remoteMicrophoneRestoreDelay')" @change="onSettingChange" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label class="seconds-input" :class="{ 'is-disabled': settings.remote_microphone_always_on || !settings.remote_microphone_restore_delay_enabled }">
+                  <input v-model.number="settings.remote_microphone_restore_delay_seconds" type="number" min="0" max="60" step="1" :disabled="settings.remote_microphone_always_on || !settings.remote_microphone_restore_delay_enabled" :aria-label="t('settings.remoteMicrophoneRestoreDelaySeconds')" @change="onSettingChange" />
+                  <span>{{ t("settings.seconds") }}</span>
+                </label>
+              </div>
+            </div>
             <div class="preference-row">
               <div class="preference-icon" aria-hidden="true">▤</div>
               <div class="preference-copy">
@@ -523,6 +542,11 @@ async function openExternal(url: string) {
 .appearance-list { gap: 0; }
 .language-select { min-width: 130px; height: 34px; padding: 0 27px 0 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 12px; }
 .log-retention-controls { display: grid; grid-template-columns: auto auto; justify-items: end; gap: 6px; }
+.microphone-delay-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.seconds-input { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }
+.seconds-input input { width: 58px; height: 34px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 12px; text-align: right; }
+.seconds-input input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.seconds-input.is-disabled { opacity: .58; }
 .clear-logs-button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 7px; color: var(--danger-text); background: var(--surface-raised); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .clear-logs-button:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-bg); }
 .clear-logs-button:disabled { cursor: wait; opacity: .62; }
@@ -608,6 +632,7 @@ async function openExternal(url: string) {
   .preference-row { grid-template-columns: 32px minmax(0, 1fr); padding: 12px 0; }
   .preference-row > :last-child { grid-column: 2; justify-self: start; margin-top: 2px; }
   .language-row .language-select { min-width: 0; width: 100%; }
+  .microphone-delay-controls { justify-content: flex-start; }
   .theme-preference { grid-template-columns: 1fr; padding: 13px 0; }
   .theme-segmented { justify-self: stretch; }
   .theme-segmented button { flex: 1; }

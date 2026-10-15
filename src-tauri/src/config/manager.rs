@@ -4,12 +4,12 @@
 //! - xiaomi.json   — 小米遥控器配置
 //! - settings.json — 全局设置
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use parking_lot::Mutex;
 use tauri::{AppHandle, Manager};
 
 // ============================================================
@@ -33,7 +33,12 @@ pub enum KeyAction {
     /// 鼠标左键点击
     MouseClick,
     /// 鼠标移动：dx/dy 为方向（-1/0/1），step 为每帧像素数，accelerate 为是否加速
-    MouseMove { dx: i32, dy: i32, step: u32, accelerate: bool },
+    MouseMove {
+        dx: i32,
+        dy: i32,
+        step: u32,
+        accelerate: bool,
+    },
     /// 无动作
     None,
 }
@@ -229,6 +234,12 @@ pub struct GlobalSettings {
     /// 按住语音时使用 CABLE；开启后持续保持 CABLE 为默认录音设备。
     #[serde(default)]
     pub remote_microphone_always_on: bool,
+    /// 松开语音键后是否延迟恢复原默认麦克风；旧配置默认开启五秒延迟。
+    #[serde(default = "default_remote_microphone_restore_delay_enabled")]
+    pub remote_microphone_restore_delay_enabled: bool,
+    /// 松开语音键后恢复原默认麦克风的延迟秒数，限制为 0–60 秒。
+    #[serde(default = "default_remote_microphone_restore_delay_seconds")]
+    pub remote_microphone_restore_delay_seconds: u8,
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
@@ -239,6 +250,18 @@ pub struct GlobalSettings {
 
 fn default_auto_check_updates() -> bool {
     true
+}
+
+fn default_remote_microphone_restore_delay_enabled() -> bool {
+    true
+}
+
+pub fn default_remote_microphone_restore_delay_seconds() -> u8 {
+    5
+}
+
+pub fn normalize_remote_microphone_restore_delay_seconds(seconds: u8) -> u8 {
+    seconds.min(60)
 }
 
 pub fn default_log_retention_days() -> u8 {
@@ -265,6 +288,10 @@ impl Default for GlobalSettings {
             minimize_to_tray: true,
             auto_check_updates: true,
             remote_microphone_always_on: false,
+            remote_microphone_restore_delay_enabled:
+                default_remote_microphone_restore_delay_enabled(),
+            remote_microphone_restore_delay_seconds:
+                default_remote_microphone_restore_delay_seconds(),
             theme: ThemePreference::System,
             log_retention_days: default_log_retention_days(),
         }
@@ -319,10 +346,9 @@ impl ConfigManager {
     fn load_device_config_from_disk(&self, device: &str) -> Result<DeviceConfig, String> {
         let path = self.device_config_path(device);
         if path.exists() {
-            let content = fs::read_to_string(&path)
-                .map_err(|e| format!("读取配置失败: {}", e))?;
-            let mut config: DeviceConfig = serde_json::from_str(&content)
-                .map_err(|e| format!("解析配置失败: {}", e))?;
+            let content = fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {}", e))?;
+            let mut config: DeviceConfig =
+                serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))?;
             if device == "xiaomi" {
                 let (changed, removed_voice_gestures) = Self::merge_xiaomi_defaults(&mut config);
                 if changed {
@@ -368,18 +394,26 @@ impl ConfigManager {
         }
         let defaults = Self::default_config_for("xiaomi");
         for (k, v) in defaults.button_aliases {
-            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_aliases.entry(k) {
+            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_aliases.entry(k)
+            {
                 entry.insert(v);
                 changed = true;
             }
         }
         for (k, v) in defaults.button_bindings {
-            if let std::collections::hash_map::Entry::Vacant(entry) = config.button_bindings.entry(k) {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                config.button_bindings.entry(k)
+            {
                 entry.insert(v);
                 changed = true;
             }
         }
-        if config.voice_hotkey.as_ref().map(|v| v.is_empty()).unwrap_or(true) {
+        if config
+            .voice_hotkey
+            .as_ref()
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
+        {
             config.voice_hotkey = defaults.voice_hotkey;
             changed = true;
         }
@@ -498,7 +532,10 @@ impl ConfigManager {
         }
         let normalized_step = (*step).clamp(1, 100);
         if normalized_step != *step {
-            log::warn!("XIAOMI CONFIG clamped mouse step {} to {normalized_step}", *step);
+            log::warn!(
+                "XIAOMI CONFIG clamped mouse step {} to {normalized_step}",
+                *step
+            );
             *step = normalized_step;
             return true;
         }
@@ -509,12 +546,12 @@ impl ConfigManager {
         let path = self.device_config_path(device);
         let tmp_path = path.with_extension("json.tmp");
 
-        let content = serde_json::to_string_pretty(config)
-            .map_err(|e| format!("序列化配置失败: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
 
         {
-            let mut file = fs::File::create(&tmp_path)
-                .map_err(|e| format!("写入临时文件失败: {}", e))?;
+            let mut file =
+                fs::File::create(&tmp_path).map_err(|e| format!("写入临时文件失败: {}", e))?;
             file.write_all(content.as_bytes())
                 .map_err(|e| format!("写入临时文件失败: {}", e))?;
             file.sync_all()
@@ -543,9 +580,7 @@ impl ConfigManager {
         }
         self.write_device_config(device, &config)?;
 
-        self.device_cache
-            .lock()
-            .insert(device.to_string(), config);
+        self.device_cache.lock().insert(device.to_string(), config);
         Ok(())
     }
 
@@ -555,14 +590,28 @@ impl ConfigManager {
         let mut config = self.get_device_config("xiaomi")?;
         let defaults = Self::xiaomi_default_bindings();
         let standard = [
-            "power", "up", "down", "left", "right", "ok", "back", "home", "menu", "tv",
+            "power",
+            "up",
+            "down",
+            "left",
+            "right",
+            "ok",
+            "back",
+            "home",
+            "menu",
+            "tv",
             // 旧配置可能仍使用这些方向键 id，也一并恢复并清理手势。
-            "dpad_up", "dpad_down", "dpad_left", "dpad_right",
+            "dpad_up",
+            "dpad_down",
+            "dpad_left",
+            "dpad_right",
         ];
 
         for id in standard {
             if let Some(action) = defaults.get(id) {
-                config.button_bindings.insert(id.to_string(), action.clone());
+                config
+                    .button_bindings
+                    .insert(id.to_string(), action.clone());
             }
             config.long_press_bindings.remove(id);
             config.multi_click_bindings.remove(id);
@@ -578,11 +627,14 @@ impl ConfigManager {
     fn load_global_settings_unlocked(&self) -> Result<GlobalSettings, String> {
         let path = self.settings_path();
         if path.exists() {
-            let content = fs::read_to_string(&path)
-                .map_err(|e| format!("读取设置失败: {}", e))?;
-            let mut settings: GlobalSettings = serde_json::from_str(&content)
-                .map_err(|e| format!("解析设置失败: {}", e))?;
+            let content = fs::read_to_string(&path).map_err(|e| format!("读取设置失败: {}", e))?;
+            let mut settings: GlobalSettings =
+                serde_json::from_str(&content).map_err(|e| format!("解析设置失败: {}", e))?;
             settings.log_retention_days = normalize_log_retention_days(settings.log_retention_days);
+            settings.remote_microphone_restore_delay_seconds =
+                normalize_remote_microphone_restore_delay_seconds(
+                    settings.remote_microphone_restore_delay_seconds,
+                );
             Ok(settings)
         } else {
             Ok(GlobalSettings::default())
@@ -595,14 +647,16 @@ impl ConfigManager {
 
         let mut normalized = settings.clone();
         normalized.log_retention_days = normalize_log_retention_days(normalized.log_retention_days);
+        normalized.remote_microphone_restore_delay_seconds =
+            normalize_remote_microphone_restore_delay_seconds(
+                normalized.remote_microphone_restore_delay_seconds,
+            );
         let content = serde_json::to_string_pretty(&normalized)
             .map_err(|e| format!("序列化设置失败: {}", e))?;
 
-        fs::write(&tmp_path, &content)
-            .map_err(|e| format!("写入临时文件失败: {}", e))?;
+        fs::write(&tmp_path, &content).map_err(|e| format!("写入临时文件失败: {}", e))?;
 
-        fs::rename(&tmp_path, &path)
-            .map_err(|e| format!("替换设置文件失败: {}", e))?;
+        fs::rename(&tmp_path, &path).map_err(|e| format!("替换设置文件失败: {}", e))?;
 
         Ok(())
     }
@@ -698,8 +752,8 @@ impl ConfigManager {
         // 对齐 Python DEFAULT_BUTTON_BINDINGS
         let mut m = HashMap::new();
         m.insert("power".into(), KeyAction::SingleKey(0x1B)); // Esc
-        // 新安装默认适配 Codex 语音：Left Ctrl + Left Shift + D。
-        // 已保存的用户配置不会走这套默认值，因此升级不会覆盖自定义映射。
+                                                              // 新安装默认适配 Codex 语音：Left Ctrl + Left Shift + D。
+                                                              // 已保存的用户配置不会走这套默认值，因此升级不会覆盖自定义映射。
         m.insert("mic".into(), KeyAction::ComboKey(vec![0xA2, 0xA0, 0x44]));
         m.insert("up".into(), KeyAction::SingleKey(0x26));
         m.insert("down".into(), KeyAction::SingleKey(0x28));
@@ -751,7 +805,11 @@ mod tests {
         assert!(config.long_press_bindings.is_empty());
         assert_eq!(
             config.voice_hotkey,
-            Some(vec!["leftctrl".to_string(), "leftshift".to_string(), "d".to_string()])
+            Some(vec![
+                "leftctrl".to_string(),
+                "leftshift".to_string(),
+                "d".to_string()
+            ])
         );
         assert_eq!(config.trigger_mode, TriggerMode::Hold);
         assert_eq!(
@@ -763,17 +821,39 @@ mod tests {
     #[test]
     fn reset_scope_keeps_volume_and_voice_ids_outside_the_standard_set() {
         let standard = [
-            "power", "up", "down", "left", "right", "ok", "back", "home", "menu", "tv",
-            "dpad_up", "dpad_down", "dpad_left", "dpad_right",
+            "power",
+            "up",
+            "down",
+            "left",
+            "right",
+            "ok",
+            "back",
+            "home",
+            "menu",
+            "tv",
+            "dpad_up",
+            "dpad_down",
+            "dpad_left",
+            "dpad_right",
         ];
-        for protected in ["mic", "voice", "volume_up", "volume_down", "mute", "volume_mute"] {
+        for protected in [
+            "mic",
+            "voice",
+            "volume_up",
+            "volume_down",
+            "mute",
+            "volume_mute",
+        ] {
             assert!(!standard.contains(&protected));
         }
     }
 
     #[test]
     fn reset_standard_bindings_restores_only_standard_keys_and_gestures() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let config_dir = std::env::temp_dir().join(format!("nexus-prime-reset-{unique}"));
         fs::create_dir(&config_dir).unwrap();
         let manager = ConfigManager {
@@ -782,19 +862,42 @@ mod tests {
             global_settings_lock: Mutex::new(()),
         };
         let mut config = ConfigManager::default_config_for("xiaomi");
-        config.button_bindings.insert("power".into(), KeyAction::ComboKey(vec![0xA4, 0x73]));
-        config.button_bindings.insert("volume_up".into(), KeyAction::SingleKey(0x41));
-        config.button_bindings.insert("mic".into(), KeyAction::SingleKey(0xA5));
-        config.long_press_bindings.insert("power".into(), KeyAction::MouseClick);
-        config.long_press_bindings.insert("volume_up".into(), KeyAction::MouseClick);
-        config.multi_click_bindings.entry("power".into()).or_default().insert(2, KeyAction::SingleKey(0x41));
+        config
+            .button_bindings
+            .insert("power".into(), KeyAction::ComboKey(vec![0xA4, 0x73]));
+        config
+            .button_bindings
+            .insert("volume_up".into(), KeyAction::SingleKey(0x41));
+        config
+            .button_bindings
+            .insert("mic".into(), KeyAction::SingleKey(0xA5));
+        config
+            .long_press_bindings
+            .insert("power".into(), KeyAction::MouseClick);
+        config
+            .long_press_bindings
+            .insert("volume_up".into(), KeyAction::MouseClick);
+        config
+            .multi_click_bindings
+            .entry("power".into())
+            .or_default()
+            .insert(2, KeyAction::SingleKey(0x41));
         config.voice_hotkey = Some(vec!["rightalt".into()]);
         manager.save_device_config("xiaomi", &config).unwrap();
 
         let reset = manager.reset_xiaomi_standard_key_bindings().unwrap();
-        assert_eq!(reset.button_bindings.get("power"), Some(&KeyAction::SingleKey(0x1B)));
-        assert_eq!(reset.button_bindings.get("volume_up"), Some(&KeyAction::SingleKey(0x41)));
-        assert_eq!(reset.button_bindings.get("mic"), Some(&KeyAction::SingleKey(0xA5)));
+        assert_eq!(
+            reset.button_bindings.get("power"),
+            Some(&KeyAction::SingleKey(0x1B))
+        );
+        assert_eq!(
+            reset.button_bindings.get("volume_up"),
+            Some(&KeyAction::SingleKey(0x41))
+        );
+        assert_eq!(
+            reset.button_bindings.get("mic"),
+            Some(&KeyAction::SingleKey(0xA5))
+        );
         assert_eq!(reset.voice_hotkey, Some(vec!["rightalt".into()]));
         assert!(!reset.long_press_bindings.contains_key("power"));
         assert!(reset.long_press_bindings.contains_key("volume_up"));
@@ -856,8 +959,10 @@ mod tests {
         for (profile, action) in profiles {
             assert!(profile.is_qianwen());
             assert_eq!(
-                serde_json::from_str::<VoiceInputProfile>(&serde_json::to_string(&profile).unwrap())
-                    .unwrap(),
+                serde_json::from_str::<VoiceInputProfile>(
+                    &serde_json::to_string(&profile).unwrap()
+                )
+                .unwrap(),
                 profile
             );
             assert!(profile.matches_voice_binding(&action, &TriggerMode::Hold));
@@ -869,14 +974,12 @@ mod tests {
     #[test]
     fn deprecated_wechat_hold_profile_migrates_to_real_hold_to_talk() {
         let mut config = DeviceConfig::new();
-        config.button_bindings.insert(
-            "mic".into(),
-            KeyAction::ComboKey(vec![0xA2, 0x5B]),
-        );
-        config.button_bindings.insert(
-            "voice".into(),
-            KeyAction::ComboKey(vec![0xA2, 0x5B]),
-        );
+        config
+            .button_bindings
+            .insert("mic".into(), KeyAction::ComboKey(vec![0xA2, 0x5B]));
+        config
+            .button_bindings
+            .insert("voice".into(), KeyAction::ComboKey(vec![0xA2, 0x5B]));
         config.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
         config.trigger_mode = TriggerMode::Hold;
         config.voice_input_profile = Some(VoiceInputProfile::WechatHold);
@@ -908,7 +1011,9 @@ mod tests {
         let mut config = DeviceConfig::new();
         let custom = KeyAction::ComboKey(vec![0xA2, 0x5B]);
         config.button_bindings.insert("mic".into(), custom.clone());
-        config.button_bindings.insert("voice".into(), custom.clone());
+        config
+            .button_bindings
+            .insert("voice".into(), custom.clone());
         config.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
         config.trigger_mode = TriggerMode::Hold;
         config.voice_input_profile = None;
@@ -935,14 +1040,12 @@ mod tests {
         let config_path = config_dir.join("xiaomi.json");
 
         let mut legacy = DeviceConfig::new();
-        legacy.button_bindings.insert(
-            "mic".into(),
-            KeyAction::ComboKey(vec![0xA2, 0x5B]),
-        );
-        legacy.button_bindings.insert(
-            "voice".into(),
-            KeyAction::ComboKey(vec![0xA2, 0x5B]),
-        );
+        legacy
+            .button_bindings
+            .insert("mic".into(), KeyAction::ComboKey(vec![0xA2, 0x5B]));
+        legacy
+            .button_bindings
+            .insert("voice".into(), KeyAction::ComboKey(vec![0xA2, 0x5B]));
         legacy.voice_hotkey = Some(vec!["leftctrl".into(), "leftwin".into()]);
         legacy.trigger_mode = TriggerMode::Hold;
         legacy.voice_input_profile = Some(VoiceInputProfile::WechatHold);
@@ -1010,7 +1113,10 @@ mod tests {
         assert!(!config.multi_click_bindings.contains_key("mic"));
         assert!(!config.multi_click_bindings.contains_key("voice"));
         assert_eq!(
-            config.multi_click_bindings.get("menu").and_then(|slots| slots.get(&2)),
+            config
+                .multi_click_bindings
+                .get("menu")
+                .and_then(|slots| slots.get(&2)),
             Some(&KeyAction::SingleKey(0x41))
         );
     }

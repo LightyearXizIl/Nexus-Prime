@@ -1,8 +1,8 @@
+pub mod audio;
 pub mod bridges;
+pub mod chatgpt_focus;
 pub mod config;
 pub mod ipc;
-pub mod audio;
-pub mod chatgpt_focus;
 pub mod logging;
 pub mod update;
 pub mod windows_command;
@@ -45,12 +45,8 @@ fn focus_main_window(app: &tauri::AppHandle) {
 }
 
 fn is_autostart_invocation(args: &[String]) -> bool {
-    args.iter().any(|arg| {
-        matches!(
-            arg.as_str(),
-            AUTOSTART_ARGUMENT | LEGACY_AUTOSTART_ARGUMENT
-        )
-    })
+    args.iter()
+        .any(|arg| matches!(arg.as_str(), AUTOSTART_ARGUMENT | LEGACY_AUTOSTART_ARGUMENT))
 }
 
 fn should_start_hidden(args: &[String], autostart_minimized_to_tray: bool) -> bool {
@@ -113,7 +109,11 @@ pub fn run() {
             std::env::set_var("REMOTE_BRIDGE_LOG_RETENTION_DAYS", log_retention_days.to_string());
             app.manage(config_manager);
             if let Ok(settings) = app.state::<config::manager::ConfigManager>().get_global_settings() {
-                audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+                audio::microphone_router::apply_settings(
+                    settings.remote_microphone_always_on,
+                    settings.remote_microphone_restore_delay_enabled,
+                    settings.remote_microphone_restore_delay_seconds,
+                );
             }
             app.manage(update::UpdateManager::default());
 
@@ -271,6 +271,8 @@ pub fn run() {
             ipc::commands::reset_xiaomi_standard_key_bindings,
             ipc::commands::get_key_mappings,
             ipc::commands::update_key_mapping,
+            ipc::commands::export_xiaomi_mappings,
+            ipc::commands::import_xiaomi_mappings,
             ipc::commands::capture_shortcut_start,
             ipc::commands::capture_shortcut_stop,
             ipc::commands::capture_shortcut_poll,
@@ -296,6 +298,8 @@ pub fn run() {
             ipc::commands::open_app_log,
             ipc::commands::clear_old_app_logs,
             ipc::commands::append_app_events,
+            ipc::commands::get_diagnostics_snapshot,
+            ipc::commands::export_app_log,
             ipc::commands::quit_application,
             ipc::commands::get_xiaomi_conflicts,
             ipc::commands::kill_xiaomi_conflicts,
@@ -329,15 +333,30 @@ mod tests {
     #[test]
     fn startup_visibility_requires_marker_and_preference() {
         assert!(!should_start_hidden(&args(&["nexus-prime.exe"]), true));
-        assert!(!should_start_hidden(&args(&["nexus-prime.exe", "--autostart"]), false));
-        assert!(should_start_hidden(&args(&["nexus-prime.exe", "--autostart"]), true));
-        assert!(should_start_hidden(&args(&["nexus-prime.exe", "--minimized"]), true));
+        assert!(!should_start_hidden(
+            &args(&["nexus-prime.exe", "--autostart"]),
+            false
+        ));
+        assert!(should_start_hidden(
+            &args(&["nexus-prime.exe", "--autostart"]),
+            true
+        ));
+        assert!(should_start_hidden(
+            &args(&["nexus-prime.exe", "--minimized"]),
+            true
+        ));
     }
 
     #[test]
     fn only_manual_secondary_launches_restore_the_window() {
         assert!(should_focus_existing_instance(&args(&["nexus-prime.exe"])));
-        assert!(!should_focus_existing_instance(&args(&["nexus-prime.exe", "--autostart"])));
-        assert!(!should_focus_existing_instance(&args(&["nexus-prime.exe", "--minimized"])));
+        assert!(!should_focus_existing_instance(&args(&[
+            "nexus-prime.exe",
+            "--autostart"
+        ])));
+        assert!(!should_focus_existing_instance(&args(&[
+            "nexus-prime.exe",
+            "--minimized"
+        ])));
     }
 }

@@ -34,6 +34,10 @@ impl SessionState {
         self.active.load(Ordering::Acquire) == id
     }
 
+    pub(crate) fn active_id(&self) -> u64 {
+        self.active.load(Ordering::Acquire)
+    }
+
     pub(crate) fn end(&self, id: u64) -> bool {
         self.active
             .compare_exchange(id, 0, Ordering::AcqRel, Ordering::Acquire)

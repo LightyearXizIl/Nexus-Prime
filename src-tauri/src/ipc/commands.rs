@@ -3,7 +3,8 @@
 use crate::bridges::xiaomi::connect::{self, XiaomiRuntime};
 use crate::bridges::{BridgeState, BridgeStatus, BridgeType, DeviceInfo};
 use crate::config::manager::{
-    normalize_log_retention_days, ConfigManager, DeviceConfig, GlobalSettings, KeyAction, ThemePreference,
+    normalize_log_retention_days, normalize_remote_microphone_restore_delay_seconds, ConfigManager,
+    DeviceConfig, GlobalSettings, KeyAction, ThemePreference,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,8 +62,12 @@ pub(crate) fn start_xiaomi_bridge(
     let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     let runtime = app.state::<Arc<XiaomiRuntime>>();
     if runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
-        if runtime.should_stop() { return Err("旧连接正在停止，请稍后重试".into()); }
-        runtime.probe_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+        if runtime.should_stop() {
+            return Err("旧连接正在停止，请稍后重试".into());
+        }
+        runtime
+            .probe_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         return Ok(());
     }
     let config = config_manager.get_device_config("xiaomi")?;
@@ -83,7 +88,13 @@ pub(crate) fn start_xiaomi_bridge(
         .spawn(move || {
             xiaomi_reconnect_loop(app_handle, runtime_for_worker, configured, retry);
         })
-        .map_err(|e| { runtime.running.store(false, std::sync::atomic::Ordering::SeqCst); runtime.request_stop(); format!("启动小米 worker 失败: {e}") })?;
+        .map_err(|e| {
+            runtime
+                .running
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            runtime.request_stop();
+            format!("启动小米 worker 失败: {e}")
+        })?;
 
     let _ = state; // 状态由 worker 更新
     Ok(())
@@ -107,9 +118,16 @@ fn xiaomi_reconnect_loop(
     retry: std::time::Duration,
 ) {
     #[cfg(target_os = "windows")]
-    let _watcher = crate::bridges::xiaomi::recovery::PresenceWatcher::start(runtime.clone(), configured.as_deref()).map_err(|e| log::warn!("Presence watcher unavailable: {e}")).ok();
+    let _watcher = crate::bridges::xiaomi::recovery::PresenceWatcher::start(
+        runtime.clone(),
+        configured.as_deref(),
+    )
+    .map_err(|e| log::warn!("Presence watcher unavailable: {e}"))
+    .ok();
     #[cfg(target_os = "windows")]
-    let _power = crate::bridges::xiaomi::recovery::PowerSubscription::start(&runtime).map_err(|e| log::warn!("Power notifications unavailable: {e}")).ok();
+    let _power = crate::bridges::xiaomi::recovery::PowerSubscription::start(&runtime)
+        .map_err(|e| log::warn!("Power notifications unavailable: {e}"))
+        .ok();
     while !runtime.should_stop() {
         if let Some(state) = app.try_state::<BridgeState>() {
             state.update_status(BridgeType::Xiaomi, BridgeStatus::Connecting);
@@ -122,7 +140,12 @@ fn xiaomi_reconnect_loop(
             Err(e) => {
                 #[cfg(target_os = "windows")]
                 if !runtime.should_stop() {
-                    connect::publish_link_state(&app, &runtime, crate::bridges::xiaomi::recovery::paired_record(configured.as_deref()), Some(false));
+                    connect::publish_link_state(
+                        &app,
+                        &runtime,
+                        crate::bridges::xiaomi::recovery::paired_record(configured.as_deref()),
+                        Some(false),
+                    );
                 }
                 log::warn!("Xiaomi connect failed: {e}; retry in {retry:?}");
                 if let Some(state) = app.try_state::<BridgeState>() {
@@ -176,17 +199,17 @@ fn xiaomi_reconnect_loop(
             Err(e) => log::warn!("Xiaomi disconnected: {e}; reconnecting..."),
         }
         if let Some(state) = app.try_state::<BridgeState>() {
-            state.update_status(
-                BridgeType::Xiaomi,
-                BridgeStatus::Connecting,
-            );
+            state.update_status(BridgeType::Xiaomi, BridgeStatus::Connecting);
         }
         if wait_interruptible(&runtime, retry) {
             break;
         }
     }
     #[cfg(target_os = "windows")]
-    { drop(_power); drop(_watcher); }
+    {
+        drop(_power);
+        drop(_watcher);
+    }
     #[cfg(target_os = "windows")]
     if let Some((_, session)) = runtime.maintained.lock().take() {
         let _ = session.SetMaintainConnection(false);
@@ -288,6 +311,142 @@ pub async fn update_key_mapping(
     config_manager.save_device_config(device, &config)
 }
 
+/// 文件中只保存小米遥控器的映射部分，避免把蓝牙、语音和本机设置带到其它电脑。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct XiaomiMappingsExport {
+    pub format: String,
+    pub schema_version: u32,
+    pub button_bindings: HashMap<String, KeyAction>,
+    #[serde(default)]
+    pub long_press_bindings: HashMap<String, KeyAction>,
+    #[serde(default)]
+    pub multi_click_bindings: HashMap<String, HashMap<u8, KeyAction>>,
+    #[serde(default = "default_export_multi_click_interval_ms")]
+    pub multi_click_interval_ms: u64,
+}
+
+const XIAOMI_MAPPINGS_FORMAT: &str = "nexus-prime-xiaomi-mappings";
+const XIAOMI_MAPPINGS_SCHEMA_VERSION: u32 = 1;
+
+fn default_export_multi_click_interval_ms() -> u64 {
+    300
+}
+
+impl XiaomiMappingsExport {
+    fn from_config(config: &DeviceConfig) -> Self {
+        Self {
+            format: XIAOMI_MAPPINGS_FORMAT.into(),
+            schema_version: XIAOMI_MAPPINGS_SCHEMA_VERSION,
+            button_bindings: config.button_bindings.clone(),
+            long_press_bindings: config.long_press_bindings.clone(),
+            multi_click_bindings: config.multi_click_bindings.clone(),
+            multi_click_interval_ms: config.multi_click_interval_ms,
+        }
+    }
+
+    fn validate(self) -> Result<Self, String> {
+        if self.format != XIAOMI_MAPPINGS_FORMAT {
+            return Err(format!("不支持的映射配置格式：{}", self.format));
+        }
+        if self.schema_version != XIAOMI_MAPPINGS_SCHEMA_VERSION {
+            return Err(format!("不支持的映射配置版本：{}", self.schema_version));
+        }
+        if !(150..=800).contains(&self.multi_click_interval_ms) {
+            return Err("连击间隔必须在 150–800 毫秒之间".into());
+        }
+        for id in self
+            .button_bindings
+            .keys()
+            .chain(self.long_press_bindings.keys())
+            .chain(self.multi_click_bindings.keys())
+        {
+            if id.is_empty() || id.len() > 128 {
+                return Err("映射按键标识无效".into());
+            }
+        }
+        for slots in self.multi_click_bindings.values() {
+            if slots.keys().any(|count| !matches!(count, 2..=4)) {
+                return Err("连击映射只支持 2、3、4 连击".into());
+            }
+        }
+        Ok(self)
+    }
+
+    fn apply_to(self, config: &mut DeviceConfig) {
+        config.button_bindings = self.button_bindings;
+        config.long_press_bindings = self.long_press_bindings;
+        config.multi_click_bindings = self.multi_click_bindings;
+        config.multi_click_interval_ms = self.multi_click_interval_ms;
+    }
+}
+
+fn mapping_file_summary(path: &std::path::Path) -> String {
+    let extension = path
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or_default();
+    format!(
+        "extension={} filename_present={}",
+        extension,
+        path.file_name().is_some()
+    )
+}
+
+/// 导出按键映射 JSON；其它设备、语音和本机环境配置不会写入文件。
+#[tauri::command]
+pub async fn export_xiaomi_mappings(
+    path: String,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<(), String> {
+    let config = config_manager.get_device_config("xiaomi")?;
+    let document = XiaomiMappingsExport::from_config(&config);
+    let content = serde_json::to_string_pretty(&document)
+        .map_err(|error| format!("序列化映射配置失败：{error}"))?;
+    let path = std::path::PathBuf::from(path);
+    std::fs::write(&path, format!("{content}\n"))
+        .map_err(|error| format!("写入映射配置失败：{error}"))?;
+    crate::logging::append_event(
+        "mapping_config",
+        "export",
+        "success",
+        &format!(
+            "schema_version={} {}",
+            document.schema_version,
+            mapping_file_summary(&path)
+        ),
+    );
+    Ok(())
+}
+
+/// 导入映射 JSON，并一次性替换当前映射；校验或保存失败时保留旧配置。
+#[tauri::command]
+pub async fn import_xiaomi_mappings(
+    path: String,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<DeviceConfig, String> {
+    let path_buf = std::path::PathBuf::from(path);
+    let content =
+        std::fs::read_to_string(&path_buf).map_err(|error| format!("读取映射配置失败：{error}"))?;
+    let document: XiaomiMappingsExport = serde_json::from_str::<XiaomiMappingsExport>(&content)
+        .map_err(|error| format!("映射配置格式错误：{error}"))?
+        .validate()?;
+    let mut config = config_manager.get_device_config("xiaomi")?;
+    document.clone().apply_to(&mut config);
+    config_manager.save_device_config("xiaomi", &config)?;
+    crate::logging::append_event(
+        "mapping_config",
+        "import",
+        "success",
+        &format!(
+            "schema_version={} {}",
+            document.schema_version,
+            mapping_file_summary(&path_buf)
+        ),
+    );
+    Ok(config)
+}
+
 /// 开始快捷键捕获（物理键会被临时吞掉，松手/按完后自动完成）
 #[tauri::command]
 pub async fn capture_shortcut_start(
@@ -346,9 +505,7 @@ pub async fn set_autostart(
 
 /// 获取开机自启状态
 #[tauri::command]
-pub async fn get_autostart(
-    config_manager: State<'_, ConfigManager>,
-) -> Result<bool, String> {
+pub async fn get_autostart(config_manager: State<'_, ConfigManager>) -> Result<bool, String> {
     let settings = config_manager.get_global_settings()?;
     Ok(settings.autostart || crate::bridges::xiaomi::autostart::is_autostart_enabled())
 }
@@ -375,8 +532,16 @@ pub async fn save_global_settings(
     let mut synced = settings;
     synced.autostart = crate::bridges::xiaomi::autostart::is_autostart_enabled();
     synced.log_retention_days = normalize_log_retention_days(synced.log_retention_days);
+    synced.remote_microphone_restore_delay_seconds =
+        normalize_remote_microphone_restore_delay_seconds(
+            synced.remote_microphone_restore_delay_seconds,
+        );
     config_manager.save_global_settings(&synced)?;
-    crate::audio::microphone_router::apply_settings(synced.remote_microphone_always_on);
+    crate::audio::microphone_router::apply_settings(
+        synced.remote_microphone_always_on,
+        synced.remote_microphone_restore_delay_enabled,
+        synced.remote_microphone_restore_delay_seconds,
+    );
     crate::logging::set_retention_days(synced.log_retention_days as usize);
     crate::logging::append_event(
         "settings",
@@ -451,8 +616,15 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         .try_state::<Arc<XiaomiRuntime>>()
         .map(|r| r.running.load(std::sync::atomic::Ordering::SeqCst))
         .unwrap_or(false);
-    let (bluetooth_online, key_bridge_state) = app.try_state::<Arc<XiaomiRuntime>>()
-        .map(|r| { let h = r.health.lock(); (h.connected == Some(true) && !r.should_stop(), h.key_bridge.to_string()) })
+    let (bluetooth_online, key_bridge_state) = app
+        .try_state::<Arc<XiaomiRuntime>>()
+        .map(|r| {
+            let h = r.health.lock();
+            (
+                h.connected == Some(true) && !r.should_stop(),
+                h.key_bridge.to_string(),
+            )
+        })
         .unwrap_or((false, "waiting".into()));
     let key_ready = bluetooth_online && matches!(key_bridge_state.as_str(), "ready" | "fallback");
     let audio_alive = crate::audio::pcm_router::audio_router_ready_cached()
@@ -522,16 +694,26 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
         },
     ];
 
-    let (status_text, detail, tone) = if key_ready && key_bridge_state == "ready" && audio_alive && cable_ready && atvv_ok && injection.virtual_hid_ready {
-        (
-            "运行正常".into(),
-            String::new(),
-            "ok".into(),
-        )
+    let (status_text, detail, tone) = if key_ready
+        && key_bridge_state == "ready"
+        && audio_alive
+        && cable_ready
+        && atvv_ok
+        && injection.virtual_hid_ready
+    {
+        ("运行正常".into(), String::new(), "ok".into())
     } else if bridge_alive && !bluetooth_online {
-        ("等待遥控器上线".into(), "已配对设备上线后将自动恢复，无需点击修复。".into(), "warn".into())
+        (
+            "等待遥控器上线".into(),
+            "已配对设备上线后将自动恢复，无需点击修复。".into(),
+            "warn".into(),
+        )
     } else if bluetooth_online && !key_ready && atvv_ok {
-        ("按键桥接启动中".into(), "正在恢复 HID Tap。".into(), "warn".into())
+        (
+            "按键桥接启动中".into(),
+            "正在恢复 HID Tap。".into(),
+            "warn".into(),
+        )
     } else if bridge_alive && !atvv_ok {
         (
             "ATVV 未连接".into(),
@@ -599,10 +781,7 @@ pub async fn restart_xiaomi_bridge(
     restart_xiaomi_bridge_inner(&app, &state, &config_manager)
 }
 
-fn run_restart_teardown(
-    stop_hid_tap: impl FnOnce(),
-    stop_worker: impl FnOnce(),
-) {
+fn run_restart_teardown(stop_hid_tap: impl FnOnce(), stop_worker: impl FnOnce()) {
     stop_hid_tap();
     stop_worker();
 }
@@ -617,7 +796,9 @@ pub fn restart_xiaomi_bridge_inner(
     append_host_log(config_manager, "bridge restart requested");
 
     // Stop the coordinator before teardown, so it cannot reattach Tap during restart.
-    if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() { runtime.request_stop(); }
+    if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
+        runtime.request_stop();
+    }
     // HID Tap 和 BLE worker 共用一次锁内 teardown，保证重启会重建 Gadget 会话。
     run_restart_teardown(
         crate::bridges::xiaomi::hid_report_tap::stop_and_join,
@@ -673,7 +854,13 @@ pub fn restart_xiaomi_bridge_inner(
         .spawn(move || {
             xiaomi_reconnect_loop(app_handle, runtime_for_worker, configured, retry);
         })
-        .map_err(|e| { runtime.request_stop(); runtime.running.store(false, std::sync::atomic::Ordering::SeqCst); format!("重启 worker 失败: {e}") })?;
+        .map_err(|e| {
+            runtime.request_stop();
+            runtime
+                .running
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            format!("重启 worker 失败: {e}")
+        })?;
 
     append_host_log(config_manager, "bridge restart spawned");
     Ok(())
@@ -688,13 +875,18 @@ pub async fn check_xiaomi_voice_env(
         .await
         .map_err(|e| format!("voice env task: {e}"))?;
     if let Ok(settings) = config_manager.get_global_settings() {
-        crate::audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+        crate::audio::microphone_router::apply_settings(
+            settings.remote_microphone_always_on,
+            settings.remote_microphone_restore_delay_enabled,
+            settings.remote_microphone_restore_delay_seconds,
+        );
     }
     Ok(result)
 }
 
 #[tauri::command]
-pub async fn get_xiaomi_voice_env_status() -> Result<crate::audio::vb_cable::VoiceEnvStatus, String> {
+pub async fn get_xiaomi_voice_env_status() -> Result<crate::audio::vb_cable::VoiceEnvStatus, String>
+{
     Ok(crate::audio::vb_cable::voice_env_status())
 }
 
@@ -709,12 +901,18 @@ pub async fn repair_xiaomi_voice_env(
         "embedded" => crate::audio::vb_cable::install_embedded(),
         "download_page" => crate::audio::vb_cable::open_download_page(),
         "download_zip" => crate::audio::vb_cable::open_download_zip(),
-        other => Err(format!("未知来源: {other}，可选 embedded / download_page / download_zip")),
+        other => Err(format!(
+            "未知来源: {other}，可选 embedded / download_page / download_zip"
+        )),
     })
     .await
-        .map_err(|e| format!("voice repair task: {e}"))??;
+    .map_err(|e| format!("voice repair task: {e}"))??;
     if let Ok(settings) = config_manager.get_global_settings() {
-        crate::audio::microphone_router::apply_settings(settings.remote_microphone_always_on);
+        crate::audio::microphone_router::apply_settings(
+            settings.remote_microphone_always_on,
+            settings.remote_microphone_restore_delay_enabled,
+            settings.remote_microphone_restore_delay_seconds,
+        );
     }
     Ok(result)
 }
@@ -769,6 +967,212 @@ pub struct AppLogPayload {
     pub write_error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticConfigSummary {
+    pub voice_shortcut_enabled: bool,
+    pub trigger_mode: String,
+    pub voice_input_profile: Option<String>,
+    pub voice_hotkey: Option<Vec<String>>,
+    pub gain_db: f32,
+    pub mapping_count: usize,
+    pub long_press_count: usize,
+    pub multi_click_count: usize,
+    pub multi_click_interval_ms: u64,
+    pub remote_microphone_always_on: bool,
+    pub remote_microphone_restore_delay_enabled: bool,
+    pub remote_microphone_restore_delay_seconds: u8,
+    pub log_retention_days: u8,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticInjectionSummary {
+    pub virtual_hid_ready: bool,
+    pub virtual_hid_verified: bool,
+    pub send_input_verified: bool,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticRuntimeSummary {
+    pub host: XiaomiHostStatus,
+    pub atvv_subscribed: bool,
+    pub session_id: Option<u64>,
+    pub voice_environment: DiagnosticVoiceEnvironment,
+    pub injection: DiagnosticInjectionSummary,
+    pub device: DiagnosticDeviceSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticVoiceEnvironment {
+    pub ready: bool,
+    pub cable_input: bool,
+    pub cable_output: bool,
+    pub embedded_available: bool,
+    pub embedded_zip_present: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticDeviceSummary {
+    pub name: Option<String>,
+    pub address_fingerprint: Option<String>,
+    pub bluetooth_paired: Option<bool>,
+    pub bluetooth_connected: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticSnapshot {
+    pub schema_version: u32,
+    pub generated_at_utc: String,
+    pub environment: crate::logging::EnvironmentSnapshot,
+    pub runtime: DiagnosticRuntimeSummary,
+    pub config: DiagnosticConfigSummary,
+    pub log_files: Vec<crate::logging::AppLogFile>,
+}
+
+fn diagnostic_config_summary(
+    config: &DeviceConfig,
+    settings: &GlobalSettings,
+) -> DiagnosticConfigSummary {
+    DiagnosticConfigSummary {
+        voice_shortcut_enabled: config.voice_shortcut_enabled,
+        trigger_mode: format!("{:?}", config.trigger_mode),
+        voice_input_profile: config
+            .voice_input_profile
+            .map(|profile| format!("{profile:?}")),
+        voice_hotkey: config.voice_hotkey.clone(),
+        gain_db: config.gain_db,
+        mapping_count: config.button_bindings.len(),
+        long_press_count: config.long_press_bindings.len(),
+        multi_click_count: config
+            .multi_click_bindings
+            .values()
+            .map(|items| items.len())
+            .sum(),
+        multi_click_interval_ms: config.multi_click_interval_ms,
+        remote_microphone_always_on: settings.remote_microphone_always_on,
+        remote_microphone_restore_delay_enabled: settings.remote_microphone_restore_delay_enabled,
+        remote_microphone_restore_delay_seconds: settings.remote_microphone_restore_delay_seconds,
+        log_retention_days: settings.log_retention_days,
+    }
+}
+
+fn diagnostic_address_fingerprint(address: Option<&str>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let address = address?.trim();
+    if address.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(address.as_bytes());
+    Some(format!("sha256:{:x}", hasher.finalize())[..19].to_string())
+}
+
+fn diagnostic_snapshot_now(
+    app: &AppHandle,
+    config_manager: &ConfigManager,
+) -> Result<DiagnosticSnapshot, String> {
+    let config = config_manager.get_device_config("xiaomi")?;
+    let settings = config_manager.get_global_settings()?;
+    let health = crate::bridges::xiaomi::key_mapping::input_injection_health();
+    let voice_environment = crate::audio::vb_cable::voice_env_status_cached();
+    let device = app
+        .try_state::<BridgeState>()
+        .map(|state| state.get_info(BridgeType::Xiaomi));
+    let runtime = DiagnosticRuntimeSummary {
+        host: xiaomi_host_status_now(app),
+        atvv_subscribed: connect::atvv_subscribed(),
+        session_id: app
+            .try_state::<Arc<XiaomiRuntime>>()
+            .and_then(|runtime| runtime.active_session_id()),
+        voice_environment: DiagnosticVoiceEnvironment {
+            ready: voice_environment.ready,
+            cable_input: voice_environment.cable_input,
+            cable_output: voice_environment.cable_output,
+            embedded_available: voice_environment.embedded_available,
+            embedded_zip_present: voice_environment.embedded_zip_path.is_some(),
+            message: voice_environment.message,
+        },
+        injection: DiagnosticInjectionSummary {
+            virtual_hid_ready: health.virtual_hid_ready,
+            virtual_hid_verified: health.virtual_hid_verified,
+            send_input_verified: health.send_input_verified,
+            last_error: health.last_error,
+        },
+        device: DiagnosticDeviceSummary {
+            name: device.as_ref().and_then(|value| value.device_name.clone()),
+            address_fingerprint: diagnostic_address_fingerprint(
+                device
+                    .as_ref()
+                    .and_then(|value| value.device_address.as_deref()),
+            ),
+            bluetooth_paired: device.as_ref().and_then(|value| value.bluetooth_paired),
+            bluetooth_connected: device.as_ref().and_then(|value| value.bluetooth_connected),
+        },
+    };
+    Ok(DiagnosticSnapshot {
+        schema_version: 1,
+        generated_at_utc: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        environment: crate::logging::collect_environment_snapshot(),
+        runtime,
+        config: diagnostic_config_summary(&config, &settings),
+        log_files: crate::logging::list_log_files(),
+    })
+}
+
+/// 返回一次脱敏电脑环境、桥接状态和当前语音配置摘要，供日志界面查看。
+#[tauri::command]
+pub async fn get_diagnostics_snapshot(
+    app: AppHandle,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<serde_json::Value, String> {
+    let snapshot = diagnostic_snapshot_now(&app, &config_manager)?;
+    serde_json::to_value(snapshot)
+        .map(crate::logging::redact_json_value)
+        .map_err(|error| format!("整理环境信息失败: {error}"))
+}
+
+/// 导出与日志界面/复制完全相同的脱敏文本，环境与运行记录保存在一个文件中。
+#[tauri::command]
+pub async fn export_app_log(
+    app: AppHandle,
+    dest_path: String,
+    file_name: Option<String>,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<String, String> {
+    let destination = std::path::PathBuf::from(dest_path.trim());
+    if destination.as_os_str().is_empty() {
+        return Err("导出日志路径不能为空".into());
+    }
+    if let Some(parent) = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建日志导出目录失败: {e}"))?;
+        if parent.canonicalize().ok().zip(config_manager.logs_dir().canonicalize().ok())
+            .is_some_and(|(parent, logs)| parent == logs)
+        {
+            return Err("请选择日志目录以外的位置，避免覆盖正在使用的日志".into());
+        }
+    }
+    let payload = app_log_payload(&app, &config_manager, file_name.as_deref())?;
+    std::fs::write(&destination, payload.content)
+        .map_err(|e| format!("导出日志失败: {e}"))?;
+    crate::logging::append_event(
+        "logs",
+        "export",
+        "success",
+        "format=log environment=included redacted=true",
+    );
+    Ok(destination.to_string_lossy().into_owned())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppLogEvent {
@@ -802,7 +1206,10 @@ pub async fn append_app_events(events: Vec<AppLogEvent>) -> Result<(), String> {
             &format!(
                 "target={} duration_ms={} session_id={} details={details}",
                 event.target.unwrap_or_default(),
-                event.duration_ms.map(|value| value.to_string()).unwrap_or_default(),
+                event
+                    .duration_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
                 event.session_id.unwrap_or_default(),
             ),
         );
@@ -810,23 +1217,50 @@ pub async fn append_app_events(events: Vec<AppLogEvent>) -> Result<(), String> {
     Ok(())
 }
 
-/// 读取运行日志（末尾一段，供界面展示/复制）
-#[tauri::command]
-pub async fn get_app_log(file_name: Option<String>) -> Result<AppLogPayload, String> {
-    let content = crate::logging::read_log_text_for(file_name.as_deref(), 80_000)?;
+fn app_log_payload(
+    app: &AppHandle,
+    config_manager: &ConfigManager,
+    file_name: Option<&str>,
+) -> Result<AppLogPayload, String> {
+    crate::logging::flush()?;
+    let current_name = crate::logging::log_path()
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
+    let is_current = file_name.is_none_or(|name| name.is_empty() || Some(name) == current_name.as_deref());
+    // 当前快照写回当前日志。历史文件只保留当时记录，不混入今天的电脑状态。
+    let selected_name = if is_current {
+        let snapshot = diagnostic_snapshot_now(app, config_manager)?;
+        let snapshot = serde_json::to_value(snapshot)
+            .map(crate::logging::redact_json_value)
+            .map_err(|error| format!("整理环境信息失败: {error}"))?;
+        crate::logging::append_event(
+            "diagnostics", "snapshot", "success", &format!("snapshot={snapshot}"),
+        );
+        crate::logging::flush()?;
+        crate::logging::log_path()
+            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+    } else {
+        file_name.map(str::to_string)
+    }.ok_or_else(|| "日志文件尚未创建".to_string())?;
+    // 只解析一次文件名，避免后台滚段后内容来自 A、界面标签却变成 B。
+    let content = crate::logging::read_log_text_for(Some(&selected_name), 80_000)?;
     let files = crate::logging::list_log_files();
-    let path = file_name
-        .as_deref()
-        .and_then(|name| files.iter().find(|file| file.name == name))
-        .map(|file| file.name.clone())
-        .or_else(|| crate::logging::log_path().map(|path| path.to_string_lossy().into_owned()))
-        .unwrap_or_default();
+    let path = selected_name;
     Ok(AppLogPayload {
+        content: format!("【日志文件】{path}\n{}", crate::logging::redact_sensitive_text(&content)),
         path,
-        content,
         files,
         write_error: crate::logging::last_write_error(),
     })
+}
+
+/// 环境、运行状态和日志一起展示/复制，且与导出 .log 使用同一内容生成逻辑。
+#[tauri::command]
+pub async fn get_app_log(
+    app: AppHandle,
+    config_manager: State<'_, ConfigManager>,
+    file_name: Option<String>,
+) -> Result<AppLogPayload, String> {
+    app_log_payload(&app, &config_manager, file_name.as_deref())
 }
 
 /// 用系统默认程序打开 app.log
@@ -934,7 +1368,11 @@ pub async fn repair_xiaomi_atvv(
     .await
     .map_err(|e| format!("ATVV repair task: {e}"))??;
 
-    let result_code = if ok { "atvv.repaired" } else { "atvv.repair_incomplete" };
+    let result_code = if ok {
+        "atvv.repaired"
+    } else {
+        "atvv.repair_incomplete"
+    };
     let _ = app.emit(
         "xiaomi-atvv-repair-result",
         serde_json::json!({
@@ -1007,5 +1445,62 @@ mod tests {
         );
 
         assert_eq!(*order.borrow(), ["hid_tap", "worker"]);
+    }
+
+    #[test]
+    fn mapping_export_round_trip_preserves_mapping_only_fields() {
+        let mut config = crate::config::manager::DeviceConfig::new();
+        config.button_bindings.insert(
+            "power".into(),
+            crate::config::manager::KeyAction::SingleKey(0x1b),
+        );
+        config.long_press_bindings.insert(
+            "menu".into(),
+            crate::config::manager::KeyAction::ComboKey(vec![0xa2, 0x73]),
+        );
+        config.multi_click_interval_ms = 420;
+        let document = super::XiaomiMappingsExport::from_config(&config);
+        let json = serde_json::to_string(&document).unwrap();
+        let parsed: super::XiaomiMappingsExport = serde_json::from_str(&json).unwrap();
+        let mut applied = crate::config::manager::DeviceConfig::new();
+        applied.voice_hotkey = Some(vec!["rightalt".into()]);
+        parsed.validate().unwrap().apply_to(&mut applied);
+
+        assert_eq!(applied.button_bindings, config.button_bindings);
+        assert_eq!(applied.long_press_bindings, config.long_press_bindings);
+        assert_eq!(applied.multi_click_bindings, config.multi_click_bindings);
+        assert_eq!(applied.multi_click_interval_ms, 420);
+        assert_eq!(applied.voice_hotkey, Some(vec!["rightalt".into()]));
+    }
+
+    #[test]
+    fn mapping_import_rejects_wrong_format_unknown_fields_and_bad_interval() {
+        let wrong_format = r#"{
+          "format":"other",
+          "schema_version":1,
+          "button_bindings":{},
+          "long_press_bindings":{},
+          "multi_click_bindings":{},
+          "multi_click_interval_ms":300
+        }"#;
+        let parsed: super::XiaomiMappingsExport = serde_json::from_str(wrong_format).unwrap();
+        assert!(parsed.validate().unwrap_err().contains("格式"));
+
+        let unknown_field = r#"{
+          "format":"nexus-prime-xiaomi-mappings",
+          "schema_version":1,
+          "button_bindings":{},
+          "unexpected":true
+        }"#;
+        assert!(serde_json::from_str::<super::XiaomiMappingsExport>(unknown_field).is_err());
+
+        let bad_interval = r#"{
+          "format":"nexus-prime-xiaomi-mappings",
+          "schema_version":1,
+          "button_bindings":{},
+          "multi_click_interval_ms":0
+        }"#;
+        let parsed: super::XiaomiMappingsExport = serde_json::from_str(bad_interval).unwrap();
+        assert!(parsed.validate().unwrap_err().contains("连击间隔"));
     }
 }

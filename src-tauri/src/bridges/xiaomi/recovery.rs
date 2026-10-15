@@ -2,6 +2,11 @@
 use std::time::Duration;
 
 pub const LINK_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+/// Give a freshly-created WinRT device object a chance to transition from
+/// Disconnected to Connected before doing the first GATT enumeration.  A
+/// FromBluetoothAddress/FromId object can be valid while the radio is still
+/// waking the remote, so one immediate status check is not enough.
+pub const INITIAL_CONNECTION_WAIT: Duration = Duration::from_secs(5);
 
 pub struct RecoveryHealth {
     pub paired: Option<bool>,
@@ -45,6 +50,19 @@ pub fn tap_attach_due(connected: bool, atvv: bool, enabled: bool, running: bool)
 
 pub fn subscription_complete(current: bool, count: usize, success: bool) -> bool {
     current && count == 2 && success
+}
+
+/// ATVV must be attempted through the discovered service interface first and
+/// then through a service enumerated from the device address.  Keeping this
+/// decision in a small pure function makes the fallback order testable without
+/// requiring Windows/WinRT in unit tests.
+#[cfg(test)]
+pub fn atvv_subscription_paths(has_interface_id: bool) -> &'static [&'static str] {
+    if has_interface_id {
+        &["FromId", "address"]
+    } else {
+        &["address"]
+    }
 }
 
 /// Failed batches retain ownership so their Drop cleanup runs exactly once.
@@ -257,6 +275,12 @@ mod tests {
         assert!(!recovery.observe(false, false));
         assert!(!recovery.observe(true, false));
         assert!(!recovery.observe(true, false));
+    }
+
+    #[test]
+    fn atvv_fallback_order_is_from_id_then_address() {
+        assert_eq!(atvv_subscription_paths(true), &["FromId", "address"]);
+        assert_eq!(atvv_subscription_paths(false), &["address"]);
     }
 }
 #[cfg(target_os = "windows")]

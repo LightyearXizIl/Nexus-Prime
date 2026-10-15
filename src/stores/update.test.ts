@@ -20,6 +20,8 @@ const autoSettings = {
   minimize_to_tray: true,
   auto_check_updates: true,
   remote_microphone_always_on: false,
+  remote_microphone_restore_delay_enabled: true,
+  remote_microphone_restore_delay_seconds: 5,
   theme: "system",
   log_retention_days: 7,
 };

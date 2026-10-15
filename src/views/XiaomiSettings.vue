@@ -75,6 +75,10 @@ const logCopyHint = ref("");
 const logFiles = ref<Array<{ name: string; size: number; current: boolean }>>([]);
 const selectedLogFile = ref("");
 const logWriteError = ref("");
+const logCopying = ref(false);
+const logExporting = ref(false);
+const logExportHint = ref("");
+const logActionBusy = computed(() => logLoading.value || logCopying.value || logExporting.value);
 
 type BleMeterState = "idle" | "session" | "receiving";
 interface VoiceMeterSnapshot {
@@ -896,11 +900,12 @@ async function repairVirtualKeyboard() {
 async function openLogs() {
   showLogModal.value = true;
   logCopyHint.value = "";
+  logExportHint.value = "";
   selectedLogFile.value = "";
   await loadLog();
 }
 
-async function loadLog(fileName = selectedLogFile.value) {
+async function loadLog(fileName = selectedLogFile.value): Promise<boolean> {
   logLoading.value = true;
   try {
     const result = await invoke<{
@@ -911,22 +916,32 @@ async function loadLog(fileName = selectedLogFile.value) {
     }>("get_app_log", fileName ? { fileName } : undefined);
     logPath.value = result.path || "";
     logFiles.value = result.files || [];
-    selectedLogFile.value = fileName || result.files?.find((file) => file.current)?.name || "";
+    const returnedFileName = result.path?.split(/[\\/]/).pop();
+    const returnedFile = logFiles.value.find((file) => file.name === returnedFileName);
+    selectedLogFile.value = returnedFile?.name || fileName || logFiles.value.find((file) => file.current)?.name || "";
     logWriteError.value = result.writeError || "";
     logText.value = result.content?.trim()
       ? result.content
       : "（暂无日志）";
+    return true;
   } catch (e) {
     logText.value = `读取日志失败: ${e}`;
     logPath.value = "";
     logWriteError.value = "";
+    return false;
   } finally {
     logLoading.value = false;
   }
 }
 
 async function copyLog() {
+  if (logActionBusy.value) return;
+  logCopying.value = true;
   try {
+    if (!await loadLog()) {
+      logCopyHint.value = "复制失败：无法读取日志";
+      return;
+    }
     await navigator.clipboard.writeText(logText.value || "");
     logCopyHint.value = "已复制";
     setTimeout(() => {
@@ -934,6 +949,30 @@ async function copyLog() {
     }, 1500);
   } catch (e) {
     logCopyHint.value = `复制失败: ${e}`;
+  } finally {
+    logCopying.value = false;
+  }
+}
+
+async function exportLog() {
+  if (logActionBusy.value) return;
+  logExporting.value = true;
+  logExportHint.value = "";
+  try {
+    const path = await save({
+      defaultPath: selectedLogFile.value || "Nexus-Prime.log",
+      filters: [{ name: "日志文件", extensions: ["log"] }],
+    });
+    if (!path) return;
+    await invoke<string>("export_app_log", {
+      destPath: path,
+      fileName: selectedLogFile.value || null,
+    });
+    logExportHint.value = "日志已导出，包含电脑环境和运行记录";
+  } catch (error) {
+    logExportHint.value = `导出失败: ${error}`;
+  } finally {
+    logExporting.value = false;
   }
 }
 
@@ -1651,10 +1690,12 @@ watch(
       <div v-if="showLogModal" class="voice-modal-backdrop" @click.self="showLogModal = false">
         <div class="voice-modal log-modal" role="dialog" aria-modal="true">
           <h3>运行日志</h3>
+          <p class="log-help">电脑环境和运行记录保存在同一份日志中，复制和导出会一起带上。</p>
+          <p v-if="logExportHint" class="log-export-hint" role="status">{{ logExportHint }}</p>
           <p v-if="logPath" class="log-path">{{ logPath }}</p>
           <label v-if="logFiles.length" class="log-file-picker">
             <span>日志文件</span>
-            <select v-model="selectedLogFile" :disabled="logLoading" @change="loadLog(selectedLogFile)">
+            <select v-model="selectedLogFile" :disabled="logActionBusy" @change="loadLog(selectedLogFile)">
               <option v-for="file in logFiles" :key="file.name" :value="file.name">
                 {{ file.name }}{{ file.current ? "（当前）" : "" }} · {{ Math.ceil(file.size / 1024) }} KB
               </option>
@@ -1663,11 +1704,14 @@ watch(
           <p v-if="logWriteError" class="save-error" role="alert">日志写入异常：{{ logWriteError }}</p>
           <pre class="log-viewer">{{ logLoading ? "读取中…" : logText }}</pre>
           <div class="log-modal-actions">
-            <button class="btn btn-primary" type="button" :disabled="logLoading" @click="copyLog">
-              {{ logCopyHint || "复制" }}
+            <button class="btn btn-primary" type="button" :disabled="logActionBusy" @click="copyLog">
+              {{ logCopying ? "复制中…" : (logCopyHint || "复制日志") }}
             </button>
-            <button class="btn btn-secondary" type="button" @click="openLogExternally">
+            <button class="btn btn-secondary" type="button" :disabled="logActionBusy" @click="openLogExternally">
               用记事本打开
+            </button>
+            <button class="btn btn-secondary" type="button" :disabled="logActionBusy" @click="exportLog">
+              {{ logExporting ? "导出中…" : "导出日志" }}
             </button>
             <button class="btn btn-secondary" type="button" @click="showLogModal = false">
               关闭
@@ -2633,6 +2677,8 @@ watch(
   display: flex;
   flex-direction: column;
 }
+.log-help { margin: 0 0 8px !important; color: var(--text-secondary) !important; font-size: 12px !important; }
+.log-export-hint { margin: 0 0 8px !important; color: var(--success) !important; font-size: 12px !important; }
 
 .log-path {
   margin: 0 0 8px !important;
