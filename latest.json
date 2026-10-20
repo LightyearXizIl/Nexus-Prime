@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.5.4",
-  "name": "Nexus Prime v0.5.4",
-  "body": "## 微信语音快捷键\n\n- 微信“启动语音输入”和“按住说话”使用 SendInput 兼容路线，日志明确显示实际发送方式。\n- Ctrl+Win 每次按压只发送一次启动序列，移除释放时插入的 F24；遥控器松手不会再次切换语音面板。\n- Ctrl+Shift+D 按下时逐键间隔 30 毫秒，松手立即释放；语音开始时先准备固件按键拦截，再读取配置和切换麦克风，并记录各阶段耗时。\n\n## 输入法预设状态\n\n- 修复应用预设后“当前已应用”标记被迟到配置读取覆盖的问题；保存失败保留原配置并提示错误。\n- ChatGPT、微信、千问、豆包统一保留当前预设标记，提示消失或重新打开设置后仍能查看。\n\n## 验证与已知边界\n\n- 本机用户已确认遥控器 Ctrl+Win 可以调用微信语音；“按住说话”在开启“始终使用遥控器麦克风”时可用。\n- 针对关闭“始终使用遥控器麦克风”后面板不弹出的反馈，本版前置了固件按键拦截；用户在最新验证包后确认本次微信语音真机验收已完成。验收依据为用户现场反馈，不代表所有电脑或输入法均已验证。\n- 千问闲置后首次识音延迟的根因尚未确认，本版不宣称已解决。\n- Gadget 10 项、前端 80 项、Rust 库 200 项通过；2 项依赖现场环境的 Rust 测试跳过。全部目标检查、生产前端构建已通过。\n- 可覆盖升级，保留已有按键映射、输入法预设和全局麦克风设置。\n- Windows 调试构建与正式 NSIS 打包通过。\n\nNSIS: Nexus.Prime_0.5.4_x64-setup.exe\n\nSize: 13457687 bytes\n\nSHA-256: d010d3ced30ae85042f4cd32651e1ebd36d70d4e55e030f06cdcbd225c37aac0\n",
+  "tag_name": "v0.5.5",
+  "name": "Nexus Prime v0.5.5",
+  "body": "- 新增独立赞赏入口，点击展示微信与支付宝收款二维码，支持离线显示。\n- 赞赏图标改为循环跳动的红心，收款渠道使用对应品牌图标。\n- 深色界面统一为中性黑灰，覆盖首页、按键映射、设置、弹窗、日志和帮助提示。\n- 保存状态整合为胶囊按钮，支持保存中、已保存及失败重试。\n- 新增内容支持简体中文、繁体中文和英文。\n\n验证：前端与 Gadget 共 90 项、Rust 200 项通过；2 项依赖现场环境的 Rust 测试保持跳过。全部目标检查、生产页面检查和 Windows NSIS 构建通过。\n\n本版聚焦界面，未改动语音和按键逻辑；安装后的原生界面与真实设备回归尚未重跑。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.5.4_x64-setup.exe",
-      "size": 13457687,
-      "digest": "sha256:d010d3ced30ae85042f4cd32651e1ebd36d70d4e55e030f06cdcbd225c37aac0",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.4/Nexus.Prime_0.5.4_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.5_x64-setup.exe",
+      "size": 13704490,
+      "digest": "sha256:a879fc4dd1eab68b22a2a1179e65003a62a5e2491eadb35d21748f9ad3e25175",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.5/Nexus.Prime_0.5.5_x64-setup.exe"
     }
   ]
 }

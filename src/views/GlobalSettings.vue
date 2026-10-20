@@ -11,6 +11,7 @@ import { useI18n } from "vue-i18n";
 import type { AppLocale } from "../i18n";
 import type { GlobalSettings, ThemePreference } from "../types";
 import lightYearAuthor from "../assets/light_year_author.jpg";
+import SupportCard from "../components/SupportCard.vue";
 
 type SectionId = "general" | "appearance" | "about";
 type LogCleanupResult = { deletedFiles: number; freedBytes: number };
@@ -40,6 +41,11 @@ const settingsReady = ref(false);
 const clearingLogs = ref(false);
 const logCleanupFeedback = ref("");
 const logCleanupFailed = ref(false);
+const saveButtonLabel = computed(() => {
+  if (saving.value) return t("common.saving");
+  if (saveError.value) return t("common.saveRetry");
+  return saved.value ? t("common.savedShort") : t("common.save");
+});
 
 const navigation = computed<Array<{ id: SectionId; label: string; caption: string }>>(() => [
   { id: "general", label: t("settings.general"), caption: t("settings.generalHint") },
@@ -188,33 +194,52 @@ async function openExternal(url: string) {
         <p>{{ t("settings.subtitle") }}</p>
       </div>
       <div class="save-area">
-        <p v-if="saveError" class="save-error" role="alert">{{ saveError }}</p>
-        <p v-else-if="saved" class="saved-state" role="status"><span aria-hidden="true">✓</span>{{ t("common.saved") }}</p>
-        <button class="save-button" :class="{ 'is-saving': saving }" :disabled="saved || saving" @click="saveSettings">
-          <span aria-hidden="true">{{ saving ? '↻' : '↓' }}</span>
-          {{ saving ? t("common.saving") : t("common.save") }}
+        <button
+          type="button"
+          class="save-button"
+          :class="{ 'is-saving': saving, 'is-saved': saved && !saving, 'is-error': !!saveError }"
+          :disabled="saved || saving"
+          :aria-busy="saving"
+          :title="saveError || undefined"
+          @click="saveSettings"
+        >
+          <span class="save-button-symbol" aria-hidden="true">
+            <svg class="save-button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <template v-if="saving">
+                <circle cx="12" cy="12" r="8" opacity=".25" />
+                <path d="M12 4a8 8 0 0 1 8 8" />
+              </template>
+              <path v-else-if="saveError" d="m12 3 10 18H2L12 3Zm0 5v5m0 4h.01" />
+              <path v-else-if="saved" d="m5 12 4 4L19 6" />
+              <path v-else d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" />
+            </svg>
+          </span>
+          <span class="save-button-label" aria-live="polite" aria-atomic="true">{{ saveButtonLabel }}</span>
         </button>
       </div>
     </header>
 
     <div class="settings-layout">
-      <aside class="settings-nav" role="tablist" :aria-label="t('settings.categories')">
-        <p>{{ t("settings.categories") }}</p>
-        <button
-          v-for="item in navigation"
-          :key="item.id"
-          type="button"
-          role="tab"
-          :id="`settings-tab-${item.id}`"
-          :aria-controls="`settings-panel-${item.id}`"
-          :aria-selected="activeSection === item.id"
-          :class="{ active: activeSection === item.id }"
-          @click="activeSection = item.id"
-        >
-          <span>{{ item.label }}</span>
-          <small>{{ item.caption }}</small>
-        </button>
-      </aside>
+      <div class="settings-sidebar">
+        <aside class="settings-nav" role="tablist" :aria-label="t('settings.categories')">
+          <p>{{ t("settings.categories") }}</p>
+          <button
+            v-for="item in navigation"
+            :key="item.id"
+            type="button"
+            role="tab"
+            :id="`settings-tab-${item.id}`"
+            :aria-controls="`settings-panel-${item.id}`"
+            :aria-selected="activeSection === item.id"
+            :class="{ active: activeSection === item.id }"
+            @click="activeSection = item.id"
+          >
+            <span>{{ item.label }}</span>
+            <small>{{ item.caption }}</small>
+          </button>
+        </aside>
+        <SupportCard />
+      </div>
 
       <main class="settings-content" :aria-busy="!settingsReady">
         <section v-if="!settingsReady" class="settings-card settings-loading-card" aria-label="正在加载设置">
@@ -496,22 +521,27 @@ async function openExternal(url: string) {
 .settings-header h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 800; letter-spacing: -0.65px; }
 .settings-header > div > p:last-child { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; }
 .save-area { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-height: 36px; }
-.saved-state, .save-error { margin: 0; font-size: 12px; font-weight: 700; white-space: nowrap; }
-.saved-state { display: inline-flex; align-items: center; gap: 6px; color: var(--success-text); }
-.saved-state span { display: grid; width: 17px; height: 17px; place-items: center; border-radius: 50%; color: var(--success); background: var(--success-bg); }
-.save-error { color: var(--danger); }
-.save-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 108px; min-height: 36px; padding: 0 13px; border: 1px solid transparent; border-radius: 8px; color: #fff; background: var(--primary); box-shadow: 0 5px 13px rgb(var(--primary-rgb) / 22%); box-shadow: 0 5px 13px color-mix(in srgb, var(--primary) 22%, transparent); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: transform 0.16s ease, background 0.16s ease, opacity 0.16s ease; }
-.save-button:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
-.save-button:disabled { opacity: 0.55; cursor: default; }
-.save-button.is-saving > span { animation: settings-spin 1s linear infinite; }
+.save-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 112px; min-height: 38px; padding: 7px 15px 7px 10px; border: 1px solid transparent; border-radius: 999px; color: #fff; background: var(--primary); box-shadow: none; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s ease, border-color .15s ease, opacity .15s ease; }
+.save-button:hover:not(:disabled) { background: var(--primary-dark); }
+.save-button:disabled { cursor: default; }
+.save-button.is-saved { border-color: var(--border); color: var(--text-secondary); background: var(--surface-raised); }
+.save-button.is-saved .save-button-symbol { color: var(--success-text); background: var(--success-bg); }
+.save-button.is-error { border-color: var(--danger); color: var(--danger-text); background: var(--danger-bg); box-shadow: none; }
+.save-button.is-error:hover { background: var(--danger-bg); }
+.save-button.is-saving { opacity: .8; cursor: wait; }
+.save-button-symbol { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; }
+.save-button-icon { display: block; width: 14px; height: 14px; }
+.save-button-label { white-space: nowrap; }
+.save-button.is-saving .save-button-icon { animation: settings-spin 1s linear infinite; }
 @keyframes settings-spin { to { transform: rotate(360deg); } }
 
 .settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); align-items: start; gap: 20px; }
-.settings-nav { position: sticky; top: 18px; padding: 12px 9px; border: 1px solid var(--border); border-radius: 13px; background: var(--card-bg); box-shadow: 0 8px 22px var(--shadow); }
+.settings-sidebar { position: sticky; top: 18px; display: grid; gap: 12px; min-width: 0; }
+.settings-nav { padding: 12px 9px; border: 1px solid var(--border); border-radius: 13px; background: var(--card-bg); box-shadow: 0 8px 22px var(--shadow); }
 .settings-nav > p { margin: 0 9px 8px; color: var(--text-muted); font-size: 10px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
 .settings-nav button { display: grid; width: 100%; gap: 3px; padding: 10px 11px; border: 0; border-radius: 8px; color: var(--text-secondary); background: transparent; font: inherit; text-align: left; cursor: pointer; transition: background 0.16s ease, color 0.16s ease; }
 .settings-nav button:hover { color: var(--text); background: var(--surface-soft); }
-.settings-nav button.active { color: var(--primary-dark); background: var(--surface-selected); }
+.settings-nav button.active { color: var(--sidebar-active); background: var(--surface-selected); }
 .settings-nav button span { font-size: 13px; font-weight: 700; }
 .settings-nav button small { font-size: 10px; }
 .settings-content { display: grid; gap: 16px; min-width: 0; }
@@ -617,6 +647,7 @@ async function openExternal(url: string) {
 
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: 1fr; gap: 13px; }
+  .settings-sidebar { position: static; }
   .settings-nav { position: static; display: flex; align-items: stretch; gap: 5px; padding: 7px; overflow-x: auto; }
   .settings-nav > p { display: none; }
   .settings-nav button { min-width: 130px; }
@@ -644,5 +675,9 @@ async function openExternal(url: string) {
 }
 @media (max-width: 420px) {
   .author-identity { align-items: stretch; flex-direction: column; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .save-button { transition: none; }
+  .save-button.is-saving .save-button-icon { animation: none; }
 }
 </style>

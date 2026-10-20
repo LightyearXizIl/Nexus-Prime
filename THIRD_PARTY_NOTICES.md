@@ -41,4 +41,13 @@ VB-CABLE 是 Donationware。仓库中的驱动包应保持供应商原始 ZIP �
 
 ## 商标
 
+### 支付渠道图标
+
+- 文件：`src/assets/support/wechat-logo.svg`、`src/assets/support/alipay-logo.svg`。
+- 来源：[Ant Design Icons](https://github.com/ant-design/ant-design-icons/tree/7f2516ac91226d2b41f93b35cb5197c8d94f7189/packages/icons-svg/svg/filled) 的 `wechat.svg` 与 `alipay-square.svg`。
+- 调整：设置显示颜色，裁去支付宝图标外围留白；保留原始图形路径。
+- 许可证：MIT，Copyright (c) 2018-present Ant UED；许可证随应用打包在 `public/licenses/ant-design-icons.txt`。
+
+微信、微信支付、支付宝名称及品牌图形归各自权利人所有，仅用于标明赞赏收款渠道。
+
 VB-Audio、Frida、小米、Windows 等名称和商标归各自权利人所有。项目对这些名称的使用仅用于说明兼容性和第三方来源。

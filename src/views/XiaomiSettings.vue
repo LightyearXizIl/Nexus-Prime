@@ -3239,4 +3239,31 @@ watch(
   font-size: 11px;
   line-height: 1.5;
 }
+
+:root[data-theme="dark"] .log-viewer {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+:root[data-theme="dark"] .floating-info-tip {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.28);
+}
+:root[data-theme="dark"] .floating-info-tip .tip-lead,
+:root[data-theme="dark"] .floating-info-tip .tip-off .tip-badge {
+  color: var(--text-secondary);
+}
+:root[data-theme="dark"] .floating-info-tip .tip-off .tip-badge {
+  background: var(--surface-hover);
+}
+:root[data-theme="dark"] .floating-info-tip ul {
+  color: var(--text);
+}
+:root[data-theme="dark"] .floating-info-tip .tip-aside,
+:root[data-theme="dark"] .floating-info-tip .tip-foot {
+  color: var(--text-muted);
+}
+:root[data-theme="dark"] .floating-info-tip .tip-foot {
+  border-top-color: var(--border-strong);
+}
 </style>
