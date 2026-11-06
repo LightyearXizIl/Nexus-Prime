@@ -103,6 +103,34 @@ describe("KeyMappingStage voice mapping", () => {
     wrapper.unmount();
   });
 
+  it("saves and reopens a manually selected punctuation chord in the current trigger slot", async () => {
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    await wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("长按"))!.trigger("click");
+
+    const manualButton = wrapper.findAll("button.selection-action").find((button) => button.text() === "手动组合")!;
+    await manualButton.trigger("click");
+    const composer = wrapper.getComponent(VoiceShortcutComposer);
+    await composer.findAll("select")[0].setValue("generic");
+    await composer.get(".shortcut-key-row select").setValue(String(0xbc));
+    await composer.get(".shortcut-add-key").trigger("click");
+    await composer.findAll(".shortcut-key-row select")[1].setValue(String(0xbe));
+    await composer.get("button.selection-action.primary").trigger("click");
+
+    const saved = latestSave(wrapper);
+    expect(saved.long_press_bindings?.up).toEqual({ type: "ComboKey", value: [0x11, 0xbc, 0xbe] });
+    expect(saved.button_bindings.up).toBeUndefined();
+    await wrapper.setProps({ config: saved });
+    await manualButton.trigger("click");
+    expect(wrapper.get(".shortcut-composer-preview strong").text()).toBe("Ctrl + , + .");
+    expect(wrapper.findAll(".shortcut-key-row")).toHaveLength(2);
+    wrapper.unmount();
+  });
+
   it("shows mouse controls without shortcut capture and saves a left click to the selected slot", async () => {
     const wrapper = mount(KeyMappingStage, {
       props: { config: createConfig() },

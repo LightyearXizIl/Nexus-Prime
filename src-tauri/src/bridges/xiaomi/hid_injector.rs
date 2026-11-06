@@ -376,16 +376,15 @@ pub fn press_ready(vks: &[u16]) -> Result<(), String> {
             None => Err("WinUHid not open".into()),
             Some(dev) => if let Some(usage_vk) = vks.iter().copied().find(|vk| consumer_usage(*vk).is_some()) {
                 if vks.len() != 1 {
-                    Err("Consumer Control keys cannot be combined".into())
-                } else {
-                    let report = consumer_usage(usage_vk).unwrap().to_le_bytes();
-                    submit(dev, dev.consumer, &report)
+                    return Err("Consumer Control keys cannot be combined".into());
                 }
+                let report = consumer_usage(usage_vk).unwrap().to_le_bytes();
+                submit(dev, dev.consumer, &report)
             } else {
-                match build_keyboard_report(vks) {
-                    Ok(report) => submit(dev, dev.keyboard, &report),
-                    Err(error) => Err(error),
-                }
+                // Unsupported chords (including OEM punctuation) use the caller's
+                // fallback. A report we cannot encode is not a device failure.
+                let report = build_keyboard_report(vks)?;
+                submit(dev, dev.keyboard, &report)
             },
         }
     };

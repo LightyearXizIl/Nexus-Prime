@@ -15,6 +15,17 @@ describe("shortcut helpers", () => {
     expect(parseShortcutText("Alt++").error).toContain("Plus");
     expect(parseShortcutText("Ctrl+NoSuchKey").error).toContain("nosuchkey");
   });
+  it("resolves symbols to physical keys and adds Shift only when needed", () => {
+    expect(parseShortcutText(",")).toEqual({ keys: [0xbc] });
+    expect(parseShortcutText("Ctrl + , + .")).toEqual({ keys: [0x11, 0xbc, 0xbe] });
+    expect(parseShortcutText("Ctrl + ?")).toEqual({ keys: [0x11, 0x10, 0xbf] });
+    expect(parseShortcutText("? + RightShift")).toEqual({ keys: [0xa1, 0xbf] });
+    expect(parseShortcutText("Plus")).toEqual({ keys: [0x10, 0xbb] });
+    expect(parseShortcutText("! + )")).toEqual({ keys: [0x10, 0x31, 0x30] });
+    expect(parseShortcutText("? + /").error).toContain("重复的按键");
+    expect(parseShortcutText("! + 1").error).toContain("重复的按键");
+    expect(parseShortcutText("Ctrl + LeftCtrl").error).toContain("重复的 ctrl");
+  });
   it("keeps valid modifier-only input-method shortcuts valid", () => {
     expect(isLegacyIncompleteCodexShortcut([0xa2, 0x5b])).toBe(false);
     expect(isLegacyIncompleteCodexShortcut([0xa5])).toBe(false);
@@ -30,10 +41,9 @@ describe("shortcut helpers", () => {
     const shortcut = splitShortcutVks([0x11, 0x44, 0x70]);
     expect(shortcut).toEqual({
       modifiers: { ctrl: "generic", shift: "none", alt: "none", win: "none" },
-      mainKey: 0x44,
-      extraKeys: [0x70],
+      keys: [0x44, 0x70],
     });
-    expect(composeShortcutVks(shortcut.modifiers, shortcut.mainKey, shortcut.extraKeys)).toEqual([0x11, 0x44, 0x70]);
+    expect(composeShortcutVks(shortcut.modifiers, shortcut.keys)).toEqual({ keys: [0x11, 0x44, 0x70] });
   });
 
   it("serializes supported and unknown virtual keys without duplicate modifier tokens", () => {

@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.5.5",
-  "name": "Nexus Prime v0.5.5",
-  "body": "- 新增独立赞赏入口，点击展示微信与支付宝收款二维码，支持离线显示。\n- 赞赏图标改为循环跳动的红心，收款渠道使用对应品牌图标。\n- 深色界面统一为中性黑灰，覆盖首页、按键映射、设置、弹窗、日志和帮助提示。\n- 保存状态整合为胶囊按钮，支持保存中、已保存及失败重试。\n- 新增内容支持简体中文、繁体中文和英文。\n\n验证：前端与 Gadget 共 90 项、Rust 200 项通过；2 项依赖现场环境的 Rust 测试保持跳过。全部目标检查、生产页面检查和 Windows NSIS 构建通过。\n\n本版聚焦界面，未改动语音和按键逻辑；安装后的原生界面与真实设备回归尚未重跑。",
+  "tag_name": "v0.5.6",
+  "name": "Nexus Prime v0.5.6",
+  "body": "- 手动组合新增符号分组，支持逗号、句号、问号、引号、括号及加减号等常见键盘符号。\n- 新增可添加、替换和移除的附加键，支持单独使用标点，以及 Ctrl + , + .、A + . 等多键组合。\n- 快捷键文本支持符号，可转换为下拉选项继续编辑。无效文本、重复物理按键和空组合会阻止应用。\n- 问号等符号自动加入 Shift，已有左、右 Shift 选择会被保留。预览显示实际按键组合，Shift 作用于整组按键，实际字符由键盘布局和输入法决定。\n- 沿用原有映射配置格式，兼容已有映射和导入导出。\n- 虚拟键盘无法编码的组合走现有回退路径，避免把不支持的组合当作设备故障。\n\n前端 86 项、Gadget 10 项和 Rust 库 200 项测试通过，2 项现场环境测试跳过。生产前端与 Windows NSIS 构建通过，浏览器已验证 1080px 深色和 700px 浅色的点选、保存、重开流程。\n\n安装后的遥控器输入及组合键完整释放仍待现场验证。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.5.5_x64-setup.exe",
-      "size": 13704490,
-      "digest": "sha256:a879fc4dd1eab68b22a2a1179e65003a62a5e2491eadb35d21748f9ad3e25175",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.5/Nexus.Prime_0.5.5_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.6_x64-setup.exe",
+      "size": 13703458,
+      "digest": "sha256:c67a5facb610dbec0a5331a7e6f10816ca609c604f4fdfdd2d343290673c2b89",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.6/Nexus.Prime_0.5.6_x64-setup.exe"
     }
   ]
 }

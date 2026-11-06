@@ -1,7 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { i18n } from "../i18n";
 import XiaomiSettingsView from "./XiaomiSettings.vue";
 import InputMethodSettingsDialog from "../components/InputMethodSettingsDialog.vue";
@@ -83,6 +83,9 @@ async function mountView(realInputMethodDialog = false) {
       plugins: [pinia, i18n, router],
       stubs: { DeviceStatus: true, KeyMappingStage: true, InputMethodSettingsDialog: !realInputMethodDialog },
     },
+  });
+  onTestFinished(() => {
+    if (wrapper.exists()) wrapper.unmount();
   });
   await flushPromises();
   return wrapper;

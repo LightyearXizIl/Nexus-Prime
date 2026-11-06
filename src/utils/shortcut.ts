@@ -1,5 +1,29 @@
 export type ModifierSide = "none" | "generic" | "left" | "right";
 export type ModifierGroup = "ctrl" | "shift" | "alt" | "win";
+export type ShortcutKey = number | string;
+
+const symbolLabels: Record<number, string> = {
+  0xbc: ",", 0xbe: ".", 0xbf: "/", 0xba: ";", 0xde: "'",
+  0xdb: "[", 0xdd: "]", 0xdc: "\\", 0xbd: "-", 0xbb: "=", 0xc0: "`",
+};
+
+const shiftedSymbols = new Map<string, number>([
+  ["?", 0xbf], ["!", 0x31], ["<", 0xbc], [">", 0xbe], [":", 0xba], ['"', 0xde],
+  ["(", 0x39], [")", 0x30], ["{", 0xdb], ["}", 0xdd], ["|", 0xdc], ["_", 0xbd],
+  ["+", 0xbb], ["~", 0xc0], ["@", 0x32], ["#", 0x33], ["$", 0x34], ["%", 0x35],
+  ["^", 0x36], ["&", 0x37], ["*", 0x38],
+]);
+
+const unshiftedSymbols = new Map(
+  Object.entries(symbolLabels).map(([vk, label]) => [label, Number(vk)] as const),
+);
+
+export const SHORTCUT_SYMBOL_OPTIONS: { value: ShortcutKey; label: string }[] = [
+  ...Array.from(unshiftedSymbols, ([label, value]) => ({ value, label })),
+  ...Array.from(shiftedSymbols.keys(), (symbol) => ({ value: symbol, label: symbol })),
+];
+
+type ShortcutResult = { keys?: number[]; error?: string };
 
 export const modifierValues: Record<ModifierGroup, Record<Exclude<ModifierSide, "none">, number>> = {
   ctrl: { generic: 0x11, left: 0xa2, right: 0xa3 },
@@ -68,17 +92,7 @@ export function keyLabel(vk: number): string {
     0x6d: "Num -",
     0x6e: "Num .",
     0x6f: "Num /",
-    0xba: ";",
-    0xbb: "=",
-    0xbc: ",",
-    0xbd: "-",
-    0xbe: ".",
-    0xbf: "/",
-    0xc0: "`",
-    0xdb: "[",
-    0xdc: "\\",
-    0xdd: "]",
-    0xde: "'",
+    ...symbolLabels,
     0xad: "静音",
     0xae: "音量 -",
     0xaf: "音量 +",
@@ -108,7 +122,7 @@ export function keyLabel(vk: number): string {
 }
 
 /** Parse a hand-written shortcut without relying on the Windows keyboard hook. */
-export function parseShortcutText(input: string): { keys?: number[]; error?: string } {
+export function parseShortcutText(input: string): ShortcutResult {
   const normalized = input.trim();
   if (!normalized) return { error: "请输入至少一个按键" };
   const tokens = normalized.split("+").map((item) => item.trim().toLowerCase());
@@ -128,36 +142,52 @@ export function parseShortcutText(input: string): { keys?: number[]; error?: str
     backspace: 0x08, tab: 0x09, enter: 0x0d, esc: 0x1b, escape: 0x1b,
     space: 0x20, pageup: 0x21, pagedown: 0x22, end: 0x23, home: 0x24,
     left: 0x25, up: 0x26, right: 0x27, down: 0x28, insert: 0x2d, delete: 0x2e,
-    plus: 0xbb, numplus: 0x6b, numpadplus: 0x6b, numminus: 0x6d,
+    numplus: 0x6b, numpadplus: 0x6b, numminus: 0x6d,
     numdivide: 0x6f, numdecimal: 0x6e, mute: 0xad, volumedown: 0xae,
     volumeup: 0xaf, medianext: 0xb0, mediaprevious: 0xb1, mediastop: 0xb2,
     mediaplaypause: 0xb3,
   };
-  const keys: number[] = [];
-  const modifierGroups = new Set<string>();
+  const keys: ShortcutKey[] = [];
   for (const token of tokens) {
-    const modifier = modifiers[token];
-    if (modifier != null) {
-      const group = modifierGroupsForVk(modifier);
-      if (modifierGroups.has(group)) return { error: `重复的 ${group} 修饰键` };
-      modifierGroups.add(group);
-      keys.push(modifier);
+    const symbol = token === "plus" ? "+" : token;
+    if (shiftedSymbols.has(symbol)) {
+      keys.push(symbol);
       continue;
     }
-    let key = named[token];
+    let key = modifiers[token] ?? named[token] ?? unshiftedSymbols.get(token);
     if (key == null && /^[a-z]$/.test(token)) key = token.toUpperCase().charCodeAt(0);
     if (key == null && /^\d$/.test(token)) key = token.charCodeAt(0);
     const fn = /^f([1-9]|1\d|2[0-4])$/.exec(token);
     if (key == null && fn) key = 0x6f + Number(fn[1]);
-    if (key == null) return { error: `不支持的按键：${token}` };
-    if (keys.includes(key)) return { error: `重复的按键：${token}` };
+    if (typeof key !== "number") return { error: `不支持的按键：${token}` };
     keys.push(key);
   }
-  return { keys };
+  return resolveShortcutKeys(keys);
 }
 
-function modifierGroupsForVk(vk: number): string {
-  return modifierGroups[vk] || "";
+function resolveShortcutKeys(selection: readonly ShortcutKey[]): ShortcutResult {
+  const keys: number[] = [];
+  const selectedModifiers = new Set<ModifierGroup>();
+  let needsShift = false;
+
+  for (const key of selection) {
+    const vk = typeof key === "number" ? key : shiftedSymbols.get(key);
+    if (vk == null) return { error: `不支持的按键：${key}` };
+    needsShift ||= typeof key === "string";
+
+    const group = modifierGroups[vk];
+    if (group) {
+      if (selectedModifiers.has(group)) return { error: `重复的 ${group} 修饰键` };
+      selectedModifiers.add(group);
+    }
+    if (keys.includes(vk)) return { error: `重复的按键：${keyLabel(vk)}` };
+    keys.push(vk);
+  }
+
+  if (!needsShift) return { keys };
+  const modifiers = keys.filter(isModifierVk);
+  if (!selectedModifiers.has("shift")) modifiers.push(modifierValues.shift.generic);
+  return { keys: [...modifiers, ...keys.filter((vk) => !isModifierVk(vk))] };
 }
 
 /** 录入 UI 常驻媒体/系统键兜底（对齐上游 MEDIA_PICK_KEYS，标签复用 keyLabel） */
@@ -198,21 +228,19 @@ export function modifierSideForKeys(keys: readonly number[], group: ModifierGrou
 
 export function composeShortcutVks(
   modifiers: Record<ModifierGroup, ModifierSide>,
-  mainKey: number | null,
-  extraKeys: readonly number[] = [],
-): number[] {
+  keys: readonly ShortcutKey[],
+): ShortcutResult {
   const selected = (Object.keys(modifierValues) as ModifierGroup[])
     .map((group) => {
       const side = modifiers[group];
       return side === "none" ? null : modifierValues[group][side];
     })
     .filter((value): value is number => value !== null);
-  return normalizeShortcutVks([...selected, mainKey ?? NaN, ...extraKeys]);
+  return resolveShortcutKeys([...selected, ...keys]);
 }
 
 export function splitShortcutVks(keys: readonly number[]) {
   const normalized = normalizeShortcutVks(keys);
-  const nonModifiers = normalized.filter((key) => !isModifierVk(key));
   return {
     modifiers: {
       ctrl: modifierSideForKeys(normalized, "ctrl"),
@@ -220,8 +248,7 @@ export function splitShortcutVks(keys: readonly number[]) {
       alt: modifierSideForKeys(normalized, "alt"),
       win: modifierSideForKeys(normalized, "win"),
     } satisfies Record<ModifierGroup, ModifierSide>,
-    mainKey: nonModifiers[0] ?? null,
-    extraKeys: nonModifiers.slice(1),
+    keys: normalized.filter((key) => !isModifierVk(key)),
   };
 }
 
