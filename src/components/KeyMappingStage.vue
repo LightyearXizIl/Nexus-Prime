@@ -1342,7 +1342,7 @@ onUnmounted(() => {
           @mouseleave="onCardHover(null)"
           @click="selectButton(button.id)"
         >
-          <span class="mapping-row-icon"><AppIcon :name="mappingGlyph(button.id)" :size="22" /></span>
+          <span class="mapping-row-icon"><AppIcon :name="mappingGlyph(button.id)" :size="16" /></span>
           <span class="mapping-row-copy">
             <strong>{{ button.label }}键</strong>
             <small>{{ slotLabel(button.id, button.selectedClick) }}<span v-if="!isVoiceButton(button.id)"> {{ t("mapping.trigger") }}</span><span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>

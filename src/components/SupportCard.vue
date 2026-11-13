@@ -102,7 +102,7 @@ onBeforeUnmount(() => dialog.value?.close());
 .support-card { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 76px; padding: 14px; border: 1px solid var(--border); border-radius: 13px; color: var(--text); background: var(--card-bg); box-shadow: 0 8px 22px var(--shadow); font: inherit; text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
 .support-card:hover { border-color: var(--primary); background: var(--surface-raised); }
 .support-heart { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; color: #ef4444; background: rgb(239 68 68 / 10%); }
-.support-heart svg { width: 19px; height: 19px; transform-origin: center; animation: support-heartbeat 1.4s ease-in-out infinite; }
+.support-heart svg { width: 19px; height: 19px; fill: currentColor; transform-origin: center; animation: support-heartbeat 1.4s ease-in-out infinite; }
 @keyframes support-heartbeat {
   0%, 32%, 100% { transform: scale(1); }
   12% { transform: scale(1.18); }

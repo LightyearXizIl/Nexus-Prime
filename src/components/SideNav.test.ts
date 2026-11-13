@@ -62,7 +62,10 @@ describe("SideNav device chip", () => {
       expect(windowInvoke).toHaveBeenCalledWith("control_main_window", { action });
     }
     expect(wrapper.findAll(".brand-symbol")).toHaveLength(1);
-    expect(wrapper.get("header").attributes()).toHaveProperty("data-tauri-drag-region");
+    expect(wrapper.get(".titlebar").attributes()).toHaveProperty("data-tauri-drag-region");
+    expect(wrapper.findAll(".titlebar .window-button")).toHaveLength(3);
+    expect(wrapper.find(".top-actions .window-controls").exists()).toBe(false);
+    expect(wrapper.find(".topnav").attributes()).not.toHaveProperty("data-tauri-drag-region");
     wrapper.unmount();
   });
 

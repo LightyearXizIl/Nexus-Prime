@@ -141,7 +141,7 @@ describe("XiaomiSettings virtual keyboard repair", () => {
 });
 
 describe("persistent recovery explanation", () => {
-  it("keeps the complete advice outside the activity list and opens Bluetooth settings", async () => {
+  it("shows complete recovery advice only in live activity and opens Bluetooth settings", async () => {
     const message = "语音服务不可达；若遥控器已开机且靠近电脑，请删除设备后重新配对。";
     const wrapper = await mountView();
     invoke.mockImplementation((command: string) => {
@@ -152,11 +152,12 @@ describe("persistent recovery explanation", () => {
     });
     await buttonByText(wrapper, "修复语音连接").trigger("click");
     await flushPromises();
-    const notice = wrapper.get(".recovery-notice");
-    expect(notice.get("p").text()).toBe(message);
+    const activity = wrapper.get(".timeline");
+    expect(activity.findAll(".event-content strong").filter((entry) => entry.text() === message)).toHaveLength(1);
+    expect(wrapper.find(".recovery-notice").exists()).toBe(false);
+    expect(wrapper.get(".host-card").text()).not.toContain(message);
     expect(wrapper.get(".host-card").text()).not.toContain("服务正在检测中");
-    expect(notice.attributes("role")).toBe("status");
-    expect(notice.find(".timeline").exists()).toBe(false);
+    expect(activity.attributes("aria-live")).toBe("polite");
     await buttonByText(wrapper, "打开蓝牙设置").trigger("click");
     expect(invoke).toHaveBeenCalledWith("open_bluetooth_settings");
   });

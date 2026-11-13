@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { RouterView, useRouter } from "vue-router";
+import { RouterView, useRoute, useRouter } from "vue-router";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { loggedInvoke as invoke } from "./utils/appLogger";
 import SideNav from "./components/SideNav.vue";
@@ -23,6 +23,7 @@ interface ConflictSnapshot {
 }
 
 const router = useRouter();
+const route = useRoute();
 const update = useUpdateStore();
 const { t } = useI18n();
 let unlistenNav: UnlistenFn | null = null;
@@ -147,7 +148,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <SideNav />
-    <main class="main-content">
+    <main class="main-content" :class="{ 'mapping-content': route.name === 'xiaomi-mapping' }">
       <RouterView />
     </main>
   </div>
@@ -436,6 +437,9 @@ textarea:focus-visible {
   padding: 26px 30px 32px;
   background: var(--canvas);
 }
+
+.main-content.mapping-content { scrollbar-width: none; }
+.main-content.mapping-content::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 @media (max-width: 900px) {
   .main-content { padding: 20px; }

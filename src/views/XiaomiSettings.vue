@@ -59,10 +59,6 @@ const virtualKeyboardRepairing = ref(false);
 const atvvRepairing = ref(false);
 const recoveryOperation = ref<string | null>(null);
 const repairNotice = ref("");
-const recoveryMessage = computed(() => recoveryOperation.value
-  ? `${recoveryOperation.value}，请等待。Windows 仍在处理时不会启动第二次修复。`
-  : repairNotice.value || (host.value?.tone !== "ok" ? host.value?.detail : "") || "");
-const showBluetoothSettings = computed(() => /不可达|配对|ATVV|语音/.test(recoveryMessage.value));
 async function openBluetoothSettings() {
   try { await invoke("open_bluetooth_settings"); }
   catch (error) { repairNotice.value = `无法打开蓝牙设置：${error}`; }
@@ -634,6 +630,7 @@ interface LogEntry {
   id: number;
   time: string;
   text: string;
+  bluetoothSettings?: boolean;
 }
 
 const logs = ref<LogEntry[]>([]);
@@ -661,6 +658,23 @@ function prependLog(text: string) {
     logs.value.length = 80;
   }
 }
+
+function recordRecoveryMessage(text: string) {
+  if (logs.value[0]?.text !== text) prependLog(text);
+  logs.value[0].bluetoothSettings = /不可达|配对|ATVV|语音/.test(text);
+}
+
+watch(
+  [recoveryOperation, repairNotice, () => host.value.tone !== "ok" ? host.value.detail : ""],
+  ([operation, notice, detail], previous) => {
+    if (detail && detail !== previous?.[2]) recordRecoveryMessage(detail);
+    if (notice && notice !== previous?.[1]) recordRecoveryMessage(notice);
+    if (operation && operation !== previous?.[0]) {
+      recordRecoveryMessage(`${operation}，请等待。Windows 仍在处理时不会启动第二次修复。`);
+    }
+  },
+  { immediate: true },
+);
 
 function resolveKeyLabel(buttonId: string): string {
   const aliases = config.value?.button_aliases;
@@ -1402,7 +1416,7 @@ watch(
               :class="[`service-${item.id}`, { 'host-status-cable': item.id === 'cable' }]"
               role="listitem"
             >
-              <AppIcon :name="item.id" class="service-icon" :size="24" />
+              <span class="service-icon"><AppIcon :name="item.id" :size="16" /></span>
               <span class="host-item-label">{{ hostItemLabel(item.id) }}</span>
               <div class="host-state-row">
                 <span class="host-item-state" :class="itemToneClass(item.tone)">
@@ -1426,13 +1440,6 @@ watch(
               </div>
             </div>
           </div>
-          <div v-if="recoveryMessage" class="recovery-notice" role="status" aria-live="polite">
-            <p>{{ recoveryMessage }}</p>
-            <div class="recovery-notice-actions">
-              <button v-if="showBluetoothSettings" type="button" @click="openBluetoothSettings"><AppIcon name="bluetooth" :size="18" /> 打开蓝牙设置</button>
-              <button v-if="repairNotice && !recoveryOperation && !repairBusy" type="button" @click="repairNotice = ''">关闭提示</button>
-            </div>
-          </div>
         </section>
 
         <section class="card quick-section">
@@ -1448,7 +1455,6 @@ watch(
                 :disabled="repairBusy"
                 @click="openVoiceRepairChoice"
               >
-                <AppIcon class="action-icon" name="cable" />
                 {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudioShort") }}
               </button>
               <button
@@ -1508,7 +1514,6 @@ watch(
                 :disabled="repairBusy"
                 @click="repairVirtualKeyboard"
               >
-                <AppIcon class="action-icon" name="keyboard" />
                 {{ virtualKeyboardRepairing ? t("common.processing") : t("dashboard.repairVirtualKeyboard") }}
               </button>
               <button
@@ -1568,7 +1573,6 @@ watch(
                 :disabled="repairBusy"
                 @click="repairAtvv"
               >
-                <AppIcon class="action-icon" name="mic" />
                 {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvvShort") }}
               </button>
               <button
@@ -1628,7 +1632,6 @@ watch(
                 :disabled="repairBusy"
                 @click="restartBridge"
               >
-                <AppIcon class="action-icon" name="update" />
                 {{ restarting ? t("common.processing") : t("dashboard.restartBridge") }}
               </button>
               <button
@@ -1712,6 +1715,7 @@ watch(
               <div class="event-content">
                 <strong>{{ entry.text }}</strong>
                 <time>{{ entry.time }}</time>
+                <button v-if="entry.bluetoothSettings" type="button" class="activity-link" @click="openBluetoothSettings">打开蓝牙设置</button>
               </div>
             </article>
           </div>
@@ -3112,11 +3116,14 @@ watch(
 .activity-card { display: flex; min-height: 100%; flex-direction: column; padding: 20px; overflow: hidden; }
 .live { display: inline-flex; align-items: center; gap: 6px; color: var(--success) !important; font-weight: 700; }
 .live .status-dot { --status-light-color: var(--success); }
-.timeline { position: relative; flex: 1; min-height: 0; padding: 1px 0 0 18px; }
+.timeline { position: relative; flex: 1; min-height: 0; padding: 1px 0 0 18px; overflow-x: hidden; overflow-y: auto; }
 .timeline::before { position: absolute; top: 6px; bottom: 3px; left: 4px; width: 1px; background: var(--border); content: ""; }
 .activity-event { position: relative; min-height: 58px; padding: 0 0 13px; }
 .event-dot { position: absolute; top: 6px; left: -17px; }
-.event-content strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 700; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.event-content { min-width: 0; }
+.event-content strong { display: block; color: var(--text); font-size: 13px; font-weight: 700; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+.activity-link { display: inline-block; margin-top: 5px; padding: 0; border: 0; color: var(--primary); background: transparent; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.activity-link:hover { text-decoration: underline; }
 .event-content time { display: block; margin-top: 5px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; }
 .activity-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 .activity-footer button { width: 100%; height: 34px; border: 0; border-radius: 8px; color: var(--primary-dark); background: var(--surface-selected); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
@@ -3125,7 +3132,7 @@ watch(
 @media (min-width: 1020px) {
   .dashboard-page .overview-left {
     display: grid;
-    grid-template-rows: minmax(178px, 1.35fr) minmax(min-content, .825fr) minmax(138px, .825fr);
+    grid-template-rows: minmax(178px, 1.35fr) minmax(136px, .825fr) minmax(138px, .825fr);
     flex: 1;
     min-height: 0;
   }
@@ -3302,14 +3309,6 @@ watch(
 </style>
 
 <style scoped>
-.recovery-notice { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--border-color, #555); border-radius: 12px; color: var(--text-primary); background: var(--bg-secondary); min-width: 0; }
-.recovery-notice p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; overflow: visible; text-overflow: clip; display: block; line-height: 1.6; }
-.recovery-notice-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-.recovery-notice-actions button { padding: 7px 12px; border: 1px solid var(--border-color, #666); border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
-</style>
-
-<style scoped>
-.service-icon { grid-column: 1; grid-row: 1 / span 2; align-self: center; color: var(--primary); }
-.action-icon { margin-right: 6px; }
+.service-icon { grid-column: 1; grid-row: 1 / span 2; display: grid; place-items: center; align-self: center; width: 28px; height: 28px; border-radius: 8px; color: var(--primary); background: var(--surface-selected); }
 .title-info-icon.app-icon { border: 0; border-radius: 0; background: transparent; font-style: normal; }
 </style>

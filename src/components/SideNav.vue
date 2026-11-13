@@ -62,8 +62,16 @@ function toggleTheme() {
 </script>
 
 <template>
-  <header class="topnav" data-tauri-drag-region>
-    <div class="brand-block" data-tauri-drag-region>
+  <div class="titlebar" data-tauri-drag-region aria-label="应用标题栏">
+    <div class="titlebar-drag" data-tauri-drag-region></div>
+    <div class="window-controls" role="group" aria-label="窗口控制">
+      <button type="button" class="window-button" aria-label="最小化" title="最小化" @click="controlWindow('minimize')"><AppIcon name="minus" :size="14" /></button>
+      <button type="button" class="window-button" :aria-label="maximized ? '还原窗口' : '最大化'" :title="maximized ? '还原窗口' : '最大化'" @click="controlWindow('maximize')"><AppIcon :name="maximized ? 'restore' : 'maximize'" :size="13" /></button>
+      <button type="button" class="window-button window-close" aria-label="关闭窗口" title="关闭窗口" @click="controlWindow('close')"><AppIcon name="close" :size="16" /></button>
+    </div>
+  </div>
+  <header class="topnav">
+    <div class="brand-block">
       <div class="brand-symbol" aria-hidden="true">
         <img src="/favicon.png" alt="" />
       </div>
@@ -90,7 +98,7 @@ function toggleTheme() {
         :aria-current="isDevicePage ? 'page' : undefined"
         @click="navigate('/xiaomi')"
       >
-        <AppIcon name="home" :size="18" /> {{ t("nav.home") }}
+        {{ t("nav.home") }}
       </button>
       <button
         type="button"
@@ -98,7 +106,7 @@ function toggleTheme() {
         :aria-current="isMappingPage ? 'page' : undefined"
         @click="navigate('/xiaomi/mapping')"
       >
-        <AppIcon name="mapping" :size="18" /> {{ t("nav.mapping") }}
+        {{ t("nav.mapping") }}
       </button>
     </nav>
 
@@ -122,11 +130,6 @@ function toggleTheme() {
       >
         <AppIcon name="settings" />
       </button>
-      <div class="window-controls" role="group" aria-label="窗口控制">
-        <button type="button" class="window-button" aria-label="最小化" title="最小化" @click="controlWindow('minimize')"><AppIcon name="minus" :size="18" /></button>
-        <button type="button" class="window-button" :aria-label="maximized ? '还原窗口' : '最大化'" :title="maximized ? '还原窗口' : '最大化'" @click="controlWindow('maximize')"><AppIcon :name="maximized ? 'restore' : 'maximize'" :size="16" /></button>
-        <button type="button" class="window-button window-close" aria-label="关闭窗口" title="关闭窗口" @click="controlWindow('close')"><AppIcon name="close" :size="19" /></button>
-      </div>
     </div>
   </header>
 </template>
@@ -134,7 +137,7 @@ function toggleTheme() {
 <style scoped>
 .topnav {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) auto minmax(180px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 16px;
   min-height: 68px;
@@ -286,7 +289,7 @@ function toggleTheme() {
 .icon-button:disabled { cursor: wait; opacity: 0.58; }
 
 @media (max-width: 1019px) {
-  .topnav { grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 0 18px; }
+  .topnav { gap: 10px; padding: 0 18px; }
   .brand-copy span { display: none; }
   .device-chip { max-width: 170px; }
 }
@@ -300,15 +303,11 @@ function toggleTheme() {
 </style>
 
 <style scoped>
-.topnav { grid-template-columns: minmax(220px, 1fr) auto auto; padding-right: 0; gap: 12px; }
-.brand-block * { pointer-events: none; }
-.main-nav button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
-.top-actions { gap: 7px; }
-.icon-button svg { width: 20px; height: 20px; }
-.window-controls { display: flex; align-self: stretch; margin-left: 6px; border-left: 1px solid var(--nav-border); }
-.window-button { display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--nav-icon); cursor: pointer; }
+.titlebar { display: flex; height: 32px; flex: 0 0 32px; background: var(--nav); color: var(--nav-ink); user-select: none; }
+.titlebar-drag { flex: 1; min-width: 0; }
+.window-controls { display: flex; height: 32px; }
+.window-button { display: grid; place-items: center; width: 46px; height: 32px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--nav-icon); cursor: pointer; }
 .window-button:hover { background: var(--nav-icon-hover-bg); color: var(--nav-ink); }
 .window-close:hover { color: white; background: #c42b1c; }
 .window-button:focus-visible { outline: 2px solid var(--primary); outline-offset: -4px; }
-@media (max-width: 960px) { .topnav { padding-left: 16px; grid-template-columns: minmax(200px, 1fr) auto auto; gap: 8px; } .main-nav button { padding-inline: 12px; } }
 </style>
