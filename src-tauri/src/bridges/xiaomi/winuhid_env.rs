@@ -1,7 +1,7 @@
 //! Bundled WinUHid deployment and first-run driver installation.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
 use std::time::Duration;
 
 const ASSET_DIR: &str = "assets/winuhid";
@@ -22,7 +22,9 @@ fn asset_candidates(relative: &str) -> Vec<PathBuf> {
 }
 
 fn first_asset(relative: &str) -> Option<PathBuf> {
-    asset_candidates(relative).into_iter().find(|path| path.is_file())
+    asset_candidates(relative)
+        .into_iter()
+        .find(|path| path.is_file())
 }
 
 fn driver_dir() -> Result<PathBuf, String> {
@@ -35,8 +37,8 @@ fn driver_dir() -> Result<PathBuf, String> {
 }
 
 fn configure_dll() -> Result<PathBuf, String> {
-    let bundled_dll = first_asset("WinUHid.dll")
-        .ok_or_else(|| "bundled WinUHid.dll is missing".to_string())?;
+    let bundled_dll =
+        first_asset("WinUHid.dll").ok_or_else(|| "bundled WinUHid.dll is missing".to_string())?;
     // Load directly from the packaged resource instead of copying alongside the
     // executable. A per-user install can be read-only or retain a same-size stale DLL.
     std::env::set_var("REMOTE_BRIDGE_WINUHID_DLL", &bundled_dll);
@@ -46,8 +48,11 @@ fn configure_dll() -> Result<PathBuf, String> {
 pub fn ensure_runtime_quiet() {
     match configure_dll() {
         Ok(path) => {
-            crate::bridges::xiaomi::hid_injector::reset_and_retry();
-            log::info!("WinUHid SDK configured from bundled resource: {}", path.display());
+            let _ = crate::bridges::xiaomi::hid_injector::ensure_init();
+            log::info!(
+                "WinUHid SDK configured from bundled resource: {}",
+                path.display()
+            );
         }
         Err(error) => log::warn!("WinUHid SDK configuration failed: {error}"),
     }
@@ -62,7 +67,12 @@ enum InstallOutcome {
 fn run_installer(force: bool) -> Result<InstallOutcome, String> {
     // Do not destroy a device that currently owns a held modifier before releasing it.
     if force {
-        crate::bridges::xiaomi::key_mapping::force_release_voice_shortcut("virtual_keyboard_repair");
+        crate::bridges::xiaomi::key_mapping::force_release_voice_shortcut(
+            "virtual_keyboard_repair",
+        );
+    }
+    if crate::repair::driver_installed("(?i)^WinUHid")? {
+        return Ok(InstallOutcome::RestartRequired);
     }
     let dll = configure_dll()?;
     let script = first_asset("install-winuhid.ps1")
@@ -91,7 +101,7 @@ fn run_installer(force: bool) -> Result<InstallOutcome, String> {
     if force {
         args.push("-Force".to_string());
     }
-    let output = Command::new("powershell.exe")
+    let output = crate::windows_command::background_command("powershell.exe")
         .args(args)
         .output()
         .map_err(|error| format!("start WinUHid installer: {error}"))?;
@@ -108,7 +118,10 @@ fn run_installer(force: bool) -> Result<InstallOutcome, String> {
     }
     if !output.status.success() {
         let detail = if stderr.is_empty() { stdout } else { stderr };
-        return Err(format!("WinUHid installer failed exit={:?}: {detail}", output.status.code()));
+        return Err(format!(
+            "WinUHid installer failed exit={:?}: {detail}",
+            output.status.code()
+        ));
     }
     for _ in 0..20 {
         crate::bridges::xiaomi::hid_injector::reset_and_retry();
@@ -122,6 +135,7 @@ fn run_installer(force: bool) -> Result<InstallOutcome, String> {
 }
 
 pub fn install_if_needed() -> Result<(), String> {
+    let _repair = crate::repair::acquire("初始化虚拟键盘")?;
     if crate::bridges::xiaomi::hid_injector::is_available() {
         log::info!("WinUHid virtual keyboard already ready");
         return Ok(());

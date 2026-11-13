@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { loggedInvoke as invoke } from "../utils/appLogger";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -441,7 +442,7 @@ function vkName(vk: number): string {
               @click="clearBinding(btn.id)"
               :disabled="capturing"
             >
-              ✕
+              <AppIcon name="close" :size="16" />
             </button>
           </div>
         </div>

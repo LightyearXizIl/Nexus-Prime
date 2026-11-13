@@ -12,7 +12,7 @@ export interface AppLogEvent {
 
 const queue: AppLogEvent[] = [];
 let flushTimer: ReturnType<typeof window.setTimeout> | null = null;
-const QUIET_COMMANDS = new Set(["get_xiaomi_voice_meter", "get_xiaomi_host_status", "get_device_status"]);
+const QUIET_COMMANDS = new Set(["control_main_window", "get_recovery_operation", "get_xiaomi_voice_meter", "get_xiaomi_host_status", "get_device_status"]);
 
 function flushSoon() {
   if (flushTimer !== null) return;

@@ -70,12 +70,16 @@ const HELPER_ALREADY_INSTALLED: u32 = 19_968;
 const HELPER_INSTALLER_ERROR: u32 = 19_969;
 const HELPER_UI_TIMEOUT: u32 = 19_970;
 const HELPER_LAUNCH_FAILED: u32 = 19_971;
+const HELPER_INSTALL_PENDING: u32 = 19_972;
+static INSTALLER_DETACHED: AtomicBool = AtomicBool::new(false);
 
 struct InstallerRunGuard;
 
 impl Drop for InstallerRunGuard {
     fn drop(&mut self) {
-        OFFICIAL_INSTALLER_RUNNING.store(false, Ordering::Release);
+        if !INSTALLER_DETACHED.load(Ordering::Acquire) {
+            OFFICIAL_INSTALLER_RUNNING.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -393,6 +397,7 @@ enum InstallerUiAction {
     ConfirmError,
     AlreadyInstalled,
     Timeout,
+    MonitorPending,
 }
 
 fn installer_ui_action(
@@ -400,10 +405,18 @@ fn installer_ui_action(
     install_clicked: bool,
     elapsed: Duration,
 ) -> InstallerUiAction {
-    if install_clicked && facts.reports_error && facts.has_ok_button {
+    if install_clicked
+        && elapsed >= Duration::from_secs(120)
+        && !facts.reports_success
+        && !facts.reports_error
+    {
+        InstallerUiAction::MonitorPending
+    } else if install_clicked && facts.reports_error && facts.has_ok_button {
         InstallerUiAction::ConfirmError
     } else if install_clicked && facts.reports_success && facts.has_ok_button {
         InstallerUiAction::ConfirmSuccess
+    } else if !install_clicked && elapsed >= Duration::from_secs(45) {
+        InstallerUiAction::Timeout
     } else if !install_clicked && facts.has_install_button {
         InstallerUiAction::ClickInstall
     } else if !install_clicked && facts.has_remove_button && elapsed >= Duration::from_secs(2) {
@@ -427,7 +440,7 @@ mod official_installer_helper {
     use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumChildWindows, EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId,
-        PostMessageW, SendMessageW,
+        PostMessageW,
     };
 
     const BM_CLICK: u32 = 0x00f5;
@@ -458,7 +471,7 @@ mod official_installer_helper {
         fn click(&self, hwnd: Option<HWND>) {
             if let Some(hwnd) = hwnd {
                 unsafe {
-                    SendMessageW(hwnd, BM_CLICK, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(hwnd, BM_CLICK, WPARAM(0), LPARAM(0));
                 }
             }
         }
@@ -605,7 +618,7 @@ mod official_installer_helper {
                     close_and_reap(&mut process);
                     return HELPER_UI_TIMEOUT;
                 }
-                InstallerUiAction::Wait => {}
+                InstallerUiAction::MonitorPending | InstallerUiAction::Wait => {}
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -669,7 +682,21 @@ fn launch_automated_installer_and_wait(exe: &Path) -> Result<u32, String> {
         if process.is_invalid() {
             return Err("VB-CABLE 管理员安装助手未返回进程句柄".into());
         }
-        let waited = WaitForSingleObject(process, INFINITE);
+        let waited = WaitForSingleObject(process, 125_000);
+        if waited == windows::Win32::Foundation::WAIT_TIMEOUT {
+            INSTALLER_DETACHED.store(true, Ordering::Release);
+            crate::repair::set_driver_pending(true);
+            let handle = process.0 as usize;
+            std::thread::spawn(move || {
+                let process = windows::Win32::Foundation::HANDLE(handle as *mut std::ffi::c_void);
+                let _ = WaitForSingleObject(process, INFINITE);
+                let _ = CloseHandle(process);
+                OFFICIAL_INSTALLER_RUNNING.store(false, Ordering::Release);
+                INSTALLER_DETACHED.store(false, Ordering::Release);
+                crate::repair::set_driver_pending(false);
+            });
+            return Ok(HELPER_INSTALL_PENDING);
+        }
         if waited != WAIT_OBJECT_0 {
             let _ = CloseHandle(process);
             return Err(format!("等待 VB-CABLE 管理员安装助手失败: {waited:?}"));
@@ -894,8 +921,8 @@ fn run_configure_script(mode: &str, zip: &Path) -> Result<VoiceEnvActionResult, 
         app_path.display()
     );
 
-    let output = Command::new("powershell.exe")
-        .args([
+    let output = crate::windows_command::software_helper_output(
+        crate::windows_command::background_command("powershell.exe").args([
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -907,9 +934,10 @@ fn run_configure_script(mode: &str, zip: &Path) -> Result<VoiceEnvActionResult, 
             &app_path.display().to_string(),
             "-DriverZipPath",
             &zip.display().to_string(),
-        ])
-        .output()
-        .map_err(|e| format!("启动语音环境脚本失败: {e}"))?;
+        ]),
+        Duration::from_secs(15),
+    )
+    .map_err(|e| format!("启动语音环境脚本失败: {e}"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1009,6 +1037,22 @@ fn run_official_setup_installer() -> Result<VoiceEnvActionResult, String> {
         });
     }
     let _running_guard = InstallerRunGuard;
+    let endpoints = probe_and_store_voice_env_status_cache()?;
+    if endpoints.0 && endpoints.1 {
+        return Ok(check_or_prompt());
+    }
+    if crate::repair::driver_installed("(?i)^VBAudioVACMME$|vbaudio.*cable")? {
+        return Ok(VoiceEnvActionResult {
+            ok: false,
+            ready: false,
+            needs_choice: false,
+            needs_reboot: true,
+            result_code: "voice_env.installed_not_ready".into(),
+            message: "声卡驱动已安装，但端点未就绪。已停止自动重装，请重启 Windows 后重新检测。"
+                .into(),
+            report_path: None,
+        });
+    }
     let zip = find_driver_zip().ok_or_else(|| "内嵌 VB-CABLE 驱动包不可用".to_string())?;
     let setup = stage_official_setup(&zip)?;
     log::info!("launch VB-CABLE official setup path={}", setup.display());
@@ -1032,6 +1076,11 @@ fn run_official_setup_installer() -> Result<VoiceEnvActionResult, String> {
         Err(error) => return Err(error),
     };
 
+    if exit_code == HELPER_INSTALL_PENDING {
+        return Ok(VoiceEnvActionResult { ok: false, ready: false, needs_choice: false, needs_reboot: false,
+            result_code: "voice_env.install_pending".into(),
+            message: "驱动安装超过监测时间，Windows 仍在处理；请等待安装器结束。完成前不会再次安装，也不会强制结束驱动操作。".into(), report_path: None });
+    }
     invalidate_voice_env_status_cache();
     let mut endpoints = (false, false);
     for _ in 0..20 {
@@ -1313,6 +1362,10 @@ mod tests {
         assert_eq!(
             installer_ui_action(&generic_ok, true, Duration::from_secs(60)),
             InstallerUiAction::Wait
+        );
+        assert_eq!(
+            installer_ui_action(&generic_ok, true, Duration::from_secs(120)),
+            InstallerUiAction::MonitorPending
         );
 
         let error = InstallerUiFacts {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import wechatQr from "../assets/support/wechat-pay.png";
@@ -47,17 +48,13 @@ onBeforeUnmount(() => dialog.value?.close());
     @click="openSupport"
   >
     <span class="support-heart" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" />
-      </svg>
+      <AppIcon name="heart" />
     </span>
     <span class="support-copy">
       <strong>{{ t("support.button") }}</strong>
       <small>{{ t("support.hint") }}</small>
     </span>
-    <svg class="support-arrow" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-      <path d="m9 5 7 7-7 7" />
-    </svg>
+    <AppIcon class="support-arrow" name="chevron" />
   </button>
 
   <Teleport to="body">
@@ -76,9 +73,7 @@ onBeforeUnmount(() => dialog.value?.close());
           <p id="support-description">{{ t("support.description") }}</p>
         </div>
         <button type="button" class="support-close" :aria-label="t('common.close')" autofocus @click="dialog?.close()">
-          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-            <path d="m6 6 12 12M6 18 18 6" />
-          </svg>
+          <AppIcon name="close" />
         </button>
       </header>
 

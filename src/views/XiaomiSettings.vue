@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "../components/AppIcon.vue";
 import { onMounted, onUnmounted, computed, ref, nextTick, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -56,8 +57,19 @@ const restarting = ref(false);
 const voiceRepairing = ref(false);
 const virtualKeyboardRepairing = ref(false);
 const atvvRepairing = ref(false);
+const recoveryOperation = ref<string | null>(null);
+const repairNotice = ref("");
+const recoveryMessage = computed(() => recoveryOperation.value
+  ? `${recoveryOperation.value}，请等待。Windows 仍在处理时不会启动第二次修复。`
+  : repairNotice.value || (host.value?.tone !== "ok" ? host.value?.detail : "") || "");
+const showBluetoothSettings = computed(() => /不可达|配对|ATVV|语音/.test(recoveryMessage.value));
+async function openBluetoothSettings() {
+  try { await invoke("open_bluetooth_settings"); }
+  catch (error) { repairNotice.value = `无法打开蓝牙设置：${error}`; }
+}
+
 const repairBusy = computed(
-  () => restarting.value || voiceRepairing.value || virtualKeyboardRepairing.value || atvvRepairing.value,
+  () => !!recoveryOperation.value || restarting.value || voiceRepairing.value || virtualKeyboardRepairing.value || atvvRepairing.value,
 );
 const showVoiceChoice = ref(false);
 const voiceChoiceMsg = ref("");
@@ -499,9 +511,9 @@ const audioSignalLabel = computed(() => {
   return t("dashboard.noSignal");
 });
 const servicesSummary = computed(() => {
-  if (!isDeviceConnected.value || host.value.atvv_ok === false || host.value.key_bridge_state && host.value.key_bridge_state !== "ready") return t("dashboard.checking");
-  if (host.value.items.some((item) => item.tone === "error")) return t("dashboard.needsAttention");
-  if (host.value.items.some((item) => item.tone === "warn")) return t("dashboard.checking");
+  if (repairBusy.value) return t("dashboard.checking");
+  if (host.value.items.some((item) => item.tone === "error" || item.tone === "warn") || host.value.bridge_alive && host.value.atvv_ok === false) return t("dashboard.needsAttention");
+  if (!isDeviceConnected.value || host.value.key_bridge_state && host.value.key_bridge_state !== "ready") return t("dashboard.checking");
   return t("dashboard.normal");
 });
 
@@ -792,7 +804,12 @@ function showMappingFlash(
 
 async function refreshHost() {
   try {
-    host.value = await invoke<HostStatus>("get_xiaomi_host_status");
+    const [snapshot, operation] = await Promise.all([
+      invoke<HostStatus>("get_xiaomi_host_status"),
+      invoke<string | null>("get_recovery_operation"),
+    ]);
+    if (snapshot) host.value = snapshot;
+    recoveryOperation.value = operation || null;
   } catch (e) {
     host.value = {
       bridge_alive: false,
@@ -814,10 +831,13 @@ async function refreshHost() {
 async function restartBridge() {
   if (repairBusy.value) return;
   restarting.value = true;
+  repairNotice.value = "正在重启按键桥接，请等待…";
   try {
     await invoke("restart_xiaomi_bridge");
+    repairNotice.value = "按键桥接已重启，正在等待遥控器上线。";
     await refreshHost();
   } catch (e) {
+    repairNotice.value = String(e);
     host.value = {
       ...host.value,
       status_text: "重启失败",
@@ -840,12 +860,14 @@ interface AtvvRepairResult {
 async function repairAtvv() {
   if (repairBusy.value) return;
   atvvRepairing.value = true;
+  repairNotice.value = "正在重新连接语音服务，请等待…";
   let awaitingClear = false;
   try {
     const result = await invoke<AtvvRepairResult>("repair_xiaomi_atvv", {
       force: false,
     });
     awaitingClear = result.phase === "awaiting_conflict_clear";
+    repairNotice.value = result.message;
     host.value = {
       ...host.value,
       status_text: result.atvvOk
@@ -861,6 +883,7 @@ async function repairAtvv() {
     }
     await refreshHost();
   } catch (e) {
+    repairNotice.value = String(e);
     host.value = {
       ...host.value,
       status_text: "ATVV 修复失败",
@@ -883,10 +906,12 @@ interface VirtualKeyboardRepairResult {
 async function repairVirtualKeyboard() {
   if (repairBusy.value) return;
   virtualKeyboardRepairing.value = true;
+  repairNotice.value = "正在检测虚拟键盘，请等待…";
   try {
     const result = await invoke<VirtualKeyboardRepairResult>("repair_xiaomi_virtual_keyboard");
     const message = result.message || "虚拟键盘修复已完成。";
     prependLog(message);
+    repairNotice.value = message;
     host.value = {
       ...host.value,
       status_text: result.ready ? "虚拟键盘已修复" : result.restartRequired ? "虚拟键盘待重启" : "虚拟键盘未就绪",
@@ -896,6 +921,7 @@ async function repairVirtualKeyboard() {
   } catch (error) {
     const message = `虚拟键盘修复失败: ${error}`;
     prependLog(message);
+    repairNotice.value = message;
     host.value = { ...host.value, status_text: "虚拟键盘修复失败", detail: message, tone: "error" };
   } finally {
     virtualKeyboardRepairing.value = false;
@@ -1009,6 +1035,7 @@ function openVoiceRepairChoice() {
 async function chooseVoiceSource(source: "embedded" | "download_page") {
   if (repairBusy.value && !voiceRepairing.value) return;
   voiceRepairing.value = true;
+  repairNotice.value = "正在检测声卡驱动与音频端点，请等待…";
   showVoiceChoice.value = false;
   try {
     const result = await invoke<VoiceEnvActionResult>("repair_xiaomi_voice_env", {
@@ -1020,6 +1047,7 @@ async function chooseVoiceSource(source: "embedded" | "download_page") {
       tone: result.ready ? "ok" : result.ok ? "warn" : "error",
     };
     prependLog(result.message);
+    repairNotice.value = result.message;
     await refreshHost();
     if (result.needsReboot || !result.ok) {
       voiceChoiceMsg.value = result.needsReboot
@@ -1031,6 +1059,7 @@ async function chooseVoiceSource(source: "embedded" | "download_page") {
   } catch (e) {
     const msg = `语音修复失败: ${e}`;
     prependLog(msg);
+    repairNotice.value = msg;
     host.value = { ...host.value, detail: msg, tone: "error" };
     voiceChoiceMsg.value = `${msg}。请确认 UAC 后重试；其余安装器步骤会自动完成。`;
     voiceRepairTab.value = "repair";
@@ -1166,6 +1195,7 @@ onMounted(async () => {
       "xiaomi-atvv-repair-result",
       async (event) => {
         const p = event.payload || {};
+        repairNotice.value = p.message || "语音修复已结束";
         host.value = {
           ...host.value,
           status_text: p.ok ? "ATVV 已修复" : "ATVV 修复未完成",
@@ -1314,17 +1344,17 @@ watch(
             <div class="data-item">
               <span class="label">{{ t("dashboard.battery") }}</span>
               <strong>
-                <span
-                  class="battery"
-                  :class="[`is-${batteryColorTone}`, { 'is-charging': batteryIsCharging }]"
-                  aria-hidden="true"
-                >
-                  <span class="battery-fill" :style="{ width: `${batteryLevel ?? 0}%` }" />
-                  <span class="battery-flow" aria-hidden="true" />
-                  <svg class="battery-bolt" viewBox="0 0 10 14" aria-hidden="true">
-                    <path d="M5.9.7 1.2 7h3L3.7 13.3 8.9 6.4H5.7L5.9.7Z" />
-                  </svg>
-                </span>
+                <svg class="battery" :class="[`is-${batteryColorTone}`, { 'is-charging': batteryIsCharging }]" viewBox="0 0 28 16" fill="none" aria-hidden="true">
+                  <defs>
+                    <clipPath id="nexus-battery-interior"><rect x="3" y="4" width="18" height="8" rx="1" /></clipPath>
+                    <linearGradient id="nexus-battery-flow"><stop stop-color="white" stop-opacity="0" /><stop offset=".5" stop-color="white" stop-opacity=".85" /><stop offset="1" stop-color="white" stop-opacity="0" /></linearGradient>
+                  </defs>
+                  <rect x="1.5" y="2.5" width="21" height="11" rx="2.5" stroke="currentColor" stroke-width="1.5" />
+                  <path d="M25 5v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <rect class="battery-fill" x="3" y="4" :width="18 * (batteryLevel ?? 0) / 100" height="8" rx="1" fill="currentColor" />
+                  <g clip-path="url(#nexus-battery-interior)"><rect class="battery-flow" x="0" y="4" width="8" height="8" fill="url(#nexus-battery-flow)" /></g>
+                  <path class="battery-bolt" d="m13 3-5 6h4l-1 5 6-7h-4Z" fill="white" />
+                </svg>
                 {{ isDeviceConnected ? batteryLabel : "—" }}
               </strong>
             </div>
@@ -1372,6 +1402,7 @@ watch(
               :class="[`service-${item.id}`, { 'host-status-cable': item.id === 'cable' }]"
               role="listitem"
             >
+              <AppIcon :name="item.id" class="service-icon" :size="24" />
               <span class="host-item-label">{{ hostItemLabel(item.id) }}</span>
               <div class="host-state-row">
                 <span class="host-item-state" :class="itemToneClass(item.tone)">
@@ -1395,7 +1426,13 @@ watch(
               </div>
             </div>
           </div>
-          <p v-if="host.detail" class="host-detail">{{ host.detail }}</p>
+          <div v-if="recoveryMessage" class="recovery-notice" role="status" aria-live="polite">
+            <p>{{ recoveryMessage }}</p>
+            <div class="recovery-notice-actions">
+              <button v-if="showBluetoothSettings" type="button" @click="openBluetoothSettings"><AppIcon name="bluetooth" :size="18" /> 打开蓝牙设置</button>
+              <button v-if="repairNotice && !recoveryOperation && !repairBusy" type="button" @click="repairNotice = ''">关闭提示</button>
+            </div>
+          </div>
         </section>
 
         <section class="card quick-section">
@@ -1411,6 +1448,7 @@ watch(
                 :disabled="repairBusy"
                 @click="openVoiceRepairChoice"
               >
+                <AppIcon class="action-icon" name="cable" />
                 {{ voiceRepairing ? t("common.processing") : t("dashboard.repairAudioShort") }}
               </button>
               <button
@@ -1425,7 +1463,7 @@ watch(
                 @blur="scheduleCloseRepairTip"
                 @click.stop="toggleRepairTip"
               >
-                <span class="title-info-icon" aria-hidden="true">i</span>
+                <AppIcon class="title-info-icon" name="info" :size="18" />
               </button>
               <Teleport to="body">
                 <div
@@ -1470,6 +1508,7 @@ watch(
                 :disabled="repairBusy"
                 @click="repairVirtualKeyboard"
               >
+                <AppIcon class="action-icon" name="keyboard" />
                 {{ virtualKeyboardRepairing ? t("common.processing") : t("dashboard.repairVirtualKeyboard") }}
               </button>
               <button
@@ -1484,7 +1523,7 @@ watch(
                 @blur="scheduleCloseVirtualKeyboardTip"
                 @click.stop="toggleVirtualKeyboardTip"
               >
-                <span class="title-info-icon" aria-hidden="true">i</span>
+                <AppIcon class="title-info-icon" name="info" :size="18" />
               </button>
               <Teleport to="body">
                 <div
@@ -1529,6 +1568,7 @@ watch(
                 :disabled="repairBusy"
                 @click="repairAtvv"
               >
+                <AppIcon class="action-icon" name="mic" />
                 {{ atvvRepairing ? t("common.processing") : t("dashboard.repairAtvvShort") }}
               </button>
               <button
@@ -1543,7 +1583,7 @@ watch(
                 @blur="scheduleCloseAtvvTip"
                 @click.stop="toggleAtvvTip"
               >
-                <span class="title-info-icon" aria-hidden="true">i</span>
+                <AppIcon class="title-info-icon" name="info" :size="18" />
               </button>
               <Teleport to="body">
                 <div
@@ -1588,6 +1628,7 @@ watch(
                 :disabled="repairBusy"
                 @click="restartBridge"
               >
+                <AppIcon class="action-icon" name="update" />
                 {{ restarting ? t("common.processing") : t("dashboard.restartBridge") }}
               </button>
               <button
@@ -1602,7 +1643,7 @@ watch(
                 @blur="scheduleCloseRestartTip"
                 @click.stop="toggleRestartTip"
               >
-                <span class="title-info-icon" aria-hidden="true">i</span>
+                <AppIcon class="title-info-icon" name="info" :size="18" />
               </button>
               <Teleport to="body">
                 <div
@@ -1737,7 +1778,7 @@ watch(
               <button :class="{ active: voiceRepairTab === 'faq' }" type="button" role="tab" :aria-selected="voiceRepairTab === 'faq'" :tabindex="voiceRepairTab === 'faq' ? 0 : -1" @click="voiceRepairTab = 'faq'">常见问题</button>
             </div>
             <button class="voice-repair-button voice-repair-button--secondary voice-repair-close" type="button" aria-label="关闭虚拟声卡修复" :disabled="voiceRepairing" @click="showVoiceChoice = false">
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
+              <AppIcon name="close" />
             </button>
           </header>
 
@@ -1754,7 +1795,7 @@ watch(
               <p>仅需确认 Windows UAC，之后无需再点安装器。</p>
               <button class="voice-repair-button voice-repair-button--primary" type="button" :disabled="voiceRepairing" @click="runVoiceAutoRepair">
                 <span>{{ voiceRepairing ? "正在自动安装与检测…" : "开始自动修复" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <button class="voice-repair-button voice-repair-button--secondary" type="button" :disabled="voiceRepairing" @click="chooseVoiceSource('embedded')">使用内置官方驱动</button>
               <button class="voice-repair-button voice-repair-button--secondary" type="button" :disabled="cableDownloadPhase === 'downloading'" @click="startCableZipDownload">{{ cableDownloadPhase === "error" ? "重试下载官方驱动包" : "下载官方驱动包" }}</button>
@@ -1812,7 +1853,7 @@ watch(
               <span class="status-light" :class="statusLightClass(connectionPresentation.tone)" aria-hidden="true"></span>{{ bridgeStatusLabel() }}
             </span>
             <span class="mapping-save-state" :class="{ saving: configStore.saving }">
-              <span aria-hidden="true">{{ configStore.saving ? '↻' : '✓' }}</span>
+              <AppIcon :name="configStore.saving ? 'update' : 'check'" :size="16" />
               {{ configStore.saving ? t('status.savingMapping') : t('status.autosave') }}
             </span>
           </div>
@@ -1863,7 +1904,7 @@ watch(
               @blur="scheduleCloseVoiceTip"
               @click.stop="toggleVoiceTip"
             >
-              <span class="title-info-icon" aria-hidden="true">i</span>
+              <AppIcon class="title-info-icon" name="info" :size="18" />
             </button>
             <Teleport to="body">
               <div
@@ -1923,7 +1964,7 @@ watch(
               @blur="scheduleCloseTriggerTip"
               @click.stop="toggleTriggerTip"
             >
-              <span class="title-info-icon" aria-hidden="true">i</span>
+              <AppIcon class="title-info-icon" name="info" :size="18" />
             </button>
             <Teleport to="body">
               <div
@@ -1971,7 +2012,7 @@ watch(
                 :disabled="gainDb <= GAIN_MIN"
                 @click="stepGain(-GAIN_STEP)"
               >
-                −
+                <AppIcon name="minus" :size="16" />
               </button>
               <input
                 type="number"
@@ -1989,7 +2030,7 @@ watch(
                 :disabled="gainDb >= GAIN_MAX"
                 @click="stepGain(GAIN_STEP)"
               >
-                +
+                <AppIcon name="plus" :size="16" />
               </button>
             </div>
             <button
@@ -2004,7 +2045,7 @@ watch(
               @blur="scheduleCloseGainTip"
               @click.stop="toggleGainTip"
             >
-              <span class="title-info-icon" aria-hidden="true">i</span>
+              <AppIcon class="title-info-icon" name="info" :size="18" />
             </button>
             <Teleport to="body">
               <div
@@ -3020,19 +3061,16 @@ watch(
 .data-item { min-width: 0; }
 .data-item .label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
 .data-item strong { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.battery { position: relative; width: 20px; height: 10px; flex: 0 0 auto; overflow: hidden; isolation: isolate; color: var(--text-secondary); border: 1.5px solid currentColor; border-radius: 3px; }
-.battery::after { position: absolute; top: 2px; right: -4px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: currentColor; content: ""; }
-.battery-fill { position: relative; z-index: 0; display: block; height: 100%; border-radius: 1px; background: currentColor; }
+.battery { width: 28px; height: 16px; flex: 0 0 auto; color: var(--text-secondary); overflow: visible; }
 .battery.is-green { color: var(--success); }
 .battery.is-yellow { color: var(--warning); }
 .battery.is-red { color: var(--danger); }
 .battery.is-unknown { color: var(--text-secondary); }
 .battery-flow, .battery-bolt { display: none; }
-.battery.is-charging { box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent); }
-.battery.is-charging .battery-flow { position: absolute; z-index: 1; top: 1px; bottom: 1px; left: 0; display: block; width: 11px; border-radius: 999px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .18) 28%, rgba(255, 255, 255, .88) 50%, rgba(255, 255, 255, .18) 72%, transparent); filter: blur(.25px); transform: translateX(-14px); animation: battery-charge-flow 1.15s cubic-bezier(.37, 0, .21, 1) infinite; }
-.battery.is-charging .battery-bolt { position: absolute; z-index: 2; top: 50%; left: 50%; display: block; width: 7px; height: 9px; transform: translate(-50%, -50%); fill: #fff; filter: drop-shadow(0 0 1.5px color-mix(in srgb, currentColor 85%, #fff)); }
-@keyframes battery-charge-flow { from { transform: translateX(-14px); opacity: .2; } 18% { opacity: 1; } 82% { opacity: 1; } to { transform: translateX(23px); opacity: .2; } }
-@media (prefers-reduced-motion: reduce) { .battery.is-charging .battery-flow { animation: none; transform: translateX(5px); opacity: .42; } }
+.battery.is-charging .battery-flow { display: block; animation: battery-charge-flow 1.15s ease-in-out infinite; }
+.battery.is-charging .battery-bolt { display: block; }
+@keyframes battery-charge-flow { from { transform: translateX(-8px); opacity: .2; } 20% { opacity: 1; } 80% { opacity: 1; } to { transform: translateX(23px); opacity: .2; } }
+@media (prefers-reduced-motion: reduce) { .battery.is-charging .battery-flow { animation: none; transform: translateX(8px); opacity: .4; } }
 .data-item-audio.is-atvv-error strong { color: var(--danger); }
 .data-item-audio .ble-wave { width: 62px; height: 11px; gap: 2px; margin-top: 7px; padding: 1px 0; border: 0; border-radius: 0; background: transparent; }
 .data-item-audio .ble-wave-bar { min-width: 2px; max-width: 4px; border-radius: 2px; background: var(--success); }
@@ -3045,11 +3083,6 @@ watch(
 .host-card { padding: 16px; }
 .host-status-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
 .host-status-item { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto auto; gap: 3px 8px; min-width: 0; min-height: 68px; padding: 10px 12px; border-radius: 8px; background: var(--surface-soft); }
-.host-status-item::before { grid-row: 1 / span 2; width: 28px; height: 28px; display: grid; place-items: center; align-self: center; border-radius: 8px; color: var(--primary); background: var(--surface-selected); font-size: 14px; font-weight: 700; content: "⌁"; }
-.host-status-item.service-cable::before { content: "▭"; }
-.host-status-item.service-audio::before { content: "◉"; }
-.host-status-item.service-bridge::before { content: "⌘"; }
-.host-status-item.service-injection::before { content: "⌨"; }
 .host-item-label { grid-column: 2; grid-row: 1; align-self: end; margin: 0; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .host-state-row { grid-column: 2; grid-row: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .host-item-state { display: inline-flex; align-items: center; gap: 5px; min-width: 0; margin: 0; color: var(--success-text); font-size: 11px; font-weight: 700; white-space: nowrap; }
@@ -3092,7 +3125,7 @@ watch(
 @media (min-width: 1020px) {
   .dashboard-page .overview-left {
     display: grid;
-    grid-template-rows: minmax(178px, 1.35fr) minmax(136px, .825fr) minmax(138px, .825fr);
+    grid-template-rows: minmax(178px, 1.35fr) minmax(min-content, .825fr) minmax(138px, .825fr);
     flex: 1;
     min-height: 0;
   }
@@ -3266,4 +3299,17 @@ watch(
 :root[data-theme="dark"] .floating-info-tip .tip-foot {
   border-top-color: var(--border-strong);
 }
+</style>
+
+<style scoped>
+.recovery-notice { margin-top: 16px; padding: 14px 16px; border: 1px solid var(--border-color, #555); border-radius: 12px; color: var(--text-primary); background: var(--bg-secondary); min-width: 0; }
+.recovery-notice p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; overflow: visible; text-overflow: clip; display: block; line-height: 1.6; }
+.recovery-notice-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.recovery-notice-actions button { padding: 7px 12px; border: 1px solid var(--border-color, #666); border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
+</style>
+
+<style scoped>
+.service-icon { grid-column: 1; grid-row: 1 / span 2; align-self: center; color: var(--primary); }
+.action-icon { margin-right: 6px; }
+.title-info-icon.app-icon { border: 0; border-radius: 0; background: transparent; font-style: normal; }
 </style>

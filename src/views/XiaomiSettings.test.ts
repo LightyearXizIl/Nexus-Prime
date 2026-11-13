@@ -140,6 +140,28 @@ describe("XiaomiSettings virtual keyboard repair", () => {
   });
 });
 
+describe("persistent recovery explanation", () => {
+  it("keeps the complete advice outside the activity list and opens Bluetooth settings", async () => {
+    const message = "语音服务不可达；若遥控器已开机且靠近电脑，请删除设备后重新配对。";
+    const wrapper = await mountView();
+    invoke.mockImplementation((command: string) => {
+      if (command === "repair_xiaomi_atvv") return Promise.resolve({ phase: "done", atvvOk: false, message });
+      if (command === "get_recovery_operation") return Promise.resolve(null);
+      if (command === "get_xiaomi_host_status") return Promise.resolve({ bridge_alive: true, audio_alive: true, cable_ready: true, atvv_ok: false, status_text: "检查中", detail: "后台刷新", tone: "warn", items: [] });
+      return Promise.resolve(undefined);
+    });
+    await buttonByText(wrapper, "修复语音连接").trigger("click");
+    await flushPromises();
+    const notice = wrapper.get(".recovery-notice");
+    expect(notice.get("p").text()).toBe(message);
+    expect(wrapper.get(".host-card").text()).not.toContain("服务正在检测中");
+    expect(notice.attributes("role")).toBe("status");
+    expect(notice.find(".timeline").exists()).toBe(false);
+    await buttonByText(wrapper, "打开蓝牙设置").trigger("click");
+    expect(invoke).toHaveBeenCalledWith("open_bluetooth_settings");
+  });
+});
+
 describe("XiaomiSettings saved input-method status", () => {
   it.each([
     ["wechat", 1, 0], ["wechat-current", 1, 1],

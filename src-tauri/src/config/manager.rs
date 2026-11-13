@@ -304,6 +304,7 @@ impl Default for GlobalSettings {
 
 pub struct ConfigManager {
     config_dir: PathBuf,
+    device_config_lock: parking_lot::ReentrantMutex<()>,
     /// 设备配置内存缓存：按键热路径避免每次读盘+JSON
     device_cache: Mutex<HashMap<String, DeviceConfig>>,
     /// 全局设置读改写需要串行，避免主题快捷切换覆盖表单保存。
@@ -319,6 +320,7 @@ impl ConfigManager {
         Ok(Self {
             config_dir,
             device_cache: Mutex::new(HashMap::new()),
+            device_config_lock: parking_lot::ReentrantMutex::new(()),
             global_settings_lock: Mutex::new(()),
         })
     }
@@ -354,10 +356,6 @@ impl ConfigManager {
                 if changed {
                     if removed_voice_gestures {
                         log::info!("XIAOMI CONFIG removed legacy voice gesture bindings");
-                        crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
-                            "voice_gesture_config_removed",
-                        );
-                        crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
                     }
                     self.write_device_config(device, &config)?;
                 }
@@ -370,6 +368,7 @@ impl ConfigManager {
 
     /// 获取设备配置（内存缓存；未命中再读盘）
     pub fn get_device_config(&self, device: &str) -> Result<DeviceConfig, String> {
+        let _transaction = self.device_config_lock.lock();
         if let Some(cached) = self.device_cache.lock().get(device).cloned() {
             return Ok(cached);
         }
@@ -563,30 +562,78 @@ impl ConfigManager {
     }
 
     /// 保存设备配置（写临时文件 → sync → rename；并更新缓存）
-    pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
+    fn save_device_config_locked(
+        &self,
+        device: &str,
+        config: &DeviceConfig,
+    ) -> Result<bool, String> {
         let mut config = config.clone();
+        let mut removed_voice = false;
         if device == "xiaomi" {
-            if Self::migrate_deprecated_wechat_hold_profile(&mut config) {
-                log::info!("XIAOMI CONFIG migrated deprecated wechat-hold profile during save");
-            }
-            let (_, removed_voice_gestures) = Self::sanitize_xiaomi_gesture_bindings(&mut config);
-            if removed_voice_gestures {
+            Self::migrate_deprecated_wechat_hold_profile(&mut config);
+            let (_, removed) = Self::sanitize_xiaomi_gesture_bindings(&mut config);
+            removed_voice = removed;
+            crate::bridges::xiaomi::key_mapping::sync_voice_from_mic_binding(&mut config);
+        }
+        self.write_device_config(device, &config)?;
+        self.device_cache.lock().insert(device.to_string(), config);
+        Ok(removed_voice)
+    }
+
+    fn config_committed(device: &str, removed_voice: bool) {
+        // Windows input callbacks may read config: never dispatch input under its lock.
+        if device == "xiaomi" {
+            if removed_voice {
                 crate::bridges::xiaomi::key_mapping::reset_voice_input_state(
                     "voice_gesture_config_removed",
                 );
             }
             crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
-            crate::bridges::xiaomi::key_mapping::sync_voice_from_mic_binding(&mut config);
         }
-        self.write_device_config(device, &config)?;
+    }
 
-        self.device_cache.lock().insert(device.to_string(), config);
+    pub fn save_device_config(&self, device: &str, config: &DeviceConfig) -> Result<(), String> {
+        let removed = {
+            let _transaction = self.device_config_lock.lock();
+            self.save_device_config_locked(device, config)?
+        };
+        Self::config_committed(device, removed);
+        Ok(())
+    }
+
+    /// Serialize read/change/persist/cache without holding the lock during input cleanup.
+    pub fn update_device_config(
+        &self,
+        device: &str,
+        update: impl FnOnce(&mut DeviceConfig),
+    ) -> Result<DeviceConfig, String> {
+        let (config, removed) = {
+            let _transaction = self.device_config_lock.lock();
+            let mut config = self.get_device_config(device)?;
+            update(&mut config);
+            let removed = self.save_device_config_locked(device, &config)?;
+            (self.get_device_config(device)?, removed)
+        };
+        Self::config_committed(device, removed);
+        Ok(config)
+    }
+
+    pub fn update_bluetooth_address(&self, address: String) -> Result<(), String> {
+        let _transaction = self.device_config_lock.lock();
+        let mut config = self.get_device_config("xiaomi")?;
+        if config.bluetooth_address.as_ref() != Some(&address) {
+            config.bluetooth_address = Some(address);
+            // Discovery metadata must not cancel active gestures or modify mappings.
+            self.write_device_config("xiaomi", &config)?;
+            self.device_cache.lock().insert("xiaomi".into(), config);
+        }
         Ok(())
     }
 
     /// 恢复小米遥控器的普通按键默认值。音量、静音和语音属于独立设置，
     /// 不能被这个批量操作覆盖。
     pub fn reset_xiaomi_standard_key_bindings(&self) -> Result<DeviceConfig, String> {
+        let _transaction = self.device_config_lock.lock();
         let mut config = self.get_device_config("xiaomi")?;
         let defaults = Self::xiaomi_default_bindings();
         let standard = [
@@ -617,7 +664,9 @@ impl ConfigManager {
             config.multi_click_bindings.remove(id);
         }
 
-        self.save_device_config("xiaomi", &config)?;
+        let removed = self.save_device_config_locked("xiaomi", &config)?;
+        drop(_transaction);
+        Self::config_committed("xiaomi", removed);
         log::info!("XIAOMI CONFIG reset standard key bindings; voice and volume preserved");
         Ok(config)
     }
@@ -849,6 +898,61 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_metadata_and_mapping_updates_preserve_disk_and_cache() {
+        let config_dir = std::env::temp_dir().join(format!(
+            "nexus-config-transaction-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&config_dir).unwrap();
+        let manager = std::sync::Arc::new(ConfigManager {
+            config_dir: config_dir.clone(),
+            device_cache: Mutex::new(HashMap::new()),
+            device_config_lock: parking_lot::ReentrantMutex::new(()),
+            global_settings_lock: Mutex::new(()),
+        });
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let joins: Vec<_> = (0..2)
+            .map(|worker| {
+                let manager = manager.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for n in 0..20 {
+                        if worker == 0 {
+                            manager
+                                .update_bluetooth_address(format!("AA:BB:CC:DD:EE:{n:02X}"))
+                                .unwrap();
+                        } else {
+                            manager
+                                .update_device_config("xiaomi", |c| {
+                                    c.button_bindings
+                                        .insert("menu".into(), KeyAction::SingleKey(0x41 + n));
+                                })
+                                .unwrap();
+                        }
+                    }
+                })
+            })
+            .collect();
+        barrier.wait();
+        for join in joins {
+            join.join().unwrap();
+        }
+        let cached = manager.get_device_config("xiaomi").unwrap();
+        let disk = manager.load_device_config_from_disk("xiaomi").unwrap();
+        assert_eq!(
+            disk.button_bindings.get("menu"),
+            Some(&KeyAction::SingleKey(0x54))
+        );
+        assert_eq!(disk.bluetooth_address.as_deref(), Some("AA:BB:CC:DD:EE:13"));
+        assert_eq!(disk.button_bindings, cached.button_bindings);
+        assert_eq!(disk.bluetooth_address, cached.bluetooth_address);
+        fs::remove_dir_all(&config_dir).unwrap();
+    }
+    #[test]
     fn reset_standard_bindings_restores_only_standard_keys_and_gestures() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -859,6 +963,7 @@ mod tests {
         let manager = ConfigManager {
             config_dir: config_dir.clone(),
             device_cache: Mutex::new(HashMap::new()),
+            device_config_lock: parking_lot::ReentrantMutex::new(()),
             global_settings_lock: Mutex::new(()),
         };
         let mut config = ConfigManager::default_config_for("xiaomi");
@@ -1054,6 +1159,7 @@ mod tests {
         let manager = ConfigManager {
             config_dir: config_dir.clone(),
             device_cache: Mutex::new(HashMap::new()),
+            device_config_lock: parking_lot::ReentrantMutex::new(()),
             global_settings_lock: Mutex::new(()),
         };
         let loaded = manager.get_device_config("xiaomi").unwrap();

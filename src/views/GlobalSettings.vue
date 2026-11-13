@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "../components/AppIcon.vue";
 import { computed, onMounted, ref } from "vue";
 import { loggedInvoke as invoke } from "../utils/appLogger";
 import { getVersion } from "@tauri-apps/api/app";
@@ -204,15 +205,7 @@ async function openExternal(url: string) {
           @click="saveSettings"
         >
           <span class="save-button-symbol" aria-hidden="true">
-            <svg class="save-button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <template v-if="saving">
-                <circle cx="12" cy="12" r="8" opacity=".25" />
-                <path d="M12 4a8 8 0 0 1 8 8" />
-              </template>
-              <path v-else-if="saveError" d="m12 3 10 18H2L12 3Zm0 5v5m0 4h.01" />
-              <path v-else-if="saved" d="m5 12 4 4L19 6" />
-              <path v-else d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4" />
-            </svg>
+            <AppIcon class="save-button-icon" :name="saving ? 'update' : saveError ? 'alert' : saved ? 'check' : 'save'" />
           </span>
           <span class="save-button-label" aria-live="polite" aria-atomic="true">{{ saveButtonLabel }}</span>
         </button>
@@ -261,7 +254,7 @@ async function openExternal(url: string) {
           </div>
           <div class="settings-list">
             <div class="preference-row">
-              <div class="preference-icon" aria-hidden="true">↗</div>
+              <div class="preference-icon"><AppIcon name="power" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.autostart") }}</strong>
                 <span>{{ t("settings.autostartHint") }}</span>
@@ -272,7 +265,7 @@ async function openExternal(url: string) {
               </label>
             </div>
             <div class="preference-row" :class="{ 'is-disabled': !settings.autostart }">
-              <div class="preference-icon" aria-hidden="true">⌄</div>
+              <div class="preference-icon"><AppIcon name="tray" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.autostartMinimize") }}</strong>
                 <span>{{ settings.autostart ? t("settings.autostartMinimizeHint") : t("settings.autostartMinimizeDisabledHint") }}</span>
@@ -283,7 +276,7 @@ async function openExternal(url: string) {
               </label>
             </div>
             <div class="preference-row">
-              <div class="preference-icon" aria-hidden="true">⊟</div>
+              <div class="preference-icon"><AppIcon name="tray" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.tray") }}</strong>
                 <span>{{ t("settings.trayHint") }}</span>
@@ -294,7 +287,7 @@ async function openExternal(url: string) {
               </label>
             </div>
             <div class="preference-row">
-              <div class="preference-icon" aria-hidden="true">↑</div>
+              <div class="preference-icon"><AppIcon name="update" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.updates") }}</strong>
                 <span>{{ t("settings.updatesHint") }}</span>
@@ -305,7 +298,7 @@ async function openExternal(url: string) {
               </label>
             </div>
             <div class="preference-row">
-              <div class="preference-icon" aria-hidden="true">♩</div>
+              <div class="preference-icon"><AppIcon name="mic" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.remoteMicrophoneAlwaysOn") }}</strong>
                 <span>{{ t("settings.remoteMicrophoneAlwaysOnHint") }}</span>
@@ -316,7 +309,7 @@ async function openExternal(url: string) {
               </label>
             </div>
             <div class="preference-row" :class="{ 'is-disabled': settings.remote_microphone_always_on }">
-              <div class="preference-icon" aria-hidden="true">◷</div>
+              <div class="preference-icon"><AppIcon name="clock" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.remoteMicrophoneRestoreDelay") }}</strong>
                 <span>{{ settings.remote_microphone_always_on ? t("settings.remoteMicrophoneRestoreDelayAlwaysOnHint") : t("settings.remoteMicrophoneRestoreDelayHint") }}</span>
@@ -333,7 +326,7 @@ async function openExternal(url: string) {
               </div>
             </div>
             <div class="preference-row">
-              <div class="preference-icon" aria-hidden="true">▤</div>
+              <div class="preference-icon"><AppIcon name="log" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.logRetention") }}</strong>
                 <span>{{ t("settings.logRetentionHint") }}</span>
@@ -362,7 +355,7 @@ async function openExternal(url: string) {
           </div>
           <div class="settings-list appearance-list">
             <div class="preference-row language-row">
-              <div class="preference-icon" aria-hidden="true">文</div>
+              <div class="preference-icon"><AppIcon name="globe" /></div>
               <div class="preference-copy">
                 <strong>{{ t("settings.language") }}</strong>
                 <span>{{ t("settings.languageHint") }}</span>
@@ -375,7 +368,7 @@ async function openExternal(url: string) {
             </div>
             <div class="theme-preference">
               <div class="theme-copy">
-                <div class="preference-icon" aria-hidden="true">◐</div>
+                <div class="preference-icon"><AppIcon name="palette" /></div>
                 <div class="preference-copy">
                   <strong>{{ t("settings.theme") }}</strong>
                   <span>{{ t("settings.themeHint") }}</span>
@@ -435,10 +428,7 @@ async function openExternal(url: string) {
                     :aria-label="`应用更新：${updateControlState.label}`"
                     @click="handleUpdateControl"
                   >
-                    <span class="update-orbit-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-                        <path d="m13 2-9 12h6l-1 8 11-14h-6l-1-6Z" />
-                      </svg>
+                    <span class="update-orbit-icon" aria-hidden="true"><AppIcon name="download" />
                     </span>
                     <span class="update-orbit-track" aria-hidden="true"><i :class="{ indeterminate: updateControlState.indeterminate }" :style="{ width: `${updateControlState.progress}%` }"></i></span>
                     <span class="update-orbit-label">{{ updateControlState.label }}</span>

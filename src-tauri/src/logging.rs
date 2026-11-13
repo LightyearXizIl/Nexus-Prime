@@ -191,8 +191,8 @@ fn start_writer(dir: PathBuf, cleanup_enabled: bool) -> LogWriter {
                 }
                 let path = active_log_path(&dir);
                 // 每个会话以及跨日/分段后的文件都自带环境，不依赖另外一个文件。
-                let environment_header = (previous_path.as_ref() != Some(&path))
-                    .then(environment_snapshot_line);
+                let environment_header =
+                    (previous_path.as_ref() != Some(&path)).then(environment_snapshot_line);
                 match OpenOptions::new().create(true).append(true).open(&path) {
                     Ok(mut file) => {
                         let result = (|| {
@@ -207,7 +207,8 @@ fn start_writer(dir: PathBuf, cleanup_enabled: bool) -> LogWriter {
                                 Some(format!("写入日志失败: {error}"));
                         } else {
                             *error_slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                            *written_path_slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.clone());
+                            *written_path_slot.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(path.clone());
                             previous_path = Some(path);
                         }
                     }
@@ -218,7 +219,11 @@ fn start_writer(dir: PathBuf, cleanup_enabled: bool) -> LogWriter {
                 }
             }
         });
-    LogWriter { sender, last_error, last_written_path }
+    LogWriter {
+        sender,
+        last_error,
+        last_written_path,
+    }
 }
 
 fn enqueue(line: String) {
@@ -334,8 +339,15 @@ pub fn clear_old_logs() -> Result<LogCleanupResult, String> {
 }
 
 pub fn log_path() -> Option<PathBuf> {
-    WRITER.get()
-        .and_then(|writer| writer.last_written_path.lock().ok().and_then(|path| path.clone()))
+    WRITER
+        .get()
+        .and_then(|writer| {
+            writer
+                .last_written_path
+                .lock()
+                .ok()
+                .and_then(|path| path.clone())
+        })
         .filter(|path| is_current_log_path(path))
         .or_else(|| LOG_DIR.get().map(|dir| active_log_path(dir)))
 }
@@ -360,7 +372,8 @@ pub fn list_log_files() -> Vec<AppLogFile> {
     let Some(dir) = LOG_DIR.get() else {
         return Vec::new();
     };
-    let current = log_path().unwrap_or_else(|| active_log_path(dir))
+    let current = log_path()
+        .unwrap_or_else(|| active_log_path(dir))
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
@@ -426,7 +439,10 @@ fn log_text_with_environment(text: &str, max_chars: usize) -> String {
         return format!("{missing_environment}{text}");
     }
     let skip = character_count.saturating_sub(max_chars);
-    let byte_offset = text.char_indices().nth(skip).map_or(text.len(), |(offset, _)| offset);
+    let byte_offset = text
+        .char_indices()
+        .nth(skip)
+        .map_or(text.len(), |(offset, _)| offset);
     // 按整行截取，避免截断 JSON 环境记录；把被截掉的环境记录一起保留。
     let tail_start = text[byte_offset..]
         .find('\n')
@@ -494,7 +510,10 @@ fn cache_session_environment() {
 
 fn environment_snapshot_line() -> String {
     // 仅使用带采集时间的会话快照，写盘线程不做设备查询或产生嵌套日志。
-    let details = SESSION_ENVIRONMENT.get().map(String::as_str).unwrap_or("null");
+    let details = SESSION_ENVIRONMENT
+        .get()
+        .map(String::as_str)
+        .unwrap_or("null");
     format_line(log::Level::Info, &format!(
         "EVENT category=environment action=snapshot outcome=success source=session_start snapshot={details}"
     ))
@@ -510,6 +529,7 @@ pub struct EnvironmentSnapshot {
     pub event_sequence: u64,
     pub app_version: String,
     pub build_profile: String,
+    pub build_id: String,
     pub process_id: u32,
     pub executable_path: String,
     pub executable_sha256: Option<String>,
@@ -715,6 +735,7 @@ pub fn collect_environment_snapshot() -> EnvironmentSnapshot {
         captured_at_utc: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         event_sequence: EVENT_SEQUENCE.load(Ordering::Acquire),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        build_id: env!("NEXUS_BUILD_ID").into(),
         build_profile: if cfg!(debug_assertions) {
             "debug"
         } else {
@@ -751,8 +772,8 @@ pub fn redact_sensitive_text(text: &str) -> String {
             && chars[index] == '\\'
             && chars[index + 1] == '\\'
             && !chars[index + 2].is_whitespace();
-        let is_device_path = is_unc_path
-            && chars[index..].iter().find(|value| **value != '\\') == Some(&'?');
+        let is_device_path =
+            is_unc_path && chars[index..].iter().find(|value| **value != '\\') == Some(&'?');
         let is_mac = index + 16 < chars.len()
             && (0..17).all(|offset| {
                 let value = chars[index + offset];
@@ -765,8 +786,12 @@ pub fn redact_sensitive_text(text: &str) -> String {
         let is_hex_address = index + 13 < chars.len()
             && chars[index] == '0'
             && matches!(chars[index + 1], 'x' | 'X')
-            && chars[index + 2..index + 14].iter().all(char::is_ascii_hexdigit)
-            && chars.get(index + 14).is_none_or(|value| !value.is_ascii_hexdigit());
+            && chars[index + 2..index + 14]
+                .iter()
+                .all(char::is_ascii_hexdigit)
+            && chars
+                .get(index + 14)
+                .is_none_or(|value| !value.is_ascii_hexdigit());
         if is_drive_path || is_unc_path {
             output.push_str("<path-redacted>");
             index += if is_drive_path { 3 } else { 2 };
@@ -809,11 +834,14 @@ pub fn redact_sensitive_text(text: &str) -> String {
 pub fn redact_json_value(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::String(text) => serde_json::Value::String(redact_sensitive_text(&text)),
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items.into_iter().map(redact_json_value).collect(),
-        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_json_value).collect())
+        }
         serde_json::Value::Object(items) => serde_json::Value::Object(
-            items.into_iter().map(|(key, value)| (key, redact_json_value(value))).collect(),
+            items
+                .into_iter()
+                .map(|(key, value)| (key, redact_json_value(value)))
+                .collect(),
         ),
         other => other,
     }
@@ -921,6 +949,21 @@ mod tests {
     }
 
     #[test]
+    fn complete_export_keeps_early_repair_events_and_redacts_them() {
+        let text = format!(
+            "EARLY_REPAIR C:\\Users\\SecretUser\\private.log AA:BB:CC:DD:EE:FF\n{}\nLATEST",
+            "x".repeat(90_000)
+        );
+        let preview = log_text_with_environment(&text, 80_000);
+        assert!(!preview.contains("EARLY_REPAIR"));
+        let complete = redact_sensitive_text(&log_text_with_environment(&text, usize::MAX));
+        assert!(complete.contains("EARLY_REPAIR"));
+        assert!(complete.contains("LATEST"));
+        assert!(!complete.contains("SecretUser"));
+        assert!(!complete.contains("AA:BB:CC:DD:EE:FF"));
+    }
+
+    #[test]
     fn truncated_log_preserves_its_own_environment_and_diagnostic_records() {
         let text = concat!(
             "EVENT category=environment action=snapshot outcome=success historical_pc=true\n",
@@ -946,27 +989,48 @@ mod tests {
     #[test]
     fn writer_flush_keeps_environment_with_each_new_segment() {
         let dir = std::env::temp_dir().join(format!(
-            "nexus-log-segment-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            "nexus-log-segment-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         fs::create_dir_all(&dir).unwrap();
         let writer = start_writer(dir.clone(), false);
         let flush_writer = || {
             let (reply, receiver) = mpsc::sync_channel(1);
             writer.sender.send(WriterMessage::Flush(reply)).unwrap();
-            receiver.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+            receiver
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap();
         };
-        writer.sender.send(WriterMessage::Line("first\n".into())).unwrap();
+        writer
+            .sender
+            .send(WriterMessage::Line("first\n".into()))
+            .unwrap();
         flush_writer();
         let initial = active_log_path(&dir);
         let text = fs::read_to_string(&initial).unwrap();
         assert!(text.contains("category=environment action=snapshot"));
         assert!(text.ends_with("first\n"));
-        OpenOptions::new().write(true).open(&initial).unwrap().set_len(MAX_SEGMENT_BYTES).unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&initial)
+            .unwrap()
+            .set_len(MAX_SEGMENT_BYTES)
+            .unwrap();
         // 满段后的下一写目标尚不存在；读取仍必须绑定实际已写的这一段。
         assert_ne!(active_log_path(&dir), initial);
-        assert_eq!(*writer.last_written_path.lock().unwrap(), Some(initial.clone()));
-        writer.sender.send(WriterMessage::Line("second\n".into())).unwrap();
+        assert_eq!(
+            *writer.last_written_path.lock().unwrap(),
+            Some(initial.clone())
+        );
+        writer
+            .sender
+            .send(WriterMessage::Line("second\n".into()))
+            .unwrap();
         flush_writer();
         let next = active_log_path(&dir);
         assert_ne!(initial, next);
@@ -979,11 +1043,17 @@ mod tests {
 
     #[test]
     fn prior_day_written_file_is_not_treated_as_the_current_log() {
-        let yesterday = chrono::Local::now().date_naive()
-            .checked_sub_days(chrono::Days::new(1)).unwrap();
-        assert!(!is_current_log_path(Path::new(&format!("app-{yesterday}.log"))));
+        let yesterday = chrono::Local::now()
+            .date_naive()
+            .checked_sub_days(chrono::Days::new(1))
+            .unwrap();
+        assert!(!is_current_log_path(Path::new(&format!(
+            "app-{yesterday}.log"
+        ))));
         let today = chrono::Local::now().format("%Y-%m-%d");
-        assert!(is_current_log_path(Path::new(&format!("app-{today}.2.log"))));
+        assert!(is_current_log_path(Path::new(&format!(
+            "app-{today}.2.log"
+        ))));
     }
 
     #[test]

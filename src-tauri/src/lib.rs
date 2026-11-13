@@ -4,6 +4,7 @@ pub mod chatgpt_focus;
 pub mod config;
 pub mod ipc;
 pub mod logging;
+pub mod repair;
 pub mod update;
 pub mod windows_command;
 
@@ -21,7 +22,15 @@ unsafe extern "C" {}
 use tauri::{Manager, RunEvent};
 
 /// 退出前统一清理：停桥接 + HID Tap + 卸键盘钩子，避免进程残留
-fn cleanup_on_exit(app: &tauri::AppHandle) {
+static EXIT_CLEANED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static EXIT_CLEANUP_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+pub(crate) fn cleanup_on_exit(app: &tauri::AppHandle) {
+    if EXIT_CLEANUP_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    bridges::xiaomi::key_mapping::cancel_pending_gestures();
+    bridges::xiaomi::hid_injector::release_all();
     if let Some(runtime) =
         app.try_state::<std::sync::Arc<bridges::xiaomi::connect::XiaomiRuntime>>()
     {
@@ -33,6 +42,7 @@ fn cleanup_on_exit(app: &tauri::AppHandle) {
     bridges::xiaomi::hid_report_tap::stop_and_join();
     bridges::xiaomi::special_keys::stop_special_key_hook();
     audio::pcm_router::stop_audio_router_process();
+    EXIT_CLEANED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn focus_main_window(app: &tauri::AppHandle) {
@@ -305,6 +315,9 @@ pub fn run() {
             ipc::commands::kill_xiaomi_conflicts,
             ipc::commands::retry_xiaomi_after_conflict_clear,
             ipc::commands::repair_xiaomi_atvv,
+            ipc::commands::get_recovery_operation,
+            ipc::commands::open_bluetooth_settings,
+            ipc::commands::control_main_window,
             update::check_for_update,
             update::download_update,
             update::cancel_update_download,
@@ -314,9 +327,13 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             match event {
-                RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                    cleanup_on_exit(app_handle);
+                RunEvent::ExitRequested { api, .. } => {
+                    if !EXIT_CLEANED.load(std::sync::atomic::Ordering::SeqCst) {
+                        api.prevent_exit();
+                        ipc::tray::quit_app_public(app_handle);
+                    }
                 }
+                RunEvent::Exit => cleanup_on_exit(app_handle),
                 _ => {}
             }
         });

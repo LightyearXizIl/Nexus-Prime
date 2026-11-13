@@ -162,7 +162,7 @@ function Bind-AndPresentRootDevice([string]$InfPath, [string]$PnputilPath) {
   Write-Phase 'BindDriver' "selecting staged compatible driver for $instanceId"
   [WinUHidRootInstaller]::InstallMatchingDriver($instanceId)
   Write-Phase 'BindDriver' 'SetupAPI DIF_INSTALLDEVICE OK'
-  Invoke-PnputilPhase -PnputilPath $PnputilPath -PhaseName 'ScanDevices' -Arguments @('/scan-devices') -AllowedExitCodes @(0) | Out-Null
+  # Binding targets this one root node; never trigger a system-wide PnP rescan.
 }
 
 function Wait-WinUHidReady {
@@ -224,6 +224,7 @@ try {
         Write-Output 'Result: OK'
         exit 0
       }
+      if (Get-RootDeviceInstanceId) { Write-Phase 'Verify' 'existing root device; restart required, no rebind'; exit 3010 }
       foreach ($name in @('WinUHidDriver.inf', 'WinUHidDriver.dll', 'WinUHidDriver.cat')) {
         if (-not (Test-Path -LiteralPath (Join-Path $PackageDir $name))) { throw "Missing driver package file: $name" }
       }

@@ -3,6 +3,10 @@ import { createPinia, setActivePinia } from "pinia";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
+const { windowInvoke } = vi.hoisted(() => ({ windowInvoke: vi.fn().mockResolvedValue(false) }));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true, invoke: windowInvoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+vi.mock("../utils/appLogger", () => ({ loggedInvoke: windowInvoke }));
 import { useBridgeStore } from "../stores/bridge";
 import SideNav from "./SideNav.vue";
 
@@ -47,6 +51,19 @@ describe("SideNav device chip", () => {
     expect(chip.classes()).toContain("disconnected");
     expect(chip.text()).toContain("设备未连接");
     expect(chip.text()).not.toContain("小米蓝牙遥控器");
+  });
+
+  it("routes custom window controls to the native window and has one brand", async () => {
+    const wrapper = mountSideNav("Connected");
+    await wrapper.get('[aria-label="最小化"]').trigger("click");
+    await wrapper.get('[aria-label="最大化"]').trigger("click");
+    await wrapper.get('[aria-label="关闭窗口"]').trigger("click");
+    for (const action of ["minimize", "maximize", "close"]) {
+      expect(windowInvoke).toHaveBeenCalledWith("control_main_window", { action });
+    }
+    expect(wrapper.findAll(".brand-symbol")).toHaveLength(1);
+    expect(wrapper.get("header").attributes()).toHaveProperty("data-tauri-drag-region");
+    wrapper.unmount();
   });
 
   it("only shows the real device name after a connection succeeds", () => {

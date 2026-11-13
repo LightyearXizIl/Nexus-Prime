@@ -1,22 +1,22 @@
 //! 对齐 Python `virtual_hid_keyboard.py`：动态加载 WinUHid.dll，优先虚拟 HID，失败回退 SendInput
 
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const KEYBOARD_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25,
-    0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x05,
-    0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02, 0x95, 0x01, 0x75, 0x03, 0x91,
-    0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x73, 0x05, 0x07, 0x19, 0x00, 0x29, 0x73,
-    0x81, 0x00, 0xC0,
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01,
+    0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x05, 0x75, 0x01,
+    0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02, 0x95, 0x01, 0x75, 0x03, 0x91, 0x01, 0x95, 0x06,
+    0x75, 0x08, 0x15, 0x00, 0x25, 0x73, 0x05, 0x07, 0x19, 0x00, 0x29, 0x73, 0x81, 0x00, 0xC0,
 ];
 
 const CONSUMER_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A, 0xFF,
-    0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00, 0xC0,
+    0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A, 0xFF, 0x03,
+    0x75, 0x10, 0x95, 0x01, 0x81, 0x00, 0xC0,
 ];
 
 #[repr(C, packed)]
@@ -35,8 +35,7 @@ struct WinUHidDeviceConfig {
 
 type FnGetVersion = unsafe extern "system" fn() -> u32;
 type FnCreateDevice = unsafe extern "system" fn(*const WinUHidDeviceConfig) -> *mut c_void;
-type FnStartDevice =
-    unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void) -> i32;
+type FnStartDevice = unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void) -> i32;
 type FnSubmitReport = unsafe extern "system" fn(*mut c_void, *const u8, u32) -> i32;
 type FnDestroyDevice = unsafe extern "system" fn(*mut c_void);
 
@@ -52,6 +51,7 @@ struct Devices {
     api: Api,
     keyboard: *mut c_void,
     consumer: *mut c_void,
+    owners: ReportOwners,
 }
 
 #[cfg(target_os = "windows")]
@@ -73,6 +73,38 @@ impl Drop for Devices {
 
 // 句柄仅在本模块内通过 Mutex 使用
 unsafe impl Send for Devices {}
+
+#[derive(Default, Clone)]
+struct ReportOwners(BTreeMap<u64, Vec<u16>>);
+impl ReportOwners {
+    fn keys(&self) -> Vec<u16> {
+        let mut keys: Vec<u16> = self.0.values().flatten().copied().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+    fn keyboard_report(&self) -> Result<[u8; 8], String> {
+        build_keyboard_report(
+            &self
+                .keys()
+                .into_iter()
+                .filter(|vk| consumer_usage(*vk).is_none())
+                .collect::<Vec<_>>(),
+        )
+    }
+    fn consumer_report(&self) -> Result<[u8; 2], String> {
+        let usages: Vec<u16> = self.keys().into_iter().filter_map(consumer_usage).collect();
+        if usages.len() > 1 {
+            return Err("Overlapping Consumer Control reports unsupported".into());
+        }
+        Ok(usages.first().copied().unwrap_or(0).to_le_bytes())
+    }
+}
+static INIT_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_OWNER: AtomicU64 = AtomicU64::new(2);
+pub fn new_owner() -> u64 {
+    NEXT_OWNER.fetch_add(1, Ordering::Relaxed)
+}
 
 static INIT_TRIED: AtomicBool = AtomicBool::new(false);
 static DEVICES: Mutex<Option<Devices>> = Mutex::new(None);
@@ -112,6 +144,7 @@ fn record_success() {
 /// Destroy it immediately so the next shortcut re-probes WinUHid and can fall
 /// back to SendInput instead of repeatedly using a stale virtual device.
 fn record_failure(error: &str) {
+    let _init = INIT_LOCK.lock();
     LAST_REPORT_OK.store(false, Ordering::Release);
     *LAST_ERROR.lock() = Some(error.to_string());
     *DEVICES.lock() = None;
@@ -167,11 +200,12 @@ pub fn warmup_async() {
 /// The bundled driver can become available after the process has already
 /// attempted initialization. Clear the one-shot probe state before retrying.
 pub fn reset_and_retry() {
+    let _init = INIT_LOCK.lock();
     *DEVICES.lock() = None;
     INIT_TRIED.store(false, Ordering::SeqCst);
     *RETRY_AFTER.lock() = None;
     RECOVERY_QUEUED.store(false, Ordering::Release);
-    let _ = ensure_init();
+    let _ = ensure_init_locked();
 }
 
 fn dll_candidates() -> Vec<PathBuf> {
@@ -293,6 +327,11 @@ fn build_keyboard_report(vks: &[u16]) -> Result<[u8; 8], String> {
 
 /// 尝试初始化 WinUHid（幂等）；无 DLL/驱动时保持关闭
 pub fn ensure_init() -> bool {
+    let _init = INIT_LOCK.lock();
+    ensure_init_locked()
+}
+
+fn ensure_init_locked() -> bool {
     if DEVICES.lock().is_some() {
         return true;
     }
@@ -329,112 +368,87 @@ pub fn is_available() -> bool {
     DEVICES.lock().is_some() || ensure_init()
 }
 
-/// 对齐 Python `tap`：优先 WinUHid，失败返回 false 由调用方 SendInput
+/// Ordinary taps get their own lease; voice DOWN/UP use the reserved lease 1.
 pub fn tap_vks(vks: &[u16], hold_ms: u64) -> bool {
-    if vks.is_empty() || !ensure_init() {
+    if !ensure_init() {
         return false;
     }
-    let hold = hold_ms.clamp(20, 1000);
-    if let Err(e) = press(vks) {
-        log::warn!("WinUHid press failed: {e}");
-        return false;
-    }
-    std::thread::sleep(Duration::from_millis(hold));
-    if let Err(e) = release(vks) {
-        log::warn!("WinUHid release failed: {e}");
-        return false;
-    }
-    true
+    tap_vks_ready(vks, hold_ms)
 }
-
-/// Hot-path counterpart for voice shortcuts.  It never loads the DLL or
-/// creates devices; the caller can immediately use SendInput when not warm.
 pub fn tap_vks_ready(vks: &[u16], hold_ms: u64) -> bool {
-    if vks.is_empty() || DEVICES.lock().is_none() {
+    let owner = new_owner();
+    if press_owned(owner, vks).is_err() {
         return false;
     }
-    let hold = hold_ms.clamp(20, 1000);
-    if press_ready(vks).is_err() {
-        return false;
-    }
-    std::thread::sleep(Duration::from_millis(hold));
-    release_ready(vks).is_ok()
+    std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
+    release_owned(owner).is_ok()
 }
-
 pub fn press(vks: &[u16]) -> Result<(), String> {
     if !ensure_init() {
         return Err("WinUHid not open".into());
     }
     press_ready(vks)
 }
-
-/// Submit a press only when a pre-warmed virtual device exists.
 pub fn press_ready(vks: &[u16]) -> Result<(), String> {
-    let result = {
-        let guard = DEVICES.lock();
-        match guard.as_ref() {
-            None => Err("WinUHid not open".into()),
-            Some(dev) => if let Some(usage_vk) = vks.iter().copied().find(|vk| consumer_usage(*vk).is_some()) {
-                if vks.len() != 1 {
-                    return Err("Consumer Control keys cannot be combined".into());
-                }
-                let report = consumer_usage(usage_vk).unwrap().to_le_bytes();
-                submit(dev, dev.consumer, &report)
-            } else {
-                // Unsupported chords (including OEM punctuation) use the caller's
-                // fallback. A report we cannot encode is not a device failure.
-                let report = build_keyboard_report(vks)?;
-                submit(dev, dev.keyboard, &report)
-            },
-        }
-    };
-    match &result {
-        Ok(()) => record_success(),
-        Err(error) => {
-            // The same failed handle gets one best-effort neutral report before
-            // being dropped.  Do not call release(), which could reinitialize
-            // WinUHid in this very voice-key callback.
-            if let Some(dev) = DEVICES.lock().as_ref() {
-                let _ = if vks.iter().any(|vk| consumer_usage(*vk).is_some()) {
-                    submit(dev, dev.consumer, &[0, 0])
-                } else {
-                    submit(dev, dev.keyboard, &[0u8; 8])
-                };
-            }
-            log::warn!("WinUHid press stage failed; neutral report submitted before reset: {error}");
-            record_failure(error)
-        }
-    }
-    result
+    press_owned(1, vks)
 }
-
 pub fn release(vks: &[u16]) -> Result<(), String> {
-    if !ensure_init() {
-        return Err("WinUHid not open".into());
-    }
     release_ready(vks)
 }
+pub fn release_ready(_vks: &[u16]) -> Result<(), String> {
+    release_owned(1)
+}
 
-pub fn release_ready(vks: &[u16]) -> Result<(), String> {
+pub fn press_owned(owner: u64, vks: &[u16]) -> Result<(), String> {
+    if vks.is_empty() {
+        return Err("Empty chord".into());
+    }
+    build_keyboard_report(
+        &vks.iter()
+            .copied()
+            .filter(|vk| consumer_usage(*vk).is_none())
+            .collect::<Vec<_>>(),
+    )?;
+    change_owner(owner, Some(vks))
+}
+pub fn release_owned(owner: u64) -> Result<(), String> {
+    change_owner(owner, None)
+}
+fn change_owner(owner: u64, keys: Option<&[u16]>) -> Result<(), String> {
     let result = {
-        let guard = DEVICES.lock();
-        match guard.as_ref() {
-            None => Err("WinUHid not open".into()),
-            Some(dev) => if vks.iter().any(|vk| consumer_usage(*vk).is_some()) {
-                submit(dev, dev.consumer, &[0, 0])
-            } else {
-                submit(dev, dev.keyboard, &[0u8; 8])
-            },
+        let mut guard = DEVICES.lock();
+        let dev = guard.as_mut().ok_or("WinUHid not open")?;
+        let mut next = dev.owners.clone();
+        if let Some(keys) = keys {
+            if owner != 1 && next.0.contains_key(&owner) {
+                return Err("HID lease already pressed".into());
+            }
+            next.0.insert(owner, keys.to_vec());
+        } else if next.0.remove(&owner).is_none() {
+            return Ok(());
         }
+        // Encode before touching hardware: unsupported combinations preserve existing leases.
+        let kb = next.keyboard_report()?;
+        let cc = next.consumer_report()?;
+        let result = submit(dev, dev.keyboard, &kb).and_then(|_| submit(dev, dev.consumer, &cc));
+        if result.is_ok() {
+            dev.owners = next;
+        }
+        result
     };
     match &result {
         Ok(()) => record_success(),
-        Err(error) => {
-            log::warn!("WinUHid release stage failed: {error}");
-            record_failure(error)
-        }
+        Err(error) => record_failure(error),
     }
     result
+}
+pub fn release_all() {
+    let mut guard = DEVICES.lock();
+    if let Some(dev) = guard.as_mut() {
+        let _ = submit(dev, dev.keyboard, &[0; 8]);
+        let _ = submit(dev, dev.consumer, &[0; 2]);
+        dev.owners.0.clear();
+    }
 }
 
 fn submit(dev: &Devices, handle: *mut c_void, report: &[u8]) -> Result<(), String> {
@@ -464,7 +478,10 @@ fn windows_init() -> Result<Devices, String> {
     let module = unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }
         .map_err(|e| format!("LoadLibraryW WinUHid.dll: {e}"))?;
 
-    unsafe fn proc<T>(module: windows::Win32::Foundation::HMODULE, name: &[u8]) -> Result<T, String> {
+    unsafe fn proc<T>(
+        module: windows::Win32::Foundation::HMODULE,
+        name: &[u8],
+    ) -> Result<T, String> {
         let p = GetProcAddress(module, PCSTR(name.as_ptr()))
             .ok_or_else(|| format!("GetProcAddress missing {}", String::from_utf8_lossy(name)))?;
         Ok(std::mem::transmute_copy(&p))
@@ -492,9 +509,18 @@ fn windows_init() -> Result<Devices, String> {
         destroy,
     };
 
-    let keyboard = create_device(&api, KEYBOARD_REPORT_DESCRIPTOR, 1, "XiaomiRemoteBridgeKeyboard")?;
-    let consumer = match create_device(&api, CONSUMER_REPORT_DESCRIPTOR, 2, "XiaomiRemoteBridgeConsumer")
-    {
+    let keyboard = create_device(
+        &api,
+        KEYBOARD_REPORT_DESCRIPTOR,
+        1,
+        "XiaomiRemoteBridgeKeyboard",
+    )?;
+    let consumer = match create_device(
+        &api,
+        CONSUMER_REPORT_DESCRIPTOR,
+        2,
+        "XiaomiRemoteBridgeConsumer",
+    ) {
         Ok(h) => h,
         Err(e) => {
             unsafe { (api.destroy)(keyboard) };
@@ -510,6 +536,7 @@ fn windows_init() -> Result<Devices, String> {
         api,
         keyboard,
         consumer,
+        owners: ReportOwners::default(),
     };
     let zero_kb = [0u8; 8];
     let zero_cc = [0u8; 2];
@@ -525,7 +552,10 @@ fn create_device(
     product_id: u16,
     instance_id: &str,
 ) -> Result<*mut c_void, String> {
-    let mut wide: Vec<u16> = instance_id.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut wide: Vec<u16> = instance_id
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let config = WinUHidDeviceConfig {
         supported_events: 0,
         vendor_id: 0,
@@ -609,6 +639,30 @@ impl WinUHidInjector {
 mod tests {
     use super::*;
 
+    #[test]
+    fn overlapping_actions_keep_other_owners_and_shared_modifiers() {
+        let mut owners = ReportOwners::default();
+        owners.0.insert(1, vec![0xA5]);
+        owners.0.insert(2, vec![0xA2, 0x1B]);
+        owners.0.insert(3, vec![0xA2, 0x41]);
+        assert_eq!(owners.keyboard_report().unwrap()[0], 0x41);
+        owners.0.remove(&2);
+        assert_eq!(owners.keyboard_report().unwrap()[0], 0x41);
+        owners.0.remove(&3);
+        assert_eq!(owners.keyboard_report().unwrap()[0], 0x40);
+        owners.0.remove(&1);
+        assert_eq!(owners.keyboard_report().unwrap(), [0; 8]);
+    }
+    #[test]
+    fn report_rollover_and_consumer_overlap_are_rejected_before_submit() {
+        let mut owners = ReportOwners::default();
+        owners.0.insert(1, vec![0x41, 0x42, 0x43, 0x44, 0x45, 0x46]);
+        assert!(owners.keyboard_report().is_ok());
+        owners.0.insert(2, vec![0x47]);
+        assert!(owners.keyboard_report().is_err());
+        owners.0.insert(3, vec![0xAE, 0xAF]);
+        assert!(owners.consumer_report().is_err());
+    }
     #[test]
     fn keyboard_report_escape() {
         let r = build_keyboard_report(&[0x1B]).unwrap();

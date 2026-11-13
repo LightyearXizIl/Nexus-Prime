@@ -1,4 +1,7 @@
 fn main() {
+    println!("cargo:rerun-if-env-changed=NEXUS_BUILD_ID");
+    let id = std::env::var("NEXUS_BUILD_ID").unwrap_or_else(|_| "local-development".into());
+    println!("cargo:rustc-env=NEXUS_BUILD_ID={id}");
     tauri_build::build();
 
     // Make Tauri's generated Windows resource discoverable by the cfg(test)

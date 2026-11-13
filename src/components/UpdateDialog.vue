@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { nextTick, ref, watch } from "vue";
 import { useUpdateStore } from "../stores/update";
 import { useI18n } from "vue-i18n";
@@ -48,10 +49,7 @@ function closeOnBackdrop() {
         @keydown.esc.prevent="update.closeDialog"
       >
         <div class="update-accent" aria-hidden="true"><span></span><i></i><i></i><i></i></div>
-        <div class="update-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14" />
-          </svg>
+        <div class="update-icon" aria-hidden="true"><AppIcon name="download" :size="26" />
         </div>
 
         <template v-if="update.phase === 'downloading'">
@@ -70,7 +68,7 @@ function closeOnBackdrop() {
         <template v-else-if="update.phase === 'ready'">
           <h2 id="update-title">{{ t("update.ready") }}</h2>
           <p class="update-subtitle">{{ t("update.verified", { version: update.release.version }) }}</p>
-          <div class="version-compare"><span>{{ update.currentVersion }}</span><b>→</b><strong>{{ update.release.version }}</strong></div>
+          <div class="version-compare"><span>{{ update.currentVersion }}</span><AppIcon name="right" :size="18" /><strong>{{ update.release.version }}</strong></div>
           <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">{{ t("update.later") }}</button><button type="button" class="update-btn update-btn-primary" @click="update.install">{{ t("update.install") }}</button></div>
         </template>
 
@@ -82,7 +80,7 @@ function closeOnBackdrop() {
         <template v-else>
           <h2 id="update-title">{{ t("update.found", { version: update.release.version }) }}</h2>
           <p class="update-subtitle">{{ update.release.title }}</p>
-          <div class="version-compare"><span>{{ update.currentVersion }}</span><b>→</b><strong>{{ update.release.version }}</strong></div>
+          <div class="version-compare"><span>{{ update.currentVersion }}</span><AppIcon name="right" :size="18" /><strong>{{ update.release.version }}</strong></div>
           <div class="release-notes"><p>{{ t("update.notes") }}</p><pre>{{ update.release.notes }}</pre></div>
           <p v-if="update.error" class="update-error" role="alert">{{ update.error }}</p>
           <div class="update-actions"><button type="button" class="update-btn update-btn-ghost" @click="update.closeDialog">{{ t("update.laterTalk") }}</button><button type="button" class="update-btn update-btn-primary" @click="update.download">{{ update.phase === 'error' ? t("update.retryDownload") : t("update.update") }}</button></div>

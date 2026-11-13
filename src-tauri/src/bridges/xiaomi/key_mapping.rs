@@ -167,7 +167,9 @@ impl VoicePressSession {
             return None;
         }
         let profile = self.profile;
-        let released = self.chord.release_with(|keys, route| inject(keys, route, profile));
+        let released = self
+            .chord
+            .release_with(|keys, route| inject(keys, route, profile));
         if released.as_ref().is_some_and(|(_, _, ok)| *ok) {
             self.active = false;
             self.activation = None;
@@ -247,10 +249,7 @@ impl FirmwareVoiceModifierFilter {
         if self.capture_until.is_some_and(|until| now > until) {
             self.finish_capture();
         }
-        if down
-            && self.capture_active(now)
-            && VOICE_FIRMWARE_LEAK_MODIFIER_VKS.contains(&vk)
-        {
+        if down && self.capture_active(now) && VOICE_FIRMWARE_LEAK_MODIFIER_VKS.contains(&vk) {
             if !self.suppressed_modifiers.contains(&vk) {
                 self.suppressed_modifiers.push(vk);
             }
@@ -349,8 +348,14 @@ pub fn cancel_pending_gestures() {
         let mut states = press_states();
         match states.as_mut() {
             Some(states) => {
-                let held = states.values_mut().filter_map(take_held_alt_tab_modifier).collect::<Vec<_>>();
-                let keys = states.values_mut().filter_map(|state| state.held_keys.take()).collect::<Vec<_>>();
+                let held = states
+                    .values_mut()
+                    .filter_map(take_held_alt_tab_modifier)
+                    .collect::<Vec<_>>();
+                let keys = states
+                    .values_mut()
+                    .filter_map(|state| state.held_keys.take())
+                    .collect::<Vec<_>>();
                 states.clear();
                 (held, keys)
             }
@@ -538,7 +543,10 @@ fn press_states() -> parking_lot::MutexGuard<'static, Option<HashMap<String, Pre
 
 /// HID DIRECT 刚触发某键：供 special hook 抑制 Windows 原键
 pub fn mark_direct_signal(name: &str) {
-    marks().as_mut().unwrap().insert(name.to_string(), Instant::now());
+    marks()
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string(), Instant::now());
     // 别名同步标记，便于 LL hook 用 Python 键名匹配
     for alt in binding_aliases(name) {
         if *alt != name {
@@ -597,7 +605,11 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
             let count = VOICE_F5_SUPPRESSED_COUNT.swap(0, Ordering::AcqRel);
             log::info!(
                 "XIAOMI VOICE firmware F5 up action={} count={count}",
-                if suppress_up { "suppressed" } else { "passed_after_leak" }
+                if suppress_up {
+                    "suppressed"
+                } else {
+                    "passed_after_leak"
+                }
             );
         }
         return suppress_up;
@@ -606,7 +618,9 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
     let now = Instant::now();
     if VOICE_F5_DOWN_SUPPRESSED.load(Ordering::Acquire) {
         let last = *VOICE_F5_LAST_EVENT.lock();
-        if last.is_some_and(|at| now.duration_since(at) <= Duration::from_millis(VOICE_F5_STICKY_MAX_IDLE_MS)) {
+        if last.is_some_and(|at| {
+            now.duration_since(at) <= Duration::from_millis(VOICE_F5_STICKY_MAX_IDLE_MS)
+        }) {
             *VOICE_F5_LAST_EVENT.lock() = Some(now);
             let count = VOICE_F5_SUPPRESSED_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
             log::debug!("XIAOMI VOICE firmware F5 suppressed typematic count={count}");
@@ -622,10 +636,7 @@ pub fn should_suppress_voice_f5(down: bool, up: bool) -> bool {
         || direct_signal_recent("voice", Duration::from_millis(VOICE_F5_CORRELATE_MS))
         || direct_signal_recent("mic", Duration::from_millis(VOICE_F5_CORRELATE_MS));
     if !guarded && input_session_active() {
-        guarded = wait_for_direct_signal(
-            "mic",
-            Duration::from_millis(VOICE_F5_CORRELATE_WAIT_MS),
-        );
+        guarded = wait_for_direct_signal("mic", Duration::from_millis(VOICE_F5_CORRELATE_WAIT_MS));
     }
     if !guarded {
         return false;
@@ -773,10 +784,7 @@ fn lookup_multi_action<'a>(
         })
 }
 
-fn lookup_long_action<'a>(
-    config: &'a DeviceConfig,
-    button_id: &str,
-) -> Option<&'a KeyAction> {
+fn lookup_long_action<'a>(config: &'a DeviceConfig, button_id: &str) -> Option<&'a KeyAction> {
     let canonical = canonical_button_id(button_id);
     config
         .long_press_bindings
@@ -809,7 +817,11 @@ fn multi_slots_for<'a>(
 
 fn has_multi_click(config: &DeviceConfig, button_id: &str) -> bool {
     multi_slots_for(config, button_id)
-        .map(|slots| slots.iter().any(|(n, a)| (2..=4).contains(n) && !matches!(a, KeyAction::None)))
+        .map(|slots| {
+            slots
+                .iter()
+                .any(|(n, a)| (2..=4).contains(n) && !matches!(a, KeyAction::None))
+        })
         .unwrap_or(false)
 }
 
@@ -923,7 +935,10 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
     log::debug!("XIAOMI MAPPING key={button_id} mapped={triggered} pressed=true");
 
     if triggered {
-        emit_message(app, &format!("单击 → {}", action_label_for_button(&config, button_id, 1)));
+        emit_message(
+            app,
+            &format!("单击 → {}", action_label_for_button(&config, button_id, 1)),
+        );
         match button_id {
             "back" => start_hold_repeat(
                 app.clone(),
@@ -989,7 +1004,11 @@ fn handle_gesture_button(
         }
         state.gen = state.gen.wrapping_add(1);
         state.active = false;
-        (state.held_fired, take_held_alt_tab_modifier(state), state.held_keys.take())
+        (
+            state.held_fired,
+            take_held_alt_tab_modifier(state),
+            state.held_keys.take(),
+        )
     };
     cancel_repeat(button_id);
     if let Some(alt_vk) = held_alt_tab_modifier {
@@ -1027,13 +1046,7 @@ fn repeat_interval(button_id: &str) -> Option<Duration> {
     }
 }
 
-fn start_hold_detector(
-    app: AppHandle,
-    button_id: String,
-    gen: u64,
-    epoch: u64,
-    delay: Duration,
-) {
+fn start_hold_detector(app: AppHandle, button_id: String, gen: u64, epoch: u64, delay: Duration) {
     std::thread::Builder::new()
         .name(format!("xiaomi-hold-{button_id}"))
         .spawn(move || {
@@ -1116,8 +1129,16 @@ fn start_hold_detector(
                             }
                         } else {
                             // MouseMove 长按：启动专用循环，按住期间持续移动
-                            if let KeyAction::MouseMove { dx, dy, step, accelerate } = action {
-                                if let Some(repeat_gen) = reserve_repeat_for_active_press(&button_id, gen) {
+                            if let KeyAction::MouseMove {
+                                dx,
+                                dy,
+                                step,
+                                accelerate,
+                            } = action
+                            {
+                                if let Some(repeat_gen) =
+                                    reserve_repeat_for_active_press(&button_id, gen)
+                                {
                                     start_mouse_move_loop(
                                         button_id.clone(),
                                         *dx,
@@ -1184,11 +1205,7 @@ fn register_short_click(app: AppHandle, button_id: String, config: &DeviceConfig
             .entry(button_id.clone())
             .or_default();
         state.count = state.count.saturating_add(1).min(4);
-        let gen = gens
-            .as_mut()
-            .unwrap()
-            .entry(button_id.clone())
-            .or_insert(0);
+        let gen = gens.as_mut().unwrap().entry(button_id.clone()).or_insert(0);
         *gen = gen.wrapping_add(1);
         state.gen = *gen;
         (state.count, state.gen)
@@ -1199,7 +1216,10 @@ fn register_short_click(app: AppHandle, button_id: String, config: &DeviceConfig
         return;
     }
 
-    emit_message(&app, &format!("等待下一次点击（{} / {}）", count, max_clicks));
+    emit_message(
+        &app,
+        &format!("等待下一次点击（{} / {}）", count, max_clicks),
+    );
     std::thread::Builder::new()
         .name(format!("xiaomi-click-{button_id}"))
         .spawn(move || {
@@ -1216,11 +1236,7 @@ fn settle_click_sequence(app: AppHandle, button_id: String, gen: u64, epoch: u64
     let count = {
         let mut states = click_states();
         let mut gens = click_gens();
-        let current_gen = gens
-            .as_mut()
-            .unwrap()
-            .entry(button_id.clone())
-            .or_insert(0);
+        let current_gen = gens.as_mut().unwrap().entry(button_id.clone()).or_insert(0);
         if *current_gen != gen {
             return;
         }
@@ -1254,11 +1270,7 @@ fn settle_click_sequence(app: AppHandle, button_id: String, gen: u64, epoch: u64
         mark_direct_signal(&button_id);
         emit_message(
             &app,
-            &format!(
-                "{} → {}",
-                click_count_label(count),
-                action_label(action)
-            ),
+            &format!("{} → {}", click_count_label(count), action_label(action)),
         );
         log::debug!("XIAOMI MAPPING key={button_id} clicks={count} mapped=true");
     } else {
@@ -1787,8 +1799,7 @@ fn is_wechat_start_voice_shortcut(vks: &[u16], profile: Option<VoiceInputProfile
     // 微信“启动语音输入”是 Ctrl+Win 点击型快捷键：遥控器按下时只发送
     // 一次完整短脉冲；抬起仅清理会话，不能再次发送 Ctrl+Win 关闭面板。
     // 已弃用的 WechatHold 会在配置边界迁移，不能进入此运行时分支。
-    matches!(profile, Some(VoiceInputProfile::Wechat))
-        && matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
+    matches!(profile, Some(VoiceInputProfile::Wechat)) && matches!(vks, [0xA2, 0x5B] | [0x5B, 0xA2])
 }
 
 fn voice_hotkey_is_firmware_f5(vks: &[u16]) -> bool {
@@ -1806,9 +1817,7 @@ fn arm_voice_firmware_modifier_filter() {
 }
 
 fn note_voice_firmware_f5_suppressed() {
-    VOICE_FIRMWARE_MODIFIER_FILTER
-        .lock()
-        .note_f5_suppressed();
+    VOICE_FIRMWARE_MODIFIER_FILTER.lock().note_f5_suppressed();
 }
 
 /// Give the remote's firmware modifiers/F5 a short head start, then close the
@@ -1905,9 +1914,7 @@ pub fn should_swallow_voice_firmware_modifier(vk: u16, down: bool) -> bool {
         .lock()
         .should_swallow(vk, down, release_pass_open);
     if swallow {
-        log::debug!(
-            "XIAOMI VOICE firmware modifier prefilter swallowed vk=0x{vk:02X} down={down}"
-        );
+        log::debug!("XIAOMI VOICE firmware modifier prefilter swallowed vk=0x{vk:02X} down={down}");
     }
     swallow
 }
@@ -1922,8 +1929,7 @@ fn set_voice_held_chord_modifiers(vks: &[u16]) {
 }
 
 fn open_voice_chord_release_pass_window() {
-    *VOICE_CHORD_RELEASE_PASS_UNTIL.lock() =
-        Some(Instant::now() + Duration::from_millis(300));
+    *VOICE_CHORD_RELEASE_PASS_UNTIL.lock() = Some(Instant::now() + Duration::from_millis(300));
 }
 
 fn voice_chord_release_pass_open() -> bool {
@@ -2001,18 +2007,13 @@ fn tap_wechat_start_voice_shortcut(vks: &[u16]) -> Option<VoiceInjectionRoute> {
     Some(route)
 }
 
-fn release_wechat_start_voice_tap(
-    vks: &[u16],
-    route: VoiceInjectionRoute,
-    hold_ms: u64,
-) -> bool {
+fn release_wechat_start_voice_tap(vks: &[u16], route: VoiceInjectionRoute, hold_ms: u64) -> bool {
     std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
     // No F24 companion: it changes the shortcut seen by the IME. Keep the
     // complete sequence restricted to Ctrl+Win. Lift Win while Ctrl is still
     // held, then Ctrl; remote UP must not send a second toggle.
     open_voice_chord_release_pass_window();
-    let mut released =
-        execute_voice_release_steps(&wechat_start_voice_release_steps(route), route);
+    let mut released = execute_voice_release_steps(&wechat_start_voice_release_steps(route), route);
     if !released && route == VoiceInjectionRoute::VirtualHid {
         crate::bridges::xiaomi::hid_injector::reset_and_retry();
         released = key_chord(vks, true);
@@ -2066,7 +2067,9 @@ fn is_modifier_key(vk: u16) -> bool {
 fn voice_needs_shell_neutralizer(vks: &[u16]) -> bool {
     !vks.is_empty()
         && vks.iter().all(|vk| is_modifier_key(*vk))
-        && vks.iter().any(|vk| matches!(vk, 0x12 | 0xA4 | 0xA5 | 0x5B | 0x5C))
+        && vks
+            .iter()
+            .any(|vk| matches!(vk, 0x12 | 0xA4 | 0xA5 | 0x5B | 0x5C))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2075,7 +2078,10 @@ enum VoiceReleaseStep {
     Release(Vec<u16>),
 }
 
-fn neutralized_voice_release_steps(vks: &[u16], route: VoiceInjectionRoute) -> Vec<VoiceReleaseStep> {
+fn neutralized_voice_release_steps(
+    vks: &[u16],
+    route: VoiceInjectionRoute,
+) -> Vec<VoiceReleaseStep> {
     const VK_F24: u16 = 0x87;
     match route {
         VoiceInjectionRoute::VirtualHid => {
@@ -2121,15 +2127,11 @@ fn execute_voice_release_steps(steps: &[VoiceReleaseStep], route: VoiceInjection
         (
             VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback,
             VoiceReleaseStep::Press(keys),
-        ) => {
-            key_chord(&keys, false)
-        }
+        ) => key_chord(&keys, false),
         (
             VoiceInjectionRoute::SendInput | VoiceInjectionRoute::SendInputFallback,
             VoiceReleaseStep::Release(keys),
-        ) => {
-            key_chord(&keys, true)
-        }
+        ) => key_chord(&keys, true),
     });
     log::info!(
         "XIAOMI VOICE release route={} result={released}",
@@ -2166,7 +2168,9 @@ fn owned_modifiers_released(vks: &[u16], log_stuck_key: bool) -> bool {
         for &vk in vks.iter().filter(|vk| is_modifier_key(**vk)) {
             if unsafe { GetAsyncKeyState(vk as i32) } < 0 {
                 if log_stuck_key {
-                    log::warn!("XIAOMI VOICE modifier still down after release confirmation vk=0x{vk:02X}");
+                    log::warn!(
+                        "XIAOMI VOICE modifier still down after release confirmation vk=0x{vk:02X}"
+                    );
                 }
                 return false;
             }
@@ -2287,11 +2291,12 @@ pub fn sync_voice_from_mic_binding(config: &mut DeviceConfig) {
     config.voice_hotkey = Some(vks_to_hotkey_names(&vks));
     config.button_bindings.insert("mic".into(), action.clone());
     config.button_bindings.insert("voice".into(), action);
-    if config
-        .voice_input_profile
-        .is_some_and(|profile| !profile.matches_voice_binding(&config.button_bindings["mic"], &config.trigger_mode))
-    {
-        log::info!("XIAOMI CONFIG cleared stale voice_input_profile after manual voice shortcut change");
+    if config.voice_input_profile.is_some_and(|profile| {
+        !profile.matches_voice_binding(&config.button_bindings["mic"], &config.trigger_mode)
+    }) {
+        log::info!(
+            "XIAOMI CONFIG cleared stale voice_input_profile after manual voice shortcut change"
+        );
         config.voice_input_profile = None;
     }
 }
@@ -2382,8 +2387,22 @@ fn name_to_vk(name: &str) -> Option<u16> {
 fn is_extended(vk: u16) -> bool {
     matches!(
         vk,
-        0x21 | 0x22 | 0x23 | 0x24 | 0x25 | 0x26 | 0x27 | 0x28 | 0x2C | 0x2D | 0x2E | 0x5B
-            | 0x5C | 0x5D | 0xA3 | 0xA5 | 0xA6..=0xB7
+        0x21 | 0x22
+            | 0x23
+            | 0x24
+            | 0x25
+            | 0x26
+            | 0x27
+            | 0x28
+            | 0x2C
+            | 0x2D
+            | 0x2E
+            | 0x5B
+            | 0x5C
+            | 0x5D
+            | 0xA3
+            | 0xA5
+            | 0xA6..=0xB7
     )
 }
 
@@ -2456,7 +2475,9 @@ fn release_held_alt_tab(alt_vk: u16, reason: &str) {
     if released {
         log::info!("XIAOMI MAPPING Alt+Tab hold release alt_vk=0x{alt_vk:02X} reason={reason}");
     } else {
-        log::error!("XIAOMI MAPPING Alt+Tab hold release failed alt_vk=0x{alt_vk:02X} reason={reason}");
+        log::error!(
+            "XIAOMI MAPPING Alt+Tab hold release failed alt_vk=0x{alt_vk:02X} reason={reason}"
+        );
     }
 }
 
@@ -2536,7 +2557,9 @@ fn should_try_virtual_hid(vks: &[u16]) -> bool {
 fn inject_chord_via_send_input(vks: &[u16], hold_ms: u64) -> bool {
     let down = key_chord(vks, false);
     if !down {
-        log::error!("XIAOMI MAPPING SendInput chord press failed; cleanup already attempted vks={vks:?}");
+        log::error!(
+            "XIAOMI MAPPING SendInput chord press failed; cleanup already attempted vks={vks:?}"
+        );
         return false;
     }
     std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
@@ -2561,11 +2584,14 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) -> bool {
     // Alt+Tab 走未武装拦截标记的系统 SendInput，其余 Alt 组合走窗口消息。
     let try_virtual_hid = should_try_virtual_hid(vks);
     if try_virtual_hid {
-        if crate::bridges::xiaomi::hid_injector::press(vks).is_ok() {
+        let owner = crate::bridges::xiaomi::hid_injector::new_owner();
+        if crate::bridges::xiaomi::hid_injector::ensure_init()
+            && crate::bridges::xiaomi::hid_injector::press_owned(owner, vks).is_ok()
+        {
             std::thread::sleep(Duration::from_millis(hold_ms.clamp(20, 1000)));
             let mut released = false;
             for _ in 0..3 {
-                if crate::bridges::xiaomi::hid_injector::release_ready(vks).is_ok() {
+                if crate::bridges::xiaomi::hid_injector::release_owned(owner).is_ok() {
                     released = true;
                     break;
                 }
@@ -2628,10 +2654,10 @@ fn tap_vks_fallback(vks: &[u16], hold_ms: u64) -> bool {
 /// Alt+S 不会触发全局热键。
 #[cfg(target_os = "windows")]
 fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, SendMessageTimeoutW, SMTO_NORMAL, WM_KEYDOWN, WM_KEYUP,
     };
-    use windows::Win32::Foundation::HWND;
 
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd == HWND(std::ptr::null_mut()) {
@@ -2680,9 +2706,7 @@ fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
     }
 
     crate::bridges::xiaomi::special_keys::disarm_alt_chord();
-    log::debug!(
-        "XIAOMI MAPPING inject alt_chord via SendMessage vks={vks:?} hold_ms={hold_ms}"
-    );
+    log::debug!("XIAOMI MAPPING inject alt_chord via SendMessage vks={vks:?} hold_ms={hold_ms}");
 }
 
 /// 构造 WM_KEYDOWN/WM_KEYUP 的 lParam
@@ -2817,10 +2841,17 @@ fn key_chord(vks: &[u16], key_up: bool) -> bool {
                 },
             };
             let sent = unsafe {
-                SendInput(std::slice::from_ref(&input), std::mem::size_of::<INPUT>() as i32)
+                SendInput(
+                    std::slice::from_ref(&input),
+                    std::mem::size_of::<INPUT>() as i32,
+                )
             };
             let error = std::io::Error::last_os_error();
-            (sent == 1, error.raw_os_error().unwrap_or_default(), error.to_string())
+            (
+                sent == 1,
+                error.raw_os_error().unwrap_or_default(),
+                error.to_string(),
+            )
         }
 
         if vks.is_empty() {
@@ -2943,8 +2974,8 @@ fn mouse_left_click() -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN,
-            MOUSEEVENTF_LEFTUP,
+            SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+            MOUSEINPUT,
         };
 
         let down = INPUT {
@@ -2975,7 +3006,12 @@ fn mouse_left_click() -> bool {
         };
         let action_seq = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
         let send_button = |input: &INPUT, phase: &str| {
-            let sent = unsafe { SendInput(std::slice::from_ref(input), std::mem::size_of::<INPUT>() as i32) };
+            let sent = unsafe {
+                SendInput(
+                    std::slice::from_ref(input),
+                    std::mem::size_of::<INPUT>() as i32,
+                )
+            };
             let ok = sent == 1;
             if !ok {
                 let error = std::io::Error::last_os_error();
@@ -3110,7 +3146,10 @@ mod gesture_tests {
     #[test]
     fn partial_keydown_cleanup_releases_only_owned_keys_in_reverse_order() {
         assert_eq!(release_order(&[0x11, 0x10, 0x44], 2), vec![0x10, 0x11]);
-        assert_eq!(release_order(&[0x11, 0x10, 0x44], 3), vec![0x44, 0x10, 0x11]);
+        assert_eq!(
+            release_order(&[0x11, 0x10, 0x44], 3),
+            vec![0x44, 0x10, 0x11]
+        );
         assert_eq!(release_order(&[0xA2], 1), vec![0xA2]);
     }
 
@@ -3138,7 +3177,12 @@ mod gesture_tests {
         assert_eq!(up_attempts, 3);
         assert_eq!(
             phases.into_inner(),
-            vec![MouseClickPhase::Down, MouseClickPhase::Up, MouseClickPhase::Up, MouseClickPhase::Up]
+            vec![
+                MouseClickPhase::Down,
+                MouseClickPhase::Up,
+                MouseClickPhase::Up,
+                MouseClickPhase::Up
+            ]
         );
     }
 
@@ -3158,7 +3202,11 @@ mod gesture_tests {
         assert_eq!(up_attempts, 2);
         assert_eq!(
             phases.into_inner(),
-            vec![MouseClickPhase::Down, MouseClickPhase::Up, MouseClickPhase::Up]
+            vec![
+                MouseClickPhase::Down,
+                MouseClickPhase::Up,
+                MouseClickPhase::Up
+            ]
         );
     }
 
@@ -3305,10 +3353,16 @@ mod gesture_tests {
     fn routes_required_alt_system_chords_through_real_system_input() {
         for keys in [[0x12, 0x73], [0xA4, 0x20], [0xA5, 0x1B], [0x12, 0x09]] {
             assert!(is_system_alt_chord(&keys));
-            assert_eq!(fallback_injection_route(&keys), FallbackInjectionRoute::SystemAltTabSendInput);
+            assert_eq!(
+                fallback_injection_route(&keys),
+                FallbackInjectionRoute::SystemAltTabSendInput
+            );
         }
         assert!(!is_system_alt_chord(&[0x12, 0x53]));
-        assert_eq!(fallback_injection_route(&[0x12, 0x53]), FallbackInjectionRoute::AltWindowMessage);
+        assert_eq!(
+            fallback_injection_route(&[0x12, 0x53]),
+            FallbackInjectionRoute::AltWindowMessage
+        );
     }
 
     #[test]
@@ -3342,7 +3396,10 @@ mod gesture_tests {
     fn enter_and_directions_use_marked_send_input_instead_of_virtual_hid() {
         for vk in [0x0D, 0x25, 0x26, 0x27, 0x28] {
             assert!(!should_try_virtual_hid(&[vk]), "vk=0x{vk:02X}");
-            assert_eq!(fallback_injection_route(&[vk]), FallbackInjectionRoute::SendInput);
+            assert_eq!(
+                fallback_injection_route(&[vk]),
+                FallbackInjectionRoute::SendInput
+            );
         }
         assert!(should_try_virtual_hid(&[0x41]));
     }
@@ -3415,16 +3472,24 @@ mod gesture_tests {
         ] {
             let keys = [0xA5];
             assert_eq!(
-                inject_voice_shortcut_down_with(&keys, profile, |_| true, |_, _| {
-                    panic!("must not duplicate a successful HID DOWN")
-                }),
+                inject_voice_shortcut_down_with(
+                    &keys,
+                    profile,
+                    |_| true,
+                    |_, _| { panic!("must not duplicate a successful HID DOWN") }
+                ),
                 Some(VoiceInjectionRoute::VirtualHid)
             );
             assert_eq!(
-                inject_voice_shortcut_down_with(&keys, profile, |_| false, |_, gap_ms| {
-                    assert_eq!(gap_ms, 0);
-                    true
-                }),
+                inject_voice_shortcut_down_with(
+                    &keys,
+                    profile,
+                    |_| false,
+                    |_, gap_ms| {
+                        assert_eq!(gap_ms, 0);
+                        true
+                    }
+                ),
                 Some(VoiceInjectionRoute::SendInputFallback)
             );
             assert_eq!(
@@ -3449,17 +3514,29 @@ mod gesture_tests {
         assert!(press_paced_voice_chord_with(
             &[0xA2, 0xA0, 0x44],
             30,
-            |key| { events.borrow_mut().push(("down", key as u64)); true },
+            |key| {
+                events.borrow_mut().push(("down", key as u64));
+                true
+            },
             |_| panic!("successful press must not compensate"),
             |wait| events.borrow_mut().push(("wait", wait.as_millis() as u64)),
         ));
-        assert_eq!(events.into_inner(), vec![
-            ("down", 0xA2), ("wait", 30), ("down", 0xA0),
-            ("wait", 30), ("down", 0x44),
-        ]);
         assert_eq!(
-            voice_release_steps(&[0xA2, 0xA0, 0x44], VoiceInjectionRoute::SendInput,
-                Some(VoiceInputProfile::WechatCurrent)),
+            events.into_inner(),
+            vec![
+                ("down", 0xA2),
+                ("wait", 30),
+                ("down", 0xA0),
+                ("wait", 30),
+                ("down", 0x44),
+            ]
+        );
+        assert_eq!(
+            voice_release_steps(
+                &[0xA2, 0xA0, 0x44],
+                VoiceInjectionRoute::SendInput,
+                Some(VoiceInputProfile::WechatCurrent)
+            ),
             vec![VoiceReleaseStep::Release(vec![0xA2, 0xA0, 0x44])]
         );
     }
@@ -3474,12 +3551,22 @@ mod gesture_tests {
             assert!(!press_paced_voice_chord_with(
                 &keys,
                 30,
-                |key| { attempted.push(key); key != keys[failure_index] },
+                |key| {
+                    attempted.push(key);
+                    key != keys[failure_index]
+                },
                 |owned| compensated.extend(reverse_key_order(owned)),
                 |_| waits += 1,
             ));
             assert_eq!(attempted, keys[..=failure_index]);
-            assert_eq!(compensated, keys[..failure_index].iter().rev().copied().collect::<Vec<_>>());
+            assert_eq!(
+                compensated,
+                keys[..failure_index]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .collect::<Vec<_>>()
+            );
             assert_eq!(waits, failure_index);
         }
     }
@@ -3487,7 +3574,10 @@ mod gesture_tests {
     #[test]
     fn paced_hold_empty_chord_does_not_wait_or_press() {
         assert!(!press_paced_voice_chord_with(
-            &[], 30, |_| panic!("empty press"), |_| panic!("empty compensation"),
+            &[],
+            30,
+            |_| panic!("empty press"),
+            |_| panic!("empty compensation"),
             |_| panic!("empty wait"),
         ));
     }
@@ -3652,9 +3742,7 @@ mod gesture_tests {
             vec![0xA2]
         );
         assert_eq!(
-            confirmed_firmware_modifiers_to_release(&[0xA5], |vk| {
-                matches!(vk, 0xA2 | 0x5B)
-            }),
+            confirmed_firmware_modifiers_to_release(&[0xA5], |vk| { matches!(vk, 0xA2 | 0x5B) }),
             vec![0xA2, 0x5B]
         );
         assert!(confirmed_firmware_modifiers_to_release(&[0xA2, 0x5B], |_| true).is_empty());
@@ -3691,25 +3779,48 @@ mod gesture_tests {
         let names = vks_to_hotkey_names(&vks);
         assert_eq!(names, vec!["leftctrl", "backspace", "f5", "vk_25"]);
         assert_eq!(
-            names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
+            names
+                .iter()
+                .filter_map(|name| name_to_vk(name))
+                .collect::<Vec<_>>(),
             vks
         );
     }
 
     #[test]
     fn extended_keys_round_trip() {
-        let vks = vec![0x60, 0x69, 0x6A, 0x6B, 0x6D, 0x6E, 0x6F, 0x13, 0x14, 0x2C, 0x5D, 0x90, 0x91, 0x7C, 0x87, 0xBA, 0xDE];
+        let vks = vec![
+            0x60, 0x69, 0x6A, 0x6B, 0x6D, 0x6E, 0x6F, 0x13, 0x14, 0x2C, 0x5D, 0x90, 0x91, 0x7C,
+            0x87, 0xBA, 0xDE,
+        ];
         let names = vks_to_hotkey_names(&vks);
         assert_eq!(
             names,
             vec![
-                "numpad0", "numpad9", "numpadmult", "numpadadd", "numpadsubtract",
-                "numpaddecimal", "numpaddivide", "pause", "capslock", "printscreen",
-                "menu", "numlock", "scrolllock", "f13", "f24", "semicolon", "apostrophe",
+                "numpad0",
+                "numpad9",
+                "numpadmult",
+                "numpadadd",
+                "numpadsubtract",
+                "numpaddecimal",
+                "numpaddivide",
+                "pause",
+                "capslock",
+                "printscreen",
+                "menu",
+                "numlock",
+                "scrolllock",
+                "f13",
+                "f24",
+                "semicolon",
+                "apostrophe",
             ]
         );
         assert_eq!(
-            names.iter().filter_map(|name| name_to_vk(name)).collect::<Vec<_>>(),
+            names
+                .iter()
+                .filter_map(|name| name_to_vk(name))
+                .collect::<Vec<_>>(),
             vks
         );
     }

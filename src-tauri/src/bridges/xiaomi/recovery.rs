@@ -13,6 +13,7 @@ pub struct RecoveryHealth {
     pub connected: Option<bool>,
     pub key_bridge: &'static str,
     pub raw_ready: bool,
+    pub atvv_error: Option<String>,
 }
 
 impl Default for RecoveryHealth {
@@ -22,6 +23,7 @@ impl Default for RecoveryHealth {
             connected: None,
             key_bridge: "waiting",
             raw_ready: false,
+            atvv_error: None,
         }
     }
 }
@@ -77,22 +79,6 @@ pub fn commit_subscription<T>(
     }
     active.append(pending);
     true
-}
-
-#[derive(Default)]
-pub struct SubscriptionRecovery {
-    failures: u8,
-}
-
-impl SubscriptionRecovery {
-    pub fn observe(&mut self, connected: bool, subscribed: bool) -> bool {
-        if !connected || subscribed {
-            self.failures = 0;
-            return false;
-        }
-        self.failures = self.failures.saturating_add(1);
-        self.failures >= 3
-    }
 }
 
 /// Watcher callbacks only coalesce a probe request. BLE work stays on its owner thread.
@@ -255,26 +241,31 @@ mod tests {
     }
 
     #[test]
-    fn offline_and_idle_do_not_restart_but_three_online_failures_do() {
-        let mut recovery = SubscriptionRecovery::default();
-        for _ in 0..100 {
-            assert!(!recovery.observe(false, false));
-            assert!(!recovery.observe(true, true));
+    fn success_resets_recovery_budget_and_repair_advice() {
+        let runtime = super::super::connect::XiaomiRuntime::new();
+        for _ in 0..3 {
+            runtime.note_atvv_result(Some("unreachable"));
         }
-        assert!(!recovery.observe(true, false));
-        assert!(!recovery.observe(true, false));
-        assert!(recovery.observe(true, false));
-    }
-
-    #[test]
-    fn success_and_disconnect_reset_the_consecutive_failure_budget() {
-        let mut recovery = SubscriptionRecovery::default();
-        assert!(!recovery.observe(true, false));
-        assert!(!recovery.observe(true, true));
-        assert!(!recovery.observe(true, false));
-        assert!(!recovery.observe(false, false));
-        assert!(!recovery.observe(true, false));
-        assert!(!recovery.observe(true, false));
+        assert_eq!(
+            runtime
+                .atvv_failures
+                .load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+        runtime
+            .recovery_refreshed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        runtime.note_atvv_result(None);
+        assert!(runtime.health.lock().atvv_error.is_none());
+        assert_eq!(
+            runtime
+                .atvv_failures
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert!(!runtime
+            .recovery_refreshed
+            .load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
@@ -373,4 +364,25 @@ pub fn paired_record(address: Option<&str>) -> Option<bool> {
         .Size()
         .ok()
         .map(|size| size > 0)
+}
+
+/// Bound radio traffic even when Windows repeatedly returns an old paired record.
+pub fn subscription_backoff(failures: u32) -> Duration {
+    Duration::from_secs(match failures {
+        0 | 1 => 3,
+        2 => 6,
+        3 => 12,
+        _ => 30,
+    })
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    #[test]
+    fn failures_back_off_and_cap_until_success() {
+        assert_eq!(super::subscription_backoff(0).as_secs(), 3);
+        assert_eq!(super::subscription_backoff(2).as_secs(), 6);
+        assert_eq!(super::subscription_backoff(3).as_secs(), 12);
+        assert_eq!(super::subscription_backoff(u32::MAX).as_secs(), 30);
+    }
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { computed, nextTick, ref, watch } from "vue";
 import {
   SHORTCUT_SYMBOL_OPTIONS,
@@ -130,7 +131,7 @@ watch(() => props.initialKeys, resetFromKeys, { immediate: true });
         <span>手动组合</span>
         <strong>{{ buttonLabel }}键 · {{ slotLabel }}</strong>
       </div>
-      <button type="button" class="shortcut-composer-close" aria-label="关闭手动组合" @click="emit('cancel')">×</button>
+      <button type="button" class="shortcut-composer-close" aria-label="关闭手动组合" @click="emit('cancel')"><AppIcon name="close" :size="20" /></button>
     </div>
 
     <p class="shortcut-composer-note">不依赖系统键盘钩子。可直接输入 <code>Alt+F4</code>，或从下方选择按键。</p>

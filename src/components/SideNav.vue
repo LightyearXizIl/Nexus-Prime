@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import AppIcon from "./AppIcon.vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { loggedInvoke as invoke } from "../utils/appLogger";
 import { useRoute, useRouter } from "vue-router";
 import { useBridgeStore } from "../stores/bridge";
 import { useThemeStore } from "../stores/theme";
@@ -7,6 +11,20 @@ import { useUpdateStore } from "../stores/update";
 import { useI18n } from "vue-i18n";
 import type { BridgeStatus } from "../types";
 import { connectedDeviceName, connectionStatusPresentation } from "../utils/connectionStatus";
+
+const maximized = ref(false);
+let unlistenResize: UnlistenFn | undefined;
+async function controlWindow(action: string) {
+  if (!isTauri()) return;
+  try { maximized.value = await invoke<boolean>("control_main_window", { action }); }
+  catch (error) { console.error("Window control failed", error); }
+}
+onMounted(async () => {
+  if (!isTauri()) return;
+  await controlWindow("state");
+  unlistenResize = await listen("tauri://resize", () => { void controlWindow("state"); });
+});
+onUnmounted(() => unlistenResize?.());
 
 const route = useRoute();
 const router = useRouter();
@@ -44,8 +62,8 @@ function toggleTheme() {
 </script>
 
 <template>
-  <header class="topnav">
-    <div class="brand-block">
+  <header class="topnav" data-tauri-drag-region>
+    <div class="brand-block" data-tauri-drag-region>
       <div class="brand-symbol" aria-hidden="true">
         <img src="/favicon.png" alt="" />
       </div>
@@ -72,7 +90,7 @@ function toggleTheme() {
         :aria-current="isDevicePage ? 'page' : undefined"
         @click="navigate('/xiaomi')"
       >
-        {{ t("nav.home") }}
+        <AppIcon name="home" :size="18" /> {{ t("nav.home") }}
       </button>
       <button
         type="button"
@@ -80,7 +98,7 @@ function toggleTheme() {
         :aria-current="isMappingPage ? 'page' : undefined"
         @click="navigate('/xiaomi/mapping')"
       >
-        {{ t("nav.mapping") }}
+        <AppIcon name="mapping" :size="18" /> {{ t("nav.mapping") }}
       </button>
     </nav>
 
@@ -93,13 +111,7 @@ function toggleTheme() {
         :aria-label="themeToggleLabel"
         @click="toggleTheme"
       >
-        <svg v-if="theme.effectiveTheme !== 'dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M20 15.4A8.2 8.2 0 0 1 8.6 4a8.2 8.2 0 1 0 11.4 11.4Z" />
-        </svg>
-        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2.2M12 19.8V22M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2 12h2.2M19.8 12H22M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56" />
-        </svg>
+        <AppIcon :name="theme.effectiveTheme === 'dark' ? 'sun' : 'moon'" />
       </button>
       <button
         type="button"
@@ -108,11 +120,13 @@ function toggleTheme() {
         :aria-label="t('nav.settings')"
         @click="navigate('/settings')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10.05 3h4v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 21 10.05v4h-.09A1.7 1.7 0 0 0 19.4 15Z" />
-        </svg>
+        <AppIcon name="settings" />
       </button>
+      <div class="window-controls" role="group" aria-label="窗口控制">
+        <button type="button" class="window-button" aria-label="最小化" title="最小化" @click="controlWindow('minimize')"><AppIcon name="minus" :size="18" /></button>
+        <button type="button" class="window-button" :aria-label="maximized ? '还原窗口' : '最大化'" :title="maximized ? '还原窗口' : '最大化'" @click="controlWindow('maximize')"><AppIcon :name="maximized ? 'restore' : 'maximize'" :size="16" /></button>
+        <button type="button" class="window-button window-close" aria-label="关闭窗口" title="关闭窗口" @click="controlWindow('close')"><AppIcon name="close" :size="19" /></button>
+      </div>
     </div>
   </header>
 </template>
@@ -283,4 +297,18 @@ function toggleTheme() {
   .device-chip { max-width: 154px; margin-left: 0; }
   .main-nav button { min-width: 76px; padding: 0 12px; }
 }
+</style>
+
+<style scoped>
+.topnav { grid-template-columns: minmax(220px, 1fr) auto auto; padding-right: 0; gap: 12px; }
+.brand-block * { pointer-events: none; }
+.main-nav button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.top-actions { gap: 7px; }
+.icon-button svg { width: 20px; height: 20px; }
+.window-controls { display: flex; align-self: stretch; margin-left: 6px; border-left: 1px solid var(--nav-border); }
+.window-button { display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--nav-icon); cursor: pointer; }
+.window-button:hover { background: var(--nav-icon-hover-bg); color: var(--nav-ink); }
+.window-close:hover { color: white; background: #c42b1c; }
+.window-button:focus-visible { outline: 2px solid var(--primary); outline-offset: -4px; }
+@media (max-width: 960px) { .topnav { padding-left: 16px; grid-template-columns: minmax(200px, 1fr) auto auto; gap: 8px; } .main-nav button { padding-inline: 12px; } }
 </style>

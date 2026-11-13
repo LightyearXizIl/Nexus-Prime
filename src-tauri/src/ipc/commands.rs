@@ -165,9 +165,8 @@ fn xiaomi_reconnect_loop(
 
         configured = Some(connection.address.clone());
         if let Some(mgr) = app.try_state::<ConfigManager>() {
-            if let Ok(mut cfg) = mgr.get_device_config("xiaomi") {
-                cfg.bluetooth_address = Some(connection.address.clone());
-                let _ = mgr.save_device_config("xiaomi", &cfg);
+            if let Err(error) = mgr.update_bluetooth_address(connection.address.clone()) {
+                log::warn!("persist discovered Bluetooth address: {error}");
             }
         }
         if let Some(state) = app.try_state::<BridgeState>() {
@@ -201,7 +200,12 @@ fn xiaomi_reconnect_loop(
         if let Some(state) = app.try_state::<BridgeState>() {
             state.update_status(BridgeType::Xiaomi, BridgeStatus::Connecting);
         }
-        if wait_interruptible(&runtime, retry) {
+        let delay = retry.max(crate::bridges::xiaomi::recovery::subscription_backoff(
+            runtime
+                .atvv_failures
+                .load(std::sync::atomic::Ordering::SeqCst),
+        ));
+        if wait_interruptible(&runtime, delay) {
             break;
         }
     }
@@ -275,7 +279,13 @@ pub async fn save_config(
     config_manager: State<'_, ConfigManager>,
 ) -> Result<(), String> {
     let device = bridge_type_to_device(&bridge_type)?;
-    config_manager.save_device_config(device, &config)
+    config_manager
+        .update_device_config(device, |current| {
+            let address = current.bluetooth_address.clone();
+            *current = config;
+            current.bluetooth_address = address;
+        })
+        .map(|_| ())
 }
 
 /// 批量恢复普通遥控器按键默认值；音量与语音设置由配置管理器保留。
@@ -306,9 +316,11 @@ pub async fn update_key_mapping(
     config_manager: State<'_, ConfigManager>,
 ) -> Result<(), String> {
     let device = bridge_type_to_device(&bridge_type)?;
-    let mut config = config_manager.get_device_config(device)?;
-    config.button_bindings.insert(button_id, action);
-    config_manager.save_device_config(device, &config)
+    config_manager
+        .update_device_config(device, |config| {
+            config.button_bindings.insert(button_id, action);
+        })
+        .map(|_| ())
 }
 
 /// 文件中只保存小米遥控器的映射部分，避免把蓝牙、语音和本机设置带到其它电脑。
@@ -431,9 +443,9 @@ pub async fn import_xiaomi_mappings(
     let document: XiaomiMappingsExport = serde_json::from_str::<XiaomiMappingsExport>(&content)
         .map_err(|error| format!("映射配置格式错误：{error}"))?
         .validate()?;
-    let mut config = config_manager.get_device_config("xiaomi")?;
-    document.clone().apply_to(&mut config);
-    config_manager.save_device_config("xiaomi", &config)?;
+    let config = config_manager.update_device_config("xiaomi", |config| {
+        document.clone().apply_to(config);
+    })?;
     crate::logging::append_event(
         "mapping_config",
         "import",
@@ -717,7 +729,14 @@ pub fn xiaomi_host_status_now(app: &AppHandle) -> XiaomiHostStatus {
     } else if bridge_alive && !atvv_ok {
         (
             "ATVV 未连接".into(),
-            "语音专用通道未就绪。按住语音键时「音频信号」可能无绿色波动，并可能触发系统 F5。可点「修复 ATVV 连接」。".into(),
+            if app.try_state::<Arc<XiaomiRuntime>>().is_some_and(|r| {
+                r.atvv_failures.load(std::sync::atomic::Ordering::SeqCst) >= 3
+                    && r.health.lock().atvv_error.as_deref() == Some("unreachable")
+            }) {
+                "语音服务不可达；若遥控器已开机且靠近电脑，请删除设备后重新配对。".into()
+            } else {
+                "语音专用通道未就绪，正在等待遥控器并自动重试。".into()
+            },
             "warn".into(),
         )
     } else if !cable_ready {
@@ -778,7 +797,18 @@ pub async fn restart_xiaomi_bridge(
     state: State<'_, BridgeState>,
     config_manager: State<'_, ConfigManager>,
 ) -> Result<(), String> {
-    restart_xiaomi_bridge_inner(&app, &state, &config_manager)
+    let _ = (state, config_manager);
+    let job = tokio::task::spawn_blocking(move || {
+        restart_xiaomi_bridge_inner(
+            &app,
+            app.state::<BridgeState>().inner(),
+            app.state::<ConfigManager>().inner(),
+        )
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(30), job)
+        .await
+        .map_err(|_| "按键桥接重启等待超时，后台操作仍保留归属；请等待，勿重复修复。".to_string())?
+        .map_err(|e| e.to_string())?
 }
 
 fn run_restart_teardown(stop_hid_tap: impl FnOnce(), stop_worker: impl FnOnce()) {
@@ -791,7 +821,22 @@ pub fn restart_xiaomi_bridge_inner(
     state: &BridgeState,
     config_manager: &ConfigManager,
 ) -> Result<(), String> {
+    let _repair = crate::repair::acquire("重启按键桥接")?;
+    restart_xiaomi_bridge_core(app, state, config_manager)
+}
+
+fn restart_xiaomi_bridge_core(
+    app: &AppHandle,
+    state: &BridgeState,
+    config_manager: &ConfigManager,
+) -> Result<(), String> {
     let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
+    if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
+        if runtime.should_stop() && runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Windows 蓝牙操作尚未退出，请等待；不要重复修复。".into());
+        }
+    }
+    crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
     log::info!("XIAOMI host: restart bridge requested");
     append_host_log(config_manager, "bridge restart requested");
 
@@ -833,6 +878,7 @@ pub fn restart_xiaomi_bridge_inner(
         .try_state::<Arc<XiaomiRuntime>>()
         .ok_or_else(|| "XiaomiRuntime missing".to_string())?;
     if runtime.running.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::repair::wait_for_bluetooth_owner(Arc::clone(&runtime));
         return Err("旧桥接尚未退出，请稍后再试".into());
     }
 
@@ -871,9 +917,13 @@ pub fn restart_xiaomi_bridge_inner(
 pub async fn check_xiaomi_voice_env(
     config_manager: State<'_, ConfigManager>,
 ) -> Result<crate::audio::vb_cable::VoiceEnvActionResult, String> {
-    let result = tokio::task::spawn_blocking(crate::audio::vb_cable::check_or_prompt)
-        .await
-        .map_err(|e| format!("voice env task: {e}"))?;
+    let guard = crate::repair::acquire("修复声卡")?;
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        crate::audio::vb_cable::check_or_prompt()
+    })
+    .await
+    .map_err(|e| format!("voice env task: {e}"))?;
     if let Ok(settings) = config_manager.get_global_settings() {
         crate::audio::microphone_router::apply_settings(
             settings.remote_microphone_always_on,
@@ -896,14 +946,18 @@ pub async fn repair_xiaomi_voice_env(
     source: String,
     config_manager: State<'_, ConfigManager>,
 ) -> Result<crate::audio::vb_cable::VoiceEnvActionResult, String> {
+    let guard = crate::repair::acquire("修复声卡")?;
     let source = source.to_ascii_lowercase();
-    let result = tokio::task::spawn_blocking(move || match source.as_str() {
-        "embedded" => crate::audio::vb_cable::install_embedded(),
-        "download_page" => crate::audio::vb_cable::open_download_page(),
-        "download_zip" => crate::audio::vb_cable::open_download_zip(),
-        other => Err(format!(
-            "未知来源: {other}，可选 embedded / download_page / download_zip"
-        )),
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        match source.as_str() {
+            "embedded" => crate::audio::vb_cable::install_embedded(),
+            "download_page" => crate::audio::vb_cable::open_download_page(),
+            "download_zip" => crate::audio::vb_cable::open_download_zip(),
+            other => Err(format!(
+                "未知来源: {other}，可选 embedded / download_page / download_zip"
+            )),
+        }
     })
     .await
     .map_err(|e| format!("voice repair task: {e}"))??;
@@ -933,8 +987,16 @@ pub fn cancel_xiaomi_vbcable_zip_download() -> bool {
 #[tauri::command]
 pub async fn repair_xiaomi_virtual_keyboard(
 ) -> Result<crate::bridges::xiaomi::winuhid_env::WinUHidRepairResult, String> {
-    tokio::task::spawn_blocking(crate::bridges::xiaomi::winuhid_env::repair)
+    let guard = crate::repair::acquire("修复虚拟键盘")?;
+    let job = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        crate::bridges::xiaomi::winuhid_env::repair()
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(125), job)
         .await
+        .map_err(|_| {
+            "虚拟键盘安装超过监测时间，Windows 仍在处理；请等待安装结束，勿重复修复。".to_string()
+        })?
         .map_err(|error| format!("virtual keyboard repair task: {error}"))?
 }
 
@@ -1155,15 +1217,18 @@ pub async fn export_app_log(
         .filter(|path| !path.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建日志导出目录失败: {e}"))?;
-        if parent.canonicalize().ok().zip(config_manager.logs_dir().canonicalize().ok())
+        if parent
+            .canonicalize()
+            .ok()
+            .zip(config_manager.logs_dir().canonicalize().ok())
             .is_some_and(|(parent, logs)| parent == logs)
         {
             return Err("请选择日志目录以外的位置，避免覆盖正在使用的日志".into());
         }
     }
-    let payload = app_log_payload(&app, &config_manager, file_name.as_deref())?;
-    std::fs::write(&destination, payload.content)
-        .map_err(|e| format!("导出日志失败: {e}"))?;
+    let payload =
+        app_log_payload_with_limit(&app, &config_manager, file_name.as_deref(), usize::MAX)?;
+    std::fs::write(&destination, payload.content).map_err(|e| format!("导出日志失败: {e}"))?;
     crate::logging::append_event(
         "logs",
         "export",
@@ -1222,10 +1287,22 @@ fn app_log_payload(
     config_manager: &ConfigManager,
     file_name: Option<&str>,
 ) -> Result<AppLogPayload, String> {
+    app_log_payload_with_limit(app, config_manager, file_name, 80_000)
+}
+
+fn app_log_payload_with_limit(
+    app: &AppHandle,
+    config_manager: &ConfigManager,
+    file_name: Option<&str>,
+    limit: usize,
+) -> Result<AppLogPayload, String> {
     crate::logging::flush()?;
-    let current_name = crate::logging::log_path()
-        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
-    let is_current = file_name.is_none_or(|name| name.is_empty() || Some(name) == current_name.as_deref());
+    let current_name = crate::logging::log_path().and_then(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    });
+    let is_current =
+        file_name.is_none_or(|name| name.is_empty() || Some(name) == current_name.as_deref());
     // 当前快照写回当前日志。历史文件只保留当时记录，不混入今天的电脑状态。
     let selected_name = if is_current {
         let snapshot = diagnostic_snapshot_now(app, config_manager)?;
@@ -1233,20 +1310,29 @@ fn app_log_payload(
             .map(crate::logging::redact_json_value)
             .map_err(|error| format!("整理环境信息失败: {error}"))?;
         crate::logging::append_event(
-            "diagnostics", "snapshot", "success", &format!("snapshot={snapshot}"),
+            "diagnostics",
+            "snapshot",
+            "success",
+            &format!("snapshot={snapshot}"),
         );
         crate::logging::flush()?;
-        crate::logging::log_path()
-            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        crate::logging::log_path().and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
     } else {
         file_name.map(str::to_string)
-    }.ok_or_else(|| "日志文件尚未创建".to_string())?;
+    }
+    .ok_or_else(|| "日志文件尚未创建".to_string())?;
     // 只解析一次文件名，避免后台滚段后内容来自 A、界面标签却变成 B。
-    let content = crate::logging::read_log_text_for(Some(&selected_name), 80_000)?;
+    let content = crate::logging::read_log_text_for(Some(&selected_name), limit)?;
     let files = crate::logging::list_log_files();
     let path = selected_name;
     Ok(AppLogPayload {
-        content: format!("【日志文件】{path}\n{}", crate::logging::redact_sensitive_text(&content)),
+        content: format!(
+            "【日志文件】{path}\n{}",
+            crate::logging::redact_sensitive_text(&content)
+        ),
         path,
         files,
         write_error: crate::logging::last_write_error(),
@@ -1333,6 +1419,7 @@ pub async fn repair_xiaomi_atvv(
     app: AppHandle,
     force: Option<bool>,
 ) -> Result<AtvvRepairResult, String> {
+    let guard = crate::repair::acquire("修复语音连接")?;
     let force = force.unwrap_or(false);
     if !force {
         let snap = crate::bridges::xiaomi::conflict_guard::emit_conflicts_now(
@@ -1360,13 +1447,18 @@ pub async fn repair_xiaomi_atvv(
     }
 
     let app_for_job = app.clone();
-    let (ok, msg) = tokio::task::spawn_blocking(move || {
+    let job = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
         let state = app_for_job.state::<BridgeState>();
         let config_manager = app_for_job.state::<ConfigManager>();
         run_atvv_repair_pipeline(&app_for_job, state.inner(), config_manager.inner())
-    })
-    .await
-    .map_err(|e| format!("ATVV repair task: {e}"))??;
+    });
+    let (ok, msg) = tokio::time::timeout(std::time::Duration::from_secs(30), job)
+        .await
+        .map_err(|_| {
+            "语音修复等待超时；Windows 蓝牙操作仍在执行，完成前不会启动第二次修复。".to_string()
+        })?
+        .map_err(|e| format!("ATVV repair task: {e}"))??;
 
     let result_code = if ok {
         "atvv.repaired"
@@ -1397,14 +1489,14 @@ fn run_atvv_repair_pipeline(
     config_manager: &ConfigManager,
 ) -> Result<(bool, String), String> {
     log::info!("XIAOMI ATVV repair pipeline start");
-    restart_xiaomi_bridge_inner(app, state, config_manager)?;
+    restart_xiaomi_bridge_core(app, state, config_manager)?;
     let ok = connect::wait_atvv_subscribed(std::time::Duration::from_secs(12));
     let msg = if ok {
         "ATVV 语音通道已恢复".to_string()
     } else if !crate::bridges::xiaomi::conflict_guard::scan_conflicts(true).is_empty() {
         "重连后仍无 ATVV，且仍有桥接占用进程。请结束占用后再点「修复 ATVV 连接」。".to_string()
     } else {
-        "已重连但仍未订阅 ATVV（未见端口占用）。可再试一次，或检查蓝牙配对后重试。".to_string()
+        "语音服务不可达；若遥控器已开机且靠近电脑，请删除设备后重新配对。".to_string()
     };
     log::info!("XIAOMI ATVV repair pipeline done atvv_ok={ok}");
     Ok((ok, msg))
@@ -1503,4 +1595,39 @@ mod tests {
         let parsed: super::XiaomiMappingsExport = serde_json::from_str(bad_interval).unwrap();
         assert!(parsed.validate().unwrap_err().contains("连击间隔"));
     }
+}
+
+#[tauri::command]
+pub fn get_recovery_operation() -> Option<String> {
+    crate::repair::active()
+}
+#[tauri::command]
+pub fn open_bluetooth_settings() -> Result<(), String> {
+    crate::windows_command::background_command("explorer.exe")
+        .arg("ms-settings:bluetooth")
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn control_main_window(app: AppHandle, action: String) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window missing")?;
+    match action.as_str() {
+        "minimize" => window.minimize(),
+        "maximize" => {
+            if window.is_maximized().map_err(|e| e.to_string())? {
+                window.unmaximize()
+            } else {
+                window.maximize()
+            }
+        }
+        "close" => window.close(),
+        "state" => return window.is_maximized().map_err(|e| e.to_string()),
+        _ => return Err("Unknown window action".into()),
+    }
+    .map_err(|e| e.to_string())?;
+    window.is_maximized().map_err(|e| e.to_string())
 }

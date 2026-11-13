@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { ImePreset } from "../utils/imePreset";
 
@@ -165,9 +166,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         </div>
 
         <button class="ime-button ime-button--secondary ime-close" type="button" aria-label="关闭输入法设置" @click="close">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="m5 5 10 10M15 5 5 15" />
-          </svg>
+          <AppIcon name="close" />
         </button>
       </header>
 
@@ -198,7 +197,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <p>触发模式：按住</p>
             <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'codex'" :disabled="!configReady || saving" @click="apply('codex')">
               <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+              <AppIcon name="chevron" />
             </button>
             <span v-if="applyHint && lastAppliedPreset === 'codex'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
           </aside>
@@ -228,7 +227,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p>按下即可启用语音输入，按任意键均可结束；触发模式：点击</p>
               <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat'" :disabled="!configReady || saving" @click="apply('wechat')">
                 <span>{{ saving ? "正在应用…" : "应用启动语音输入" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
@@ -242,7 +241,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p>按住可语音输入，松手结束并上屏；触发模式：按住（推荐）</p>
               <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat-current'" :disabled="!configReady || saving" @click="apply('wechat-current')">
                 <span>{{ saving ? "正在应用…" : "应用按住说话" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <span v-if="applyHint && lastAppliedPreset === 'wechat-current'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
@@ -270,7 +269,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p>触发模式：按住</p>
               <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === option.preset" :disabled="!configReady || saving" @click="apply(option.preset)">
                 <span>{{ saving ? "正在应用…" : `应用 ${option.shortcut}` }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <span v-if="applyHint && lastAppliedPreset === option.preset" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
@@ -299,7 +298,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p>触发模式：按住遥控器语音键说话，松开结束。</p>
               <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'doubao-hold'" :disabled="!configReady || saving" @click="apply('doubao-hold')">
                 <span>{{ saving ? "正在应用…" : "应用右 Alt 长按" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <span v-if="applyHint && lastAppliedPreset === 'doubao-hold'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>
@@ -312,7 +311,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               <p>触发模式：短按启动，随后按任意键结束。</p>
               <button class="ime-button ime-button--secondary" type="button" :aria-pressed="activePreset === 'doubao-hands-free'" :disabled="!configReady || saving" @click="apply('doubao-hands-free')">
                 <span>{{ saving ? "正在应用…" : "应用右 Alt + 空格" }}</span>
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+                <AppIcon name="chevron" />
               </button>
               <span v-if="applyHint && lastAppliedPreset === 'doubao-hands-free'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
             </section>

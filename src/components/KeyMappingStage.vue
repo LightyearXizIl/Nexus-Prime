@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import {
   computed,
   nextTick,
@@ -130,24 +131,7 @@ function labelOf(id: string): string {
   return known.includes(id) ? t(`keys.${id}`) : props.config.button_aliases?.[id] || id;
 }
 
-function mappingGlyph(id: string): string {
-  const glyphs: Record<string, string> = {
-    power: "⏻",
-    mic: "●",
-    up: "↑",
-    right: "→",
-    left: "←",
-    down: "↓",
-    ok: "OK",
-    back: "↩",
-    home: "⌂",
-    volume_up: "+",
-    menu: "≡",
-    volume_down: "−",
-    tv: "TV",
-  };
-  return glyphs[id] || "•";
-}
+function mappingGlyph(id: string): string { return id === 'voice' ? 'mic' : id; }
 
 function isVoiceButton(id: string): boolean {
   return id === "mic" || id === "voice";
@@ -1120,7 +1104,7 @@ onUnmounted(() => {
               @click.stop="toggleClickMenu(selectedMappingButton.id)"
               @keydown.esc.stop.prevent="closeClickMenu"
             >
-              {{ SLOT_LABELS[selectedMappingButton.selectedClick] }} ▾
+              {{ SLOT_LABELS[selectedMappingButton.selectedClick] }} <AppIcon name="chevronDown" :size="14" />
             </button>
             <div
               v-if="openClickMenuId === selectedMappingButton.id"
@@ -1147,9 +1131,9 @@ onUnmounted(() => {
               <div class="interval-editor" role="group" aria-label="连击间隔">
                 <div class="interval-head"><span>连击间隔</span><strong>{{ multiClickInterval }}ms</strong></div>
                 <div class="interval-controls">
-                  <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)">−</button>
+                  <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)"><AppIcon name="minus" :size="14" /></button>
                   <input v-model.number="multiClickInterval" type="range" min="150" max="800" step="50" aria-label="连击间隔毫秒" />
-                  <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)">+</button>
+                  <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)"><AppIcon name="plus" :size="14" /></button>
                 </div>
                 <p class="interval-note">间隔越短响应越快，间隔越长则更容易识别连续点击。</p>
               </div>
@@ -1166,7 +1150,7 @@ onUnmounted(() => {
               @click.stop="toggleMouseMenu(selectedMappingButton.id)"
               @keydown.esc.stop.prevent="closeActionMenus"
             >
-              {{ t("mapping.mouseActions") }} ▾
+              {{ t("mapping.mouseActions") }} <AppIcon name="chevronDown" :size="14" />
             </button>
             <div
               v-if="openMouseMenuId === selectedMappingButton.id"
@@ -1309,10 +1293,10 @@ onUnmounted(() => {
             @focus="openResetTip"
             @blur="scheduleCloseResetTip"
             @click.stop="toggleResetTip"
-          ><span aria-hidden="true">i</span></button>
+          ><AppIcon name="info" :size="17" /></button>
         </div>
         <label class="mapping-search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+          <AppIcon name="search" />
           <input v-model="searchQuery" type="search" :placeholder="t('mapping.search')" :aria-label="t('mapping.search')" />
         </label>
       </div>
@@ -1358,19 +1342,19 @@ onUnmounted(() => {
           @mouseleave="onCardHover(null)"
           @click="selectButton(button.id)"
         >
-          <span class="mapping-row-icon">{{ mappingGlyph(button.id) }}</span>
+          <span class="mapping-row-icon"><AppIcon :name="mappingGlyph(button.id)" :size="22" /></span>
           <span class="mapping-row-copy">
             <strong>{{ button.label }}键</strong>
             <small>{{ slotLabel(button.id, button.selectedClick) }}<span v-if="!isVoiceButton(button.id)"> {{ t("mapping.trigger") }}</span><span v-if="button.multiCounts.length"> · {{ button.multiCounts.length }}</span></small>
           </span>
           <span class="mapping-row-tail">
             <span :class="['mapping-row-keycap', { unbound: button.selectedAction.type === 'None' }]">{{ actionLabel(button.selectedAction) }}</span>
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.5 5 5.5-5 5.5" /></svg>
+            <AppIcon name="chevron" />
           </span>
         </button>
       </div>
       <div v-else class="mapping-search-empty">{{ t("mapping.noMatch") }}</div>
-      <p class="mapping-list-note"><span>i</span>{{ t("mapping.listHint") }}</p>
+      <p class="mapping-list-note"><AppIcon name="info" :size="16" />{{ t("mapping.listHint") }}</p>
     </section>
   </div>
 
@@ -1461,7 +1445,7 @@ onUnmounted(() => {
                 @click.stop="toggleClickMenu(btn.id)"
                 @keydown.esc.stop.prevent="closeClickMenu"
               >
-                {{ SLOT_LABELS[btn.selectedClick] }} ▾
+                {{ SLOT_LABELS[btn.selectedClick] }} <AppIcon name="chevronDown" :size="14" />
               </button>
               <div
                 v-if="openClickMenuId === btn.id"
@@ -1491,9 +1475,9 @@ onUnmounted(() => {
                     <strong>{{ multiClickInterval }}ms</strong>
                   </div>
                   <div class="interval-controls">
-                    <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)">−</button>
+                    <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)"><AppIcon name="minus" :size="14" /></button>
                     <input v-model.number="multiClickInterval" type="range" min="150" max="800" step="50" aria-label="连击间隔毫秒" />
-                    <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)">+</button>
+                    <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)"><AppIcon name="plus" :size="14" /></button>
                   </div>
                   <p class="interval-note">
                     间隔越短响应越快，但连续点击更难识别；间隔越长识别更宽松，但单击等待更久。
@@ -1592,7 +1576,7 @@ onUnmounted(() => {
                 @click.stop="toggleClickMenu(btn.id)"
                 @keydown.esc.stop.prevent="closeClickMenu"
               >
-                {{ SLOT_LABELS[btn.selectedClick] }} ▾
+                {{ SLOT_LABELS[btn.selectedClick] }} <AppIcon name="chevronDown" :size="14" />
               </button>
               <div
                 v-if="openClickMenuId === btn.id"
@@ -1622,9 +1606,9 @@ onUnmounted(() => {
                     <strong>{{ multiClickInterval }}ms</strong>
                   </div>
                   <div class="interval-controls">
-                    <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)">−</button>
+                    <button type="button" class="stepper-mini" :disabled="multiClickInterval <= 150" @click="stepMultiClickInterval(-50)"><AppIcon name="minus" :size="14" /></button>
                     <input v-model.number="multiClickInterval" type="range" min="150" max="800" step="50" aria-label="连击间隔毫秒" />
-                    <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)">+</button>
+                    <button type="button" class="stepper-mini" :disabled="multiClickInterval >= 800" @click="stepMultiClickInterval(50)"><AppIcon name="plus" :size="14" /></button>
                   </div>
                   <p class="interval-note">
                     间隔越短响应越快，但连续点击更难识别；间隔越长识别更宽松，但单击等待更久。

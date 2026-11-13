@@ -72,6 +72,9 @@ pub struct XiaomiRuntime {
     pub running: AtomicBool,
     pub probe_requested: AtomicBool,
     pub resume_requested: AtomicBool,
+    pub services_changed: AtomicBool,
+    pub atvv_failures: std::sync::atomic::AtomicU32,
+    pub recovery_refreshed: AtomicBool,
     pub callback_gate: parking_lot::Mutex<()>,
     pub health: parking_lot::Mutex<super::recovery::RecoveryHealth>,
     #[cfg(target_os = "windows")]
@@ -100,6 +103,17 @@ impl XiaomiRuntime {
     pub fn clear_stop(&self) {
         self.stop.store(false, Ordering::SeqCst);
         self.probe_requested.store(true, Ordering::SeqCst);
+    }
+
+    pub fn note_atvv_result(&self, error: Option<&str>) {
+        if let Some(error) = error {
+            self.atvv_failures.fetch_add(1, Ordering::SeqCst);
+            self.health.lock().atvv_error = Some(error.to_owned());
+        } else {
+            self.atvv_failures.store(0, Ordering::SeqCst);
+            self.recovery_refreshed.store(false, Ordering::SeqCst);
+            self.health.lock().atvv_error = None;
+        }
     }
 
     pub fn should_stop(&self) -> bool {

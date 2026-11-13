@@ -11,6 +11,8 @@
     "core:event:allow-emit",
     "core:window:default",
     "core:window:allow-set-theme",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
     "core:webview:default",
     "core:app:default",
     "core:tray:default",

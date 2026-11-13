@@ -281,12 +281,16 @@ struct LinkResources {
     device: windows::Devices::Bluetooth::BluetoothLEDevice,
     session: Option<windows::Devices::Bluetooth::GenericAttributeProfile::GattSession>,
     event: Option<windows::Foundation::EventRegistrationToken>,
+    services_event: Option<windows::Foundation::EventRegistrationToken>,
 }
 #[cfg(target_os = "windows")]
 impl Drop for LinkResources {
     fn drop(&mut self) {
         if let Some(token) = self.event {
             let _ = self.device.RemoveConnectionStatusChanged(token);
+        }
+        if let Some(token) = self.services_event {
+            let _ = self.device.RemoveGattServicesChanged(token);
         }
         if let Some(session) = &self.session {
             let _ = session.SetMaintainConnection(false);
@@ -426,7 +430,21 @@ fn windows_run_input_session(
         device: device.clone(),
         session: None,
         event: None,
+        services_event: None,
     };
+    let changed_runtime = Arc::clone(&runtime);
+    resources.services_event = Some(
+        device
+            .GattServicesChanged(&TypedEventHandler::new(
+                move |_: &Option<BluetoothLEDevice>, _| {
+                    changed_runtime
+                        .services_changed
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                },
+            ))
+            .map_err(|e| format!("GattServicesChanged: {e}"))?,
+    );
     let mut tokens = NotificationTokens::default();
     // The ATVV service interface was successfully opened during discovery.
     // Subscribe through it before asking Windows to enumerate every GATT
@@ -664,6 +682,7 @@ fn windows_run_input_session(
 
     if atvv_ok {
         mark_atvv_subscribed(true);
+        runtime.note_atvv_result(None);
         log::info!("ATVV subscribe ok after diagnostics");
     }
 
@@ -710,6 +729,7 @@ fn windows_run_input_session(
         }
         log::warn!("ATVV subscribe failed; keeping session alive for retry");
         let reason = last_atvv_fail.unwrap_or_else(AtvvFailReason::unknown);
+        runtime.note_atvv_result(Some(reason.code));
         log::warn!(
             "ATVV FAIL code={} recoverable={} hint={}",
             reason.code,
@@ -769,13 +789,36 @@ fn windows_run_input_session(
     let mut atvv_retry_attempt: u32 = 0;
     let mut since_link_probe = Instant::now();
     let mut connected = setup_connected;
-    let mut subscription_recovery =
-        crate::bridges::xiaomi::recovery::SubscriptionRecovery::default();
-    subscription_recovery.observe(initial_connected, atvv_ok);
     let retry_delay =
         Duration::from_secs_f32(cfg.as_ref().map(|c| c.retry_delay).unwrap_or(3.0).max(0.5));
     while runtime.session_active(session_id) {
         std::thread::sleep(Duration::from_millis(200));
+        let service_changed = runtime
+            .services_changed
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        let failed = runtime
+            .atvv_failures
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let refresh = !atvv_ok
+            && failed >= 3
+            && !runtime
+                .recovery_refreshed
+                .swap(true, std::sync::atomic::Ordering::SeqCst);
+        if service_changed || refresh {
+            runtime.end_session(
+                session_id,
+                if service_changed {
+                    "gatt_services_changed"
+                } else {
+                    "refresh_failed_gatt_session"
+                },
+            );
+            if let Some((_, session)) = runtime.maintained.lock().take() {
+                let _ = session.SetMaintainConnection(false);
+                let _ = session.Close();
+            }
+            break;
+        }
         if runtime
             .probe_requested
             .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -832,9 +875,20 @@ fn windows_run_input_session(
             runtime.end_session(session_id, "atvv_voice_start_timeout");
             break;
         }
-        if connected && !atvv_ok && since_atvv_retry.elapsed() >= retry_delay {
+        if connected
+            && !atvv_ok
+            && since_atvv_retry.elapsed()
+                >= retry_delay.max(crate::bridges::xiaomi::recovery::subscription_backoff(
+                    runtime
+                        .atvv_failures
+                        .load(std::sync::atomic::Ordering::SeqCst),
+                ))
+        {
             since_atvv_retry = Instant::now();
             atvv_retry_attempt = atvv_retry_attempt.saturating_add(1);
+            address_atvv_service = enumerate_atvv_service_by_address(address_u64)
+                .ok()
+                .flatten();
             let retry = if !atvv_interface_id.is_empty() {
                 let fromid = subscribe_atvv_from_interface(
                     &app,
@@ -861,11 +915,13 @@ fn windows_run_input_session(
                 Ok(false)
             };
             let success = matches!(retry, Ok(true));
+            let error = retry
+                .as_ref()
+                .err()
+                .map(|e| AtvvFailReason::from_error(e).code)
+                .unwrap_or("chars_incomplete");
+            runtime.note_atvv_result(if success { None } else { Some(error) });
             if !runtime.session_active(session_id) {
-                break;
-            }
-            if subscription_recovery.observe(connected, success) {
-                runtime.end_session(session_id, "three_online_subscription_failures");
                 break;
             }
             match retry {
@@ -1486,7 +1542,7 @@ impl AtvvFailReason {
             return Self {
                 code: "unreachable",
                 label: "遥控器 GATT 不可达",
-                hint: "请靠近电脑、确认遥控器未休眠后重连",
+                hint: "语音服务不可达；若遥控器已开机且靠近电脑，请删除设备后重新配对",
                 recoverable: true,
             };
         }
@@ -2095,6 +2151,9 @@ fn subscribe_atvv_service_attempt(
         .map_err(|e| e.to_string())?
         .get()
         .map_err(|e| e.to_string())?;
+    if chars_result.Status().ok() == Some(GattCommunicationStatus::Unreachable) {
+        return Err("ATVV GetCharacteristics: Unreachable".into());
+    }
     let chars_result = if chars_result.Status().ok() == Some(GattCommunicationStatus::Success) {
         chars_result
     } else {
