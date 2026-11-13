@@ -96,7 +96,8 @@ Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具�
 ### 按键映射
 
 - 为电源、方向、确认、返回、主页、菜单、音量、TV 和语音键配置快捷键；
-- 支持单击、长按等触发方式及多键组合；
+- 支持单击、双击、三击、四击和长按等触发方式及多键组合；
+- “手动组合”可点选字母、数字、符号、功能键等，支持标点单独映射及多个普通键组合；
 - 支持导出、导入按键映射配置，导入前校验格式与版本，失败保留原配置；
 - 通过 HID Tap 处理返回键、音量键等系统 HID 报告。
 
@@ -222,6 +223,17 @@ src-tauri/target/release/bundle/nsis/
 
 “按键映射”页的“导出配置”和“导入配置”只处理遥控器按键映射，不包含电脑环境、蓝牙信息或全局麦克风设置。导入时先校验文件格式、版本与字段，通过后一次性替换映射；失败时保留当前配置，并显示错误原因。
 
+### 手动组合快捷键
+
+在“按键映射”页点击“手动组合”，可为当前按键和触发方式设置快捷键，不依赖系统键盘钩子：
+
+- **快捷键文本**：直接输入，例如 `Alt+F4`、`Ctrl + ?`；加号请写 `Plus`。点击“改用下拉”可把文本转换为下拉选项继续编辑；
+- **下拉选择**：分别选择修饰键与主键，Ctrl、Shift、Alt 可选左、右或任意，Win 可选左或右；主键按字母、数字、符号、功能键、编辑与导航、媒体与系统分组；
+- **附加键**：点击“添加按键”可追加多个普通键，例如 `Ctrl + , + .`、`A + .`，每个附加键都可替换或移除；
+- 问号等需要 Shift 的符号会自动加入 Shift，已选的左、右 Shift 保持不变；Shift 作用于整组按键，最终输出的字符取决于键盘布局和输入法；
+- 文本无效、物理按键重复或组合为空时无法应用；“组合预览”显示实际发送的按键；
+- 沿用原有映射格式，已有映射和导入导出文件无需迁移。虚拟键盘无法编码的组合会自动改用 SendInput 发送。
+
 ### 电池显示
 
 Nexus Prime 保持自身的电池图标和充电动画。电量大于等于 30% 为绿色，10%–29% 为黄色，低于 10% 为红色；设备未上报电量时显示灰色空电池和“—”。充电流光仅在电量已知且设备明确上报充电时显示，不会把低电量改成绿色。
@@ -264,10 +276,14 @@ npm run dev
 ### 5. 运行检查
 
 ```powershell
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml --workspace
 npm run build
 cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build --debug --no-bundle
 ```
+
+`npm test` 依次运行 Gadget 的 Node 测试（`tests/`）和 Vitest 前端测试；少数 Rust 测试依赖真实硬件或桌面环境，默认标记为 ignored。
 
 如果 PowerShell 的执行策略阻止 `npm.ps1`，可使用：
 
@@ -294,11 +310,14 @@ npm run tauri:dev
 | `TAURI_DEV_HOST` | 指定 Tauri/Vite 开发主机；不设置时仅本机访问 |
 | `RUST_LOG` | 开发日志过滤级别 |
 | `REMOTE_BRIDGE_XIAOMI_HID_TAP_PORT` | 覆盖 HID Tap 本地端口，默认 `30684` |
+| `REMOTE_BRIDGE_PCM_PORT` | 覆盖 PCM 语音路由 UDP 端口，默认 `31680` |
 | `REMOTE_BRIDGE_XIAOMI_GADGET_ARCHIVE` | 指定本地 Frida Gadget 压缩包 |
 | `REMOTE_BRIDGE_XIAOMI_VB_CABLE_ZIP` | 指定本地 VB-CABLE ZIP |
 | `REMOTE_BRIDGE_WINUHID_DLL` | 指定本地 WinUHid DLL |
 | `REMOTE_BRIDGE_XIAOMI_RUNTIME_ID` | 覆盖 ProgramData 中的运行目录名 |
 | `REMOTE_BRIDGE_XIAOMI_FORCE_GATT_HID` | 高级兼容开关；仅在明确需要时设为 `1` |
+
+`REMOTE_BRIDGE_LOG_DIR`、`REMOTE_BRIDGE_LOG_PATH`、`REMOTE_BRIDGE_LOG_RETENTION_DAYS` 和 `REMOTE_BRIDGE_PARENT_PID` 由应用启动时自动设置并传给子进程，无需手动配置。
 
 不要把真实凭据或包含个人路径的 `.env` 提交到仓库。
 
@@ -318,28 +337,41 @@ npm run tauri:dev
 
 ```text
 .
-├── image/                         # README 软件截图
+├── .github/workflows/             # Windows 构建工作流（手动或指定分支触发）
+├── docs/                          # 设计与实施计划
+├── image/                         # README 横幅与软件截图
+├── public/                        # 前端静态资源
 ├── src/                           # Vue 3 前端
 │   ├── assets/                    # 图片与使用引导
-│   ├── components/                # 设备状态、导航和按键映射组件
+│   ├── components/                # 设备状态、导航、按键映射与手动组合组件
+│   ├── i18n/                      # 简体中文、繁体中文与英文文案
 │   ├── router/                    # 前端路由
 │   ├── stores/                    # Pinia 状态
 │   ├── types/                     # TypeScript 类型
+│   ├── utils/                     # 快捷键、电池、连接状态与输入法预设工具
 │   └── views/                     # 首页、映射和全局设置页面
 ├── src-tauri/                     # Tauri / Rust 后端
 │   ├── assets/                    # 运行所需脚本与第三方资源
 │   ├── capabilities/              # Tauri 权限
 │   ├── examples/                  # 诊断示例
 │   ├── icons/                     # 桌面与移动端图标
+│   ├── windows/                   # NSIS 安装包模板
 │   └── src/
 │       ├── audio/                 # PCM、UDP 与 VB-CABLE
 │       ├── bridges/               # BLE、HID Tap 与按键处理
 │       ├── config/                # 配置管理
-│       └── ipc/                   # Tauri 命令与托盘
+│       ├── ipc/                   # Tauri 命令与托盘
+│       ├── logging.rs             # 日志与脱敏
+│       └── update.rs              # 应用内更新检查
+├── tests/                         # Gadget Node 测试
+├── third-party-licenses/          # 第三方许可证原文
 ├── .env.example                   # 可选环境变量模板
+├── CHANGELOG.md                   # 更新日志
 ├── CONTRIBUTING.md                # 贡献指南
+├── HANDOFF.md                     # 开发交接与验收记录
 ├── LICENSE                        # 项目自有源码的 MIT License
 ├── THIRD_PARTY_NOTICES.md         # 第三方组件与再分发说明
+├── latest.json                    # 应用内更新清单（与 Release 资产一致）
 ├── package.json
 └── README.md
 ```

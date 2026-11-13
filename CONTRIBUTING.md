@@ -44,6 +44,8 @@ docs: clarify VB-CABLE setup
 至少运行：
 
 ```powershell
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml --workspace
 npm run build
 cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
 npm run tauri -- build --debug --no-bundle
@@ -54,7 +56,7 @@ npm run tauri -- build --debug --no-bundle
 ## Pull Request 清单
 
 - [ ] 修改范围单一，未改变无关功能；
-- [ ] 前端构建和 Rust 全目标检查通过；
+- [ ] `npm test`、`cargo test` 通过，前端构建和 Rust 全目标检查通过；
 - [ ] 新行为有测试或清晰的手工验证说明；
 - [ ] 文档、截图和 `.env.example` 已同步；
 - [ ] 未包含凭据、个人数据或真实设备标识；
