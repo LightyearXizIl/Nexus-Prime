@@ -9,8 +9,12 @@ import VoiceShortcutComposer from "./VoiceShortcutComposer.vue";
 const invokeMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const dialogOpenMock = vi.hoisted(() => vi.fn());
 const dialogSaveMock = vi.hoisted(() => vi.fn());
+const captureListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
+  captureListeners.set(name, callback);
+  return () => captureListeners.delete(name);
+}) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: dialogOpenMock, save: dialogSaveMock }));
 
 function createConfig(): DeviceConfig {
@@ -37,7 +41,46 @@ function latestSave(wrapper: ReturnType<typeof mount>) {
 describe("KeyMappingStage voice mapping", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    captureListeners.clear();
     i18n.global.locale.value = "zh-CN";
+  });
+
+  it("saves two quick presses as a repeated chord", async () => {
+    invokeMock.mockImplementation((name: string) => Promise.resolve(name === "capture_shortcut_start" ? 42 : []));
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    await wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text() === "录入快捷键")!.trigger("click");
+    captureListeners.get("shortcut-captured")?.({ payload: { sessionId: 42, keys: [0xa4, 0x20, 0x20], labels: ["左 Alt", "Space", "Space"] } });
+    await nextTick();
+    expect(latestSave(wrapper).button_bindings.up).toEqual({ type: "RepeatChord", value: { keys: [0xa4, 0x20], repeat: 2 } });
+    wrapper.unmount();
+  });
+
+
+  it("saves a selected executable in the active gesture slot", async () => {
+    dialogOpenMock.mockResolvedValueOnce("C:\\Apps\\Example\\example.exe");
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    await wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("双击"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text() === "打开应用")!.trigger("click");
+    await nextTick();
+
+    expect(dialogOpenMock).toHaveBeenCalledWith(expect.objectContaining({ filters: [{ name: "Windows 应用", extensions: ["exe"] }] }));
+    expect(latestSave(wrapper).multi_click_bindings?.up?.[2]).toEqual({ type: "LaunchApp", value: "C:\\Apps\\Example\\example.exe" });
+    await wrapper.get("#application-launch-args").setValue('-p "{329eb46c-74e5-4de5-82a1-0936f3e5bed7}"');
+    await wrapper.find(".application-args-editor button").trigger("click");
+    expect(latestSave(wrapper).multi_click_bindings?.up?.[2]).toEqual({
+      type: "LaunchAppWithArgs",
+      value: { path: "C:\\Apps\\Example\\example.exe", args: '-p "{329eb46c-74e5-4de5-82a1-0936f3e5bed7}"' },
+    });
+    wrapper.unmount();
   });
 
   it("only flags the known truncated Codex mapping and synchronizes the single-click aliases", async () => {

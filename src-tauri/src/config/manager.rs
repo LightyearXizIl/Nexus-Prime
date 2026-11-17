@@ -24,10 +24,14 @@ pub enum KeyAction {
     SingleKey(u16),
     /// 组合键（修饰符 + 键）
     ComboKey(Vec<u16>),
+    /// Repeat the complete chord twice in quick succession.
+    RepeatChord { keys: Vec<u16>, repeat: u8 },
     /// 文本输入
     TextInput(String),
     /// 启动应用
     LaunchApp(String),
+    /// Launch an executable with a Windows command-line argument string.
+    LaunchAppWithArgs { path: String, args: String },
     /// 启动或激活 ChatGPT 桌面版，并把输入焦点放到聊天输入框
     FocusChatGpt,
     /// 鼠标左键点击

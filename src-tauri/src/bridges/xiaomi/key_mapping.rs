@@ -1371,11 +1371,11 @@ fn perform_action(action: &KeyAction) -> bool {
         KeyAction::SingleKey(vk) => tap_vks(&[*vk], 20),
         KeyAction::ComboKey(vks) if !vks.is_empty() => tap_vks(vks, 70),
         KeyAction::ComboKey(_) => false,
+        KeyAction::RepeatChord { keys, repeat } if !keys.is_empty() && *repeat == 2 => tap_repeated_chord(keys),
+        KeyAction::RepeatChord { .. } => false,
         KeyAction::TextInput(text) => tap_unicode_text(text),
-        KeyAction::LaunchApp(path) => {
-            let _ = std::process::Command::new(path).spawn();
-            true
-        }
+        KeyAction::LaunchApp(path) => crate::chatgpt_focus::launch_or_activate_app(path, ""),
+        KeyAction::LaunchAppWithArgs { path, args } => crate::chatgpt_focus::launch_or_activate_app(path, args),
         KeyAction::FocusChatGpt => crate::chatgpt_focus::activate_chatgpt_and_focus_input(),
         KeyAction::MouseClick => mouse_left_click(),
         KeyAction::MouseMove { dx, dy, step, .. } => {
@@ -1403,8 +1403,10 @@ fn action_label(action: &KeyAction) -> String {
             .collect::<Vec<_>>()
             .join(" + "),
         KeyAction::ComboKey(_) => "未绑定".into(),
+        KeyAction::RepeatChord { keys, repeat } => format!("{} ×{repeat}", keys.iter().map(|vk| crate::bridges::xiaomi::config::vk_code_to_name(*vk)).collect::<Vec<_>>().join(" + ")),
         KeyAction::TextInput(text) => format!("文字: {text}"),
         KeyAction::LaunchApp(path) => format!("启动: {path}"),
+        KeyAction::LaunchAppWithArgs { path, args } => format!("启动: {path} {args}"),
         KeyAction::FocusChatGpt => "打开并聚焦 ChatGPT".into(),
         KeyAction::MouseClick => "鼠标左键".into(),
         KeyAction::MouseMove { dx, dy, step, .. } => {
@@ -2618,6 +2620,24 @@ pub fn tap_vks(vks: &[u16], hold_ms: u64) -> bool {
     tap_vks_fallback(vks, hold_ms)
 }
 
+fn tap_repeated_chord(vks: &[u16]) -> bool {
+    let Some((&main, modifiers)) = vks.split_last() else { return false; };
+    if has_alt_modifier(vks) && !is_system_alt_chord(vks) {
+        inject_alt_chord_via_message(vks, 35, 2);
+        return true;
+    }
+    if !key_chord(modifiers, false) { return false; }
+    let mut sent = true;
+    for press in 0..2 {
+        sent &= key_chord(&[main], false);
+        std::thread::sleep(Duration::from_millis(35));
+        sent &= key_chord(&[main], true);
+        if press == 0 { std::thread::sleep(Duration::from_millis(45)); }
+    }
+    let released = key_chord(modifiers, true);
+    sent && released
+}
+
 fn tap_vks_fallback(vks: &[u16], hold_ms: u64) -> bool {
     match fallback_injection_route(vks) {
         FallbackInjectionRoute::SystemAltTabSendInput => {
@@ -2634,7 +2654,7 @@ fn tap_vks_fallback(vks: &[u16], hold_ms: u64) -> bool {
         FallbackInjectionRoute::AltWindowMessage => {
             // Alt 组合键（如 Alt+Space, Alt+S）：使用 SendMessage(WM_KEYDOWN) 注入，
             // 避免 SendInput 触发 WM_SYSKEYDOWN → 系统菜单/全局热键
-            inject_alt_chord_via_message(vks, hold_ms);
+            inject_alt_chord_via_message(vks, hold_ms, 1);
             let _ = ACTION_SEQ.fetch_add(1, Ordering::Relaxed);
             true
         }
@@ -2653,7 +2673,7 @@ fn tap_vks_fallback(vks: &[u16], hold_ms: u64) -> bool {
 /// Windows 不会将其解释为系统键，因此 Alt+Space 不会弹出系统菜单、
 /// Alt+S 不会触发全局热键。
 #[cfg(target_os = "windows")]
-fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
+fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64, repeat: u8) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, SendMessageTimeoutW, SMTO_NORMAL, WM_KEYDOWN, WM_KEYUP,
@@ -2664,46 +2684,30 @@ fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
         // 无前台窗口，回退 SendInput。这里不能武装 ALT_CHORD_ACTIVE，
         // 否则低级键盘钩子会吞掉我们自己带 EXTRA_INFO 的回退事件。
         log::warn!("XIAOMI MAPPING alt_chord: no foreground window, fallback SendInput");
-        inject_chord_via_send_input(vks, hold_ms);
+        for _ in 0..repeat { inject_chord_via_send_input(vks, hold_ms); }
         return;
     }
 
     // 武装特殊键钩子：若回调仍触发则抑制（双保险）
     crate::bridges::xiaomi::special_keys::arm_alt_chord();
 
-    // 按下：正序发送 WM_KEYDOWN
-    for &vk in vks {
-        let lparam = make_key_lparam(vk, false);
+    let (main, modifiers) = vks.split_last().expect("non-empty chord");
+    let send_key = |vk: u16, key_up: bool| {
+        let lparam = make_key_lparam(vk, key_up);
         unsafe {
-            let _ = SendMessageTimeoutW(
-                hwnd,
-                WM_KEYDOWN,
-                windows::Win32::Foundation::WPARAM(vk as usize),
-                windows::Win32::Foundation::LPARAM(lparam as isize),
-                SMTO_NORMAL,
-                500,
-                None,
-            );
+            let _ = SendMessageTimeoutW(hwnd, if key_up { WM_KEYUP } else { WM_KEYDOWN }, windows::Win32::Foundation::WPARAM(vk as usize), windows::Win32::Foundation::LPARAM(lparam as isize), SMTO_NORMAL, 500, None);
         }
+    };
+    for &vk in modifiers {
+        send_key(vk, false);
     }
-
-    std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-
-    // 释放：逆序发送 WM_KEYUP
-    for &vk in vks.iter().rev() {
-        let lparam = make_key_lparam(vk, true);
-        unsafe {
-            let _ = SendMessageTimeoutW(
-                hwnd,
-                WM_KEYUP,
-                windows::Win32::Foundation::WPARAM(vk as usize),
-                windows::Win32::Foundation::LPARAM(lparam as isize),
-                SMTO_NORMAL,
-                500,
-                None,
-            );
-        }
+    for press in 0..repeat {
+        send_key(*main, false);
+        std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
+        send_key(*main, true);
+        if press + 1 < repeat { std::thread::sleep(Duration::from_millis(45)); }
     }
+    for &vk in modifiers.iter().rev() { send_key(vk, true); }
 
     crate::bridges::xiaomi::special_keys::disarm_alt_chord();
     log::debug!("XIAOMI MAPPING inject alt_chord via SendMessage vks={vks:?} hold_ms={hold_ms}");
@@ -2735,11 +2739,15 @@ fn make_key_lparam(vk: u16, key_up: bool) -> u32 {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64) {
+fn inject_alt_chord_via_message(vks: &[u16], hold_ms: u64, repeat: u8) {
     // 非 Windows 回退
-    let down = key_chord(vks, false);
-    std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
-    let up = key_chord(vks, true);
+    let mut down = true;
+    let mut up = true;
+    for _ in 0..repeat {
+        down &= key_chord(vks, false);
+        std::thread::sleep(Duration::from_millis(hold_ms.max(1)));
+        up &= key_chord(vks, true);
+    }
     if !down || !up {
         log::warn!("XIAOMI MAPPING fallback chord failed down={down} up={up} vks={vks:?}");
     }

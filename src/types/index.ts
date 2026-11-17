@@ -36,8 +36,10 @@ export type MouseMoveValue = {
 export type KeyAction =
   | { type: "SingleKey"; value: number }
   | { type: "ComboKey"; value: number[] }
+  | { type: "RepeatChord"; value: { keys: number[]; repeat: number } }
   | { type: "TextInput"; value: string }
   | { type: "LaunchApp"; value: string }
+  | { type: "LaunchAppWithArgs"; value: { path: string; args: string } }
   | { type: "FocusChatGpt"; value: null }
   | { type: "MouseClick"; value: null }
   | { type: "MouseMove"; value: MouseMoveValue }
