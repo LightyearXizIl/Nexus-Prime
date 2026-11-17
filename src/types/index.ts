@@ -39,6 +39,7 @@ export type KeyAction =
   | { type: "RepeatChord"; value: { keys: number[]; repeat: number } }
   | { type: "TextInput"; value: string }
   | { type: "LaunchApp"; value: string }
+  | { type: "LaunchAppWithArgs"; value: { path: string; args: string } }
   | { type: "FocusChatGpt"; value: null }
   | { type: "MouseClick"; value: null }
   | { type: "MouseMove"; value: MouseMoveValue }

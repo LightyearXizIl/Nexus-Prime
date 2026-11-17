@@ -75,6 +75,7 @@ const hoverId = ref<string | null>(null);
 const searchQuery = ref("");
 const capturing = ref(false);
 const captureError = ref<string | null>(null);
+const appArgs = ref("");
 const liveLabels = ref<string[]>([]);
 const captureSessionId = ref<number | null>(null);
 type ClickCount = 1 | 2 | 3 | 4;
@@ -305,6 +306,7 @@ function actionLabel(action: KeyAction): string {
   if (action.type === "RepeatChord") return `${action.value.keys.map((v) => vkName(v)).join(" + ")} ×${action.value.repeat}`;
   if (action.type === "TextInput") return t("mapping.text", { value: action.value });
   if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
+  if (action.type === "LaunchAppWithArgs") return t("mapping.launch", { value: `${action.value.path} ${action.value.args}` });
   if (action.type === "FocusChatGpt") return t("mapping.focusChatGpt");
   if (action.type === "MouseClick") return t("mapping.mouseLeftClick");
   if (action.type === "MouseMove") {
@@ -616,7 +618,23 @@ async function pickApplication() {
   if (!path || selectedId.value !== buttonId || selectedClick(buttonId) !== slot) return;
   closeManualShortcutEditor();
   saveActionToSelectedSlot({ type: "LaunchApp", value: path });
+  appArgs.value = "";
 }
+
+function saveApplicationArgs() {
+  if (!selectedId.value) return;
+  const action = actionOf(selectedId.value, selectedClick(selectedId.value));
+  const path = action.type === "LaunchApp" ? action.value : action.type === "LaunchAppWithArgs" ? action.value.path : null;
+  if (!path) return;
+  const args = appArgs.value.trim();
+  saveActionToSelectedSlot(args ? { type: "LaunchAppWithArgs", value: { path, args } } : { type: "LaunchApp", value: path });
+}
+
+watch([selectedId, selectedClickById, () => props.config], () => {
+  const id = selectedId.value;
+  const action = id ? actionOf(id, selectedClick(id)) : null;
+  appArgs.value = action?.type === "LaunchAppWithArgs" ? action.value.args : "";
+}, { deep: true });
 
 function closeManualShortcutEditor() {
   manualEditor.value = null;
@@ -1253,6 +1271,12 @@ onUnmounted(() => {
             :disabled="capturing"
             @click.stop="clearBinding(selectedMappingButton.id)"
           >{{ t("mapping.clear") }}</button>
+        </div>
+        <div v-if="selectedMappingButton.selectedAction.type === 'LaunchApp' || selectedMappingButton.selectedAction.type === 'LaunchAppWithArgs'" class="application-args-editor" @click.stop>
+          <label for="application-launch-args">{{ t("mapping.launchArgs") }}</label>
+          <input id="application-launch-args" v-model="appArgs" type="text" :placeholder="t('mapping.launchArgsHint')" @keydown.enter.prevent="saveApplicationArgs" />
+          <button type="button" class="selection-action" :disabled="capturing" @click="saveApplicationArgs">{{ t("common.save") }}</button>
+          <small>{{ t("mapping.launchArgsBehavior") }}</small>
         </div>
         <p v-if="isVoiceButton(selectedMappingButton.id) && voiceBindingNeedsManualCompletion" class="capture-err">
           检测到旧版 Codex 映射可能缺少主键 D。
@@ -2151,6 +2175,10 @@ onUnmounted(() => {
 }
 
 .selection-actions { display: flex; width: 100%; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px solid var(--info-border); }
+.application-args-editor { display: flex; width: 100%; align-items: center; flex-wrap: wrap; gap: 7px; padding-top: 7px; }
+.application-args-editor label { color: var(--text-muted); font-size: 11px; }
+.application-args-editor input { flex: 1 1 240px; min-width: 0; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: 12px; }
+.application-args-editor small { flex-basis: 100%; color: var(--text-muted); font-size: 10px; }
 .selection-action { min-height: 29px; padding: 0 9px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .selection-action.primary { color: #fff; border-color: var(--primary); background: var(--primary); }
 .selection-action.danger { color: var(--danger); border-color: var(--danger-border); }

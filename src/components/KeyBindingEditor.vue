@@ -345,6 +345,7 @@ function actionLabel(action: KeyAction): string {
   }
   if (action.type === "TextInput") return `文字: ${action.value}`;
   if (action.type === "LaunchApp") return `启动: ${action.value}`;
+  if (action.type === "LaunchAppWithArgs") return `启动: ${action.value.path} ${action.value.args}`;
   if (action.type === "FocusChatGpt") return "打开并聚焦 ChatGPT";
   return "—";
 }

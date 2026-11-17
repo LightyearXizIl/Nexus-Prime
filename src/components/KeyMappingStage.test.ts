@@ -74,6 +74,12 @@ describe("KeyMappingStage voice mapping", () => {
 
     expect(dialogOpenMock).toHaveBeenCalledWith(expect.objectContaining({ filters: [{ name: "Windows 应用", extensions: ["exe"] }] }));
     expect(latestSave(wrapper).multi_click_bindings?.up?.[2]).toEqual({ type: "LaunchApp", value: "C:\\Apps\\Example\\example.exe" });
+    await wrapper.get("#application-launch-args").setValue('-p "{329eb46c-74e5-4de5-82a1-0936f3e5bed7}"');
+    await wrapper.find(".application-args-editor button").trigger("click");
+    expect(latestSave(wrapper).multi_click_bindings?.up?.[2]).toEqual({
+      type: "LaunchAppWithArgs",
+      value: { path: "C:\\Apps\\Example\\example.exe", args: '-p "{329eb46c-74e5-4de5-82a1-0936f3e5bed7}"' },
+    });
     wrapper.unmount();
   });
 

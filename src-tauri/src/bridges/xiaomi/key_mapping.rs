@@ -1374,7 +1374,8 @@ fn perform_action(action: &KeyAction) -> bool {
         KeyAction::RepeatChord { keys, repeat } if !keys.is_empty() && *repeat == 2 => tap_repeated_chord(keys),
         KeyAction::RepeatChord { .. } => false,
         KeyAction::TextInput(text) => tap_unicode_text(text),
-        KeyAction::LaunchApp(path) => crate::chatgpt_focus::launch_or_activate_app(path),
+        KeyAction::LaunchApp(path) => crate::chatgpt_focus::launch_or_activate_app(path, ""),
+        KeyAction::LaunchAppWithArgs { path, args } => crate::chatgpt_focus::launch_or_activate_app(path, args),
         KeyAction::FocusChatGpt => crate::chatgpt_focus::activate_chatgpt_and_focus_input(),
         KeyAction::MouseClick => mouse_left_click(),
         KeyAction::MouseMove { dx, dy, step, .. } => {
@@ -1405,6 +1406,7 @@ fn action_label(action: &KeyAction) -> String {
         KeyAction::RepeatChord { keys, repeat } => format!("{} ×{repeat}", keys.iter().map(|vk| crate::bridges::xiaomi::config::vk_code_to_name(*vk)).collect::<Vec<_>>().join(" + ")),
         KeyAction::TextInput(text) => format!("文字: {text}"),
         KeyAction::LaunchApp(path) => format!("启动: {path}"),
+        KeyAction::LaunchAppWithArgs { path, args } => format!("启动: {path} {args}"),
         KeyAction::FocusChatGpt => "打开并聚焦 ChatGPT".into(),
         KeyAction::MouseClick => "鼠标左键".into(),
         KeyAction::MouseMove { dx, dy, step, .. } => {

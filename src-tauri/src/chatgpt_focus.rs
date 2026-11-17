@@ -6,7 +6,7 @@ pub fn activate_chatgpt_and_focus_input() -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn launch_or_activate_app(_path: &str) -> bool {
+pub fn launch_or_activate_app(_path: &str, _args: &str) -> bool {
     false
 }
 
@@ -14,6 +14,7 @@ pub fn launch_or_activate_app(_path: &str) -> bool {
 mod windows_impl {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
     use std::thread;
     use std::time::Duration;
@@ -41,21 +42,30 @@ mod windows_impl {
     const WINDOW_WAIT_ATTEMPTS: usize = 30;
     const WINDOW_WAIT_STEP: Duration = Duration::from_millis(50);
 
-    pub fn launch_or_activate_app(path: &str) -> bool {
+    pub fn launch_or_activate_app(path: &str, args: &str) -> bool {
         let executable = Path::new(path);
         if !executable.is_file() || !executable.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("exe")) {
             log::warn!("APP LAUNCH invalid executable path: {path}");
             return false;
         }
-        let Some(target) = executable.canonicalize().ok() else { return false };
-        let mut state = (None, &target);
-        unsafe {
-            let _ = EnumWindows(Some(enum_matching_app_window), LPARAM((&mut state as *mut (Option<HWND>, &PathBuf)) as isize));
+        // App execution aliases (such as WindowsApps\wt.exe) are reparse points.
+        // Keep the selected path for launching; resolving it may lose the alias.
+        let target = executable.canonicalize().unwrap_or_else(|_| executable.to_path_buf());
+        // Arguments often select a profile, document or window. Always pass them
+        // to the application, even if another instance already has a window.
+        if args.trim().is_empty() {
+            let mut state = (None, &target);
+            unsafe {
+                let _ = EnumWindows(Some(enum_matching_app_window), LPARAM((&mut state as *mut (Option<HWND>, &PathBuf)) as isize));
+            }
+            if let Some(hwnd) = state.0 {
+                return activate_window(hwnd);
+            }
         }
-        if let Some(hwnd) = state.0 {
-            return activate_window(hwnd);
-        }
-        match std::process::Command::new(&target).current_dir(target.parent().unwrap_or(Path::new("."))).spawn() {
+        let mut command = std::process::Command::new(executable);
+        command.current_dir(executable.parent().unwrap_or(Path::new(".")));
+        if !args.trim().is_empty() { command.raw_arg(args); }
+        match command.spawn() {
             Ok(_) => true,
             Err(error) => {
                 log::warn!("APP LAUNCH failed for {}: {error}", target.display());
@@ -69,11 +79,17 @@ mod windows_impl {
         let state = unsafe { &mut *(lparam.0 as *mut (Option<HWND>, &PathBuf)) };
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
-        if pid != 0 && process_image_path(pid).is_some_and(|path| path.to_string_lossy().eq_ignore_ascii_case(&state.1.to_string_lossy())) {
+        if pid != 0 && process_image_path(pid).is_some_and(|path| matches_app_executable(&path, state.1)) {
             state.0 = Some(hwnd);
             return BOOL(0);
         }
         BOOL(1)
+    }
+
+    fn matches_app_executable(running: &Path, selected: &Path) -> bool {
+        if running.to_string_lossy().eq_ignore_ascii_case(&selected.to_string_lossy()) { return true; }
+        selected.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case("wt.exe"))
+            && running.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case("WindowsTerminal.exe"))
     }
 
     pub fn activate_chatgpt_and_focus_input() -> bool {
