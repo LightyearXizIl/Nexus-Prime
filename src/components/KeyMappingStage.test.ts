@@ -40,6 +40,23 @@ describe("KeyMappingStage voice mapping", () => {
     i18n.global.locale.value = "zh-CN";
   });
 
+  it("saves a selected executable in the active gesture slot", async () => {
+    dialogOpenMock.mockResolvedValueOnce("C:\\Apps\\Example\\example.exe");
+    const wrapper = mount(KeyMappingStage, {
+      props: { config: createConfig() },
+      global: { plugins: [i18n], stubs: { RemoteHotspot: true } },
+    });
+    await wrapper.findAll("button.mapping-row").find((row) => row.text().includes("上键"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text().includes("单击"))!.trigger("click");
+    await wrapper.findAll('[role="menuitemradio"]').find((item) => item.text().includes("双击"))!.trigger("click");
+    await wrapper.findAll("button.selection-action").find((button) => button.text() === "打开应用")!.trigger("click");
+    await nextTick();
+
+    expect(dialogOpenMock).toHaveBeenCalledWith(expect.objectContaining({ filters: [{ name: "Windows 应用", extensions: ["exe"] }] }));
+    expect(latestSave(wrapper).multi_click_bindings?.up?.[2]).toEqual({ type: "LaunchApp", value: "C:\\Apps\\Example\\example.exe" });
+    wrapper.unmount();
+  });
+
   it("only flags the known truncated Codex mapping and synchronizes the single-click aliases", async () => {
     const wrapper = mount(KeyMappingStage, {
       props: { config: createConfig() },

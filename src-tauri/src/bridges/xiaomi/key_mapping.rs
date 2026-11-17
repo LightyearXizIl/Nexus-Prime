@@ -1372,10 +1372,7 @@ fn perform_action(action: &KeyAction) -> bool {
         KeyAction::ComboKey(vks) if !vks.is_empty() => tap_vks(vks, 70),
         KeyAction::ComboKey(_) => false,
         KeyAction::TextInput(text) => tap_unicode_text(text),
-        KeyAction::LaunchApp(path) => {
-            let _ = std::process::Command::new(path).spawn();
-            true
-        }
+        KeyAction::LaunchApp(path) => crate::chatgpt_focus::launch_or_activate_app(path),
         KeyAction::FocusChatGpt => crate::chatgpt_focus::activate_chatgpt_and_focus_input(),
         KeyAction::MouseClick => mouse_left_click(),
         KeyAction::MouseMove { dx, dy, step, .. } => {

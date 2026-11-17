@@ -606,6 +606,17 @@ async function importMappings() {
   }
 }
 
+async function pickApplication() {
+  if (!selectedId.value || isVoiceButton(selectedId.value) || capturing.value) return;
+  const buttonId = selectedId.value;
+  const slot = selectedClick(buttonId);
+  const selected = await open({ multiple: false, directory: false, filters: [{ name: "Windows 应用", extensions: ["exe"] }] });
+  const path = Array.isArray(selected) ? selected[0] : selected;
+  if (!path || selectedId.value !== buttonId || selectedClick(buttonId) !== slot) return;
+  closeManualShortcutEditor();
+  saveActionToSelectedSlot({ type: "LaunchApp", value: path });
+}
+
 function closeManualShortcutEditor() {
   manualEditor.value = null;
 }
@@ -1094,6 +1105,13 @@ onUnmounted(() => {
             :disabled="capturing"
             @click.stop="openManualShortcutEditor"
           >手动组合</button>
+          <button
+            v-if="!isVoiceButton(selectedMappingButton.id)"
+            type="button"
+            class="selection-action"
+            :disabled="capturing"
+            @click.stop="pickApplication"
+          >{{ t("mapping.chooseApp") }}</button>
           <div v-if="!isVoiceButton(selectedMappingButton.id)" class="click-select-wrap">
             <button
               type="button"
