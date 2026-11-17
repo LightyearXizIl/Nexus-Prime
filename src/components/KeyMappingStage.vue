@@ -302,6 +302,7 @@ function actionLabel(action: KeyAction): string {
     const arr = Array.isArray(action.value) ? action.value : [];
     return arr.map((v) => vkName(Number(v))).join(" + ");
   }
+  if (action.type === "RepeatChord") return `${action.value.keys.map((v) => vkName(v)).join(" + ")} ×${action.value.repeat}`;
   if (action.type === "TextInput") return t("mapping.text", { value: action.value });
   if (action.type === "LaunchApp") return t("mapping.launch", { value: action.value });
   if (action.type === "FocusChatGpt") return t("mapping.focusChatGpt");
@@ -914,8 +915,15 @@ function applyCapturedKeys(buttonId: string, vks: number[]) {
 
 function applyShortcutKeys(buttonId: string, vks: number[], count: MappingSlot) {
   const effectiveCount = isVoiceButton(buttonId) ? 1 : count;
+  const repeated = vks.length > 1 && vks.slice(0, -1).includes(vks[vks.length - 1]);
+  if (repeated && isVoiceButton(buttonId)) {
+    captureError.value = "语音键暂不支持连续按键，请选择其他遥控键。";
+    return;
+  }
   let action: KeyAction;
-  if (!vks.length) {
+  if (repeated) {
+    action = { type: "RepeatChord", value: { keys: vks.slice(0, -1), repeat: 2 } };
+  } else if (!vks.length) {
     action = { type: "None", value: null };
   } else if (vks.length === 1) {
     action = { type: "SingleKey", value: vks[0] };

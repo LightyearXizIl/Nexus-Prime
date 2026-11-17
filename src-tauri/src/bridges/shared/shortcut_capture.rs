@@ -28,6 +28,7 @@ const VK_LCONTROL: u32 = 0xA2;
 const VK_RCONTROL: u32 = 0xA3;
 const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
+const REPEAT_WINDOW: Duration = Duration::from_millis(400);
 
 fn is_modifier(vk: u32) -> bool {
     matches!(
@@ -174,6 +175,8 @@ struct CaptureEngine {
     prev: HashMap<u32, bool>,
     active_keys: HashSet<u32>,
     chord_history: HashSet<u32>,
+    last_main_release: Option<(u32, Instant)>,
+    repeated_main: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +199,8 @@ impl CaptureEngine {
             prev: initial_down,
             active_keys,
             chord_history,
+            last_main_release: None,
+            repeated_main: None,
         }
     }
 
@@ -216,17 +221,33 @@ impl CaptureEngine {
         for (&vk, &is_down) in down {
             let was = self.prev.get(&vk).copied().unwrap_or(false);
             if is_down && !was {
+                if !is_modifier(vk) {
+                    if let Some((last_vk, released_at)) = self.last_main_release {
+                        if last_vk == vk && released_at.elapsed() <= REPEAT_WINDOW && !self.active_keys.is_empty() {
+                            self.repeated_main = Some(vk);
+                        } else if released_at.elapsed() > REPEAT_WINDOW && !self.active_keys.is_empty() {
+                            let hist = normalize_chord(&self.chord_history.iter().copied().collect::<Vec<_>>());
+                            self.prev.insert(vk, is_down);
+                            self.active_keys.insert(vk);
+                            return CaptureStep::Captured(hist);
+                        }
+                    }
+                }
                 self.chord_history.insert(vk);
                 self.active_keys.insert(vk);
             } else if !is_down && was {
                 self.active_keys.remove(&vk);
+                if !is_modifier(vk) {
+                    self.last_main_release = Some((vk, Instant::now()));
+                }
                 saw_release = true;
             }
             self.prev.insert(vk, is_down);
         }
 
         if saw_release && self.active_keys.is_empty() && !self.chord_history.is_empty() {
-            let hist = normalize_chord(&self.chord_history.iter().copied().collect::<Vec<_>>());
+            let mut hist = normalize_chord(&self.chord_history.iter().copied().collect::<Vec<_>>());
+            if let Some(vk) = self.repeated_main { hist.push(vk); }
             return CaptureStep::Captured(hist);
         }
         CaptureStep::Progress(self.progress_keys())
@@ -285,7 +306,7 @@ impl CaptureRuntime {
     }
 
     fn publish_result(&self, keys: Vec<u32>) {
-        let keys = normalize_chord(&keys);
+        let keys = if keys.last().is_some_and(|last| keys[..keys.len()-1].contains(last)) { keys } else { normalize_chord(&keys) };
         if keys.is_empty() {
             return;
         }
@@ -599,6 +620,28 @@ mod tests {
             eng.on_event(VK_LMENU, false),
             CaptureStep::Captured(vec![VK_LMENU, 0x20])
         );
+    }
+
+    #[test]
+    fn captures_quick_alt_space_twice_without_keyboard_repeat() {
+        let mut eng = idle_engine();
+        eng.on_event(VK_LMENU, true);
+        eng.on_event(0x20, true);
+        eng.on_event(0x20, false);
+        eng.on_event(0x20, true);
+        eng.on_event(0x20, true); // Windows typematic must not add a third press.
+        eng.on_event(0x20, false);
+        assert_eq!(eng.on_event(VK_LMENU, false), CaptureStep::Captured(vec![VK_LMENU, 0x20, 0x20]));
+    }
+
+    #[test]
+    fn delayed_second_space_finishes_the_first_chord() {
+        let mut eng = idle_engine();
+        eng.on_event(VK_LMENU, true);
+        eng.on_event(0x20, true);
+        eng.on_event(0x20, false);
+        eng.last_main_release = Some((0x20, Instant::now() - REPEAT_WINDOW - Duration::from_millis(1)));
+        assert_eq!(eng.on_event(0x20, true), CaptureStep::Captured(vec![VK_LMENU, 0x20]));
     }
 
     #[test]

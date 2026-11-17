@@ -24,6 +24,8 @@ pub enum KeyAction {
     SingleKey(u16),
     /// 组合键（修饰符 + 键）
     ComboKey(Vec<u16>),
+    /// Repeat the complete chord twice in quick succession.
+    RepeatChord { keys: Vec<u16>, repeat: u8 },
     /// 文本输入
     TextInput(String),
     /// 启动应用
