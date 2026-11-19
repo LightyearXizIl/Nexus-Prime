@@ -1,0 +1,117 @@
+{
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringA_Vel02_C3_01.ogg",
+      "sha256": "ac74e2a3ebfedf276a45881f8b16d6deaa35fe50d9db8fa5e9b496423dfb7b68"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringD_Vel02_E3_01.ogg",
+      "sha256": "178f93e98874890e57261630a693e15a7d47102d8b8f12f7f484a4d535d71342"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringG_Vel01_G3_01.ogg",
+      "sha256": "ac241e6442693e437242cb6d20aa97fe3cff298938e76fc55e7b56cec627937e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringB_Vel01_D4_01.ogg",
+      "sha256": "fe81cf02faed2649528b18c1e679aa592bb846db2f2c2916e865bc66d90c74c2"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringHighE_Vel01_G4_01.ogg",
+      "sha256": "652dba0895f5022435163003f6e17963f4e97b323c8c0df087c4f90bf15c850d"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringB_Vel01_C4_01.ogg",
+      "sha256": "c95327e99cac5193b8aeb2f09dd4564bc935de579de5ff400c05b9e4a99e7e78"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/facebookincubator/Meta-open-sound/e2ff154845994fe4135becc4d5b857c19f172784/systems/instruments/meta-steel-guitar/ogg/INSGuitarSteel_StringHighE_Vel01_E4_01.ogg",
+      "sha256": "b2f6a24537c70f22e529b1dba1f41ed1d4a26612a735992bf5b5bbdb304eefed"
+    }
+  ],
+  "license": "CC0-1.0",
+  "cues": [
+    {
+      "file": "start.wav",
+      "seconds": 0.72,
+      "peak": 0.86,
+      "rms": 0.2006973038508214,
+      "voicing": [
+        [
+          "C3",
+          0.72,
+          0,
+          -0.15
+        ],
+        [
+          "G3",
+          0.66,
+          0,
+          0
+        ],
+        [
+          "E3",
+          0.78,
+          0.065,
+          -0.07
+        ],
+        [
+          "D4",
+          0.92,
+          0.14,
+          0.07
+        ],
+        [
+          "G4",
+          1,
+          0.23,
+          0.15
+        ],
+        [
+          "D4",
+          0.66,
+          0.33,
+          0.07
+        ]
+      ]
+    },
+    {
+      "file": "end.wav",
+      "seconds": 0.7,
+      "peak": 0.7569256233463271,
+      "rms": 0.18415409547632539,
+      "voicing": [
+        [
+          "E4",
+          0.94,
+          0,
+          0.15
+        ],
+        [
+          "C4",
+          0.9,
+          0.075,
+          0.07
+        ],
+        [
+          "G3",
+          0.9,
+          0.15,
+          0
+        ],
+        [
+          "E3",
+          0.82,
+          0.225,
+          -0.07
+        ],
+        [
+          "C3",
+          1,
+          0.3,
+          -0.15
+        ]
+      ]
+    }
+  ]
+}

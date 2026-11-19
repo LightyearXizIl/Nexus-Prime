@@ -8,6 +8,7 @@ import GlobalSettingsView from "./GlobalSettings.vue";
 const { invoke, confirm } = vi.hoisted(() => ({ invoke: vi.fn(), confirm: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("../utils/appLogger", () => ({ loggedInvoke: invoke, recordAppEvent: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn().mockResolvedValue("0.2.6") }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ setTheme: vi.fn().mockResolvedValue(undefined) }),
@@ -110,6 +111,40 @@ describe("GlobalSettings autostart tray preference", () => {
     });
   });
 
+  it("uses the same save button for voice cues and retries the pending automatic save", async () => {
+    const wrapper = await mountSettings();
+    const button = wrapper.get("button.save-button");
+    expect(button.text()).toBe("已保存");
+
+    await wrapper.get("#settings-tab-voice-feedback").trigger("click");
+    expect(wrapper.get("button.save-button").element).toBe(button.element);
+    expect(button.text()).toBe("已保存");
+
+    let failSave: (reason: Error) => void = () => {};
+    invoke.mockImplementation((command: string) => {
+      if (command === "save_voice_feedback") {
+        return new Promise((_resolve, reject) => { failSave = reject; });
+      }
+      return Promise.resolve();
+    });
+    await wrapper.get("#voice-feedback-enabled").setValue(true);
+    expect(button.text()).toBe("正在保存…");
+    expect(button.attributes("aria-busy")).toBe("true");
+
+    failSave(new Error("denied"));
+    await flushPromises();
+    expect(button.text()).toBe("保存失败，重试");
+
+    invoke.mockResolvedValue(undefined);
+    await button.trigger("click");
+    await flushPromises();
+    expect(invoke).toHaveBeenLastCalledWith("save_voice_feedback", {
+      settings: expect.objectContaining({ enabled: true }),
+    });
+    expect(button.text()).toBe("已保存");
+    expect(button.attributes("disabled")).toBeDefined();
+  });
+
   it("clears only old logs after confirmation without saving retention edits", async () => {
     const wrapper = await mountSettings();
     invoke.mockImplementation((command: string) => {
@@ -153,7 +188,7 @@ describe("GlobalSettings autostart tray preference", () => {
     setActivePinia(pinia);
     const wrapper = mount(GlobalSettingsView, { global: { plugins: [pinia, i18n] } });
     await flushPromises();
-    await wrapper.findAll('[role="tab"]')[2].trigger("click");
+    await wrapper.get('#settings-tab-about').trigger("click");
 
     await wrapper.get("button.update-orbit").trigger("click");
     await flushPromises();

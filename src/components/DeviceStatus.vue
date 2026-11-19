@@ -30,17 +30,17 @@ function buttonText(status: BridgeStatus): string {
 </script>
 
 <template>
-  <div class="status-capsule device-status">
+  <div class="device-status page-heading-actions">
     <span
-      :class="['status-indicator', presentation.tone]"
+      :class="['status-indicator page-action is-muted', presentation.tone]"
       :title="statusDetail || undefined"
       :aria-label="statusDetail ? `${statusText}：${statusDetail}` : statusText"
     >
-      <span class="dot status-light" :class="presentation.tone"></span>
+      <span class="page-action-symbol" aria-hidden="true"><span class="dot status-light" :class="presentation.tone"></span></span>
       {{ statusText }}
     </span>
-    <button
-      :class="['connection-action', (device?.auto_connect_enabled || status === 'Connected') ? 'disconnect' : 'connect']"
+    <button type="button"
+      :class="['connection-action page-action', (device?.auto_connect_enabled || status === 'Connected') ? 'disconnect is-danger' : 'connect']"
       :disabled="loading || (status === 'Connecting' && device?.auto_connect_enabled === undefined)"
       @click="emit('toggle')"
     >
@@ -50,80 +50,13 @@ function buttonText(status: BridgeStatus): string {
 </template>
 
 <style scoped>
-.device-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-soft);
-  box-shadow: var(--shadow-sm);
-}
-
-.status-indicator {
-  min-height: 34px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.dot {
-  --status-light-color: var(--text-muted);
-}
-
-.status-indicator.connected { color: var(--success-text); background: var(--success-bg); border-color: var(--success-border); }
-.status-indicator.connected .dot { --status-light-color: var(--success); }
-
-.status-indicator.connecting { color: var(--warning-text); background: var(--warning-bg); border-color: var(--warning-border); }
-.status-indicator.connecting .dot { --status-light-color: var(--warning); }
-
-.status-indicator.disconnected { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
-.status-indicator.disconnected .dot { --status-light-color: var(--danger); }
-
-.status-indicator.error { color: var(--danger-text); background: var(--danger-bg); border-color: var(--danger-border); }
-.status-indicator.error .dot { --status-light-color: var(--danger); }
-
-.connection-action {
-  height: 34px;
-  padding: 0 13px;
-  border: 0;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
-}
-
-.connection-action:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.connect {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-}
-
-.connect:hover:not(:disabled) {
-  background: var(--primary-dark);
-  border-color: var(--primary-dark);
-}
-
-.disconnect {
-  background: var(--danger-bg);
-  color: var(--danger);
-}
-
-.disconnect:hover:not(:disabled) {
-  background: var(--danger-bg);
-  background: color-mix(in srgb, var(--danger) 18%, var(--danger-bg));
-}
+.status-indicator { cursor: default; }
+.dot { --status-light-color: var(--text-muted); }
+.connected .dot { --status-light-color: var(--success); }
+.connecting .dot { --status-light-color: var(--warning); }
+.disconnected .dot, .error .dot { --status-light-color: var(--danger); }
+.connected .page-action-symbol { background: var(--success-bg); }
+.connecting .page-action-symbol { background: var(--warning-bg); }
+.disconnected .page-action-symbol, .error .page-action-symbol { background: var(--danger-bg); }
+.connection-action:disabled { opacity: .6; }
 </style>

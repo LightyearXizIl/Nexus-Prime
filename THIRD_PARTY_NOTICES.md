@@ -39,7 +39,24 @@ VB-CABLE 是 Donationware。仓库中的驱动包应保持供应商原始 ZIP �
 
 本项目只选择性改写并适配上述机制，未合并上游的微信 F5 映射或界面方案。上游 MIT 许可证文本及版权声明应随任何实质性复用或再分发一并保留。
 
+## 吉他提示音
+
+- 文件：`src-tauri/assets/voice-feedback/start.wav`、`end.wav`。
+- 原素材为 Meta Creative Audio 的 Meta Steel Guitar。固定提交、加工说明和样本哈希见 [素材清单](./src-tauri/assets/voice-feedback/sources.json)及[来源说明](./src-tauri/assets/voice-feedback/NOTICE.txt)。
+- 素材包提供的 [CC0 1.0 文本](./src-tauri/assets/voice-feedback/LICENSE-AUDIO-CC0-1.0.txt)随源码保存。
+
+## 轻按和消息叮
+
+- 来源：[Kenney Interface Sounds 1.0](https://kenney.nl/assets/interface-sounds)，CC0 1.0 Universal。原文件名、镜像和 SHA-256 见[来源说明](./src-tauri/assets/voice-feedback/NOTICE.txt)。
+- 应用内的四段 WAV 经过裁剪、音量匹配和淡化处理。
+
 ## 商标
+
+### 输入法图标
+
+- 文件：`src/assets/input-methods/qianwen.jpg`、`wechat.jpg`、`doubao.jpg`。
+- 来源：各发布者的 App Store 产品页图标。[千问输入法](https://apps.apple.com/cn/app/id6781589798)、[微信输入法](https://apps.apple.com/cn/app/id1618175312)、[豆包输入法](https://apps.apple.com/cn/app/id6752316550)。
+- 图标归各自权利人所有，仅用于在设置中标识对应的输入法。
 
 ### 支付渠道图标
 

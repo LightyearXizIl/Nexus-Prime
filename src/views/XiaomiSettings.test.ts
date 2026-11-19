@@ -165,16 +165,16 @@ describe("persistent recovery explanation", () => {
 
 describe("XiaomiSettings saved input-method status", () => {
   it.each([
-    ["wechat", 1, 0], ["wechat-current", 1, 1],
-    ["qianwen-left-win-alt", 2, 2], ["codex", 0, 0],
-    ["doubao-hold", 3, 0], ["doubao-hands-free", 3, 1],
+    ["wechat", "wechat", 1], ["wechat-current", "wechat", 0],
+    ["qianwen-left-win-alt", "qianwen", 3],
+    ["doubao-hold", "doubao", 0], ["doubao-hands-free", "doubao", 1],
   ] as const)("keeps %s applied after the transient hint clears and the dialog reopens", async (preset: ImePreset, tab, option) => {
     vi.useFakeTimers();
     const wrapper = await mountView(true);
     try {
       await wrapper.find(".quick-input-settings").trigger("click");
       const dialog = wrapper.getComponent(InputMethodSettingsDialog);
-      await dialog.findAll('[role="tab"]')[tab].trigger("click");
+      await dialog.get("#ime-tab-" + tab).trigger("click");
       await dialog.findAll(".ime-panel-action button")[option].trigger("click");
       await flushPromises();
       expect(dialog.props("activePreset")).toBe(preset);

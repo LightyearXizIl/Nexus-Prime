@@ -539,10 +539,6 @@ function statusLightClass(
   return "is-danger";
 }
 
-function bridgeStatusLabel() {
-  return t(connectionPresentation.value.labelKey);
-}
-
 function activityTone(text: string): "success" | "info" | "error" {
   if (/失败|错误|异常|未连接|断开|未检测/.test(text)) return "error";
   if (/正在|检测中|等待|修复中|连接中/.test(text)) return "info";
@@ -1318,12 +1314,14 @@ watch(
 </script>
 
 <template>
-  <div :class="['page', { 'dashboard-page': !isMappingPage }]">
-    <header v-if="!isMappingPage" class="dashboard-head">
-      <div>
-        <h1>{{ t("dashboard.title") }}</h1>
+  <div :class="['page page-shell', { 'dashboard-page': !isMappingPage }]">
+    <header :class="[isMappingPage ? 'mapping-page-head' : 'dashboard-head', 'page-heading']">
+      <div class="page-heading-copy">
+        <h1>{{ t(isMappingPage ? "mapping.title" : "dashboard.title") }}</h1>
+        <p v-if="isMappingPage" class="mapping-subtitle">{{ t("mapping.subtitle") }}</p>
       </div>
       <DeviceStatus
+        v-if="!isMappingPage"
         :status="device.status"
         :loading="bridge.loading[type]"
         :device="device"
@@ -1843,26 +1841,6 @@ watch(
       </div>
 
       <section v-if="isMappingPage && config" class="mapping-page">
-        <header class="mapping-page-head">
-          <div>
-            <h1>{{ t("mapping.title") }}</h1>
-            <p class="mapping-subtitle">{{ t("mapping.subtitle") }}</p>
-          </div>
-          <div class="status-capsule mapping-head-actions" :aria-label="t('mapping.title')">
-            <span
-              :class="['mapping-status-pill', connectionPresentation.tone]"
-              :title="connectionPresentation.detail || undefined"
-              :aria-label="connectionPresentation.detail ? `${bridgeStatusLabel()}：${connectionPresentation.detail}` : bridgeStatusLabel()"
-            >
-              <span class="status-light" :class="statusLightClass(connectionPresentation.tone)" aria-hidden="true"></span>{{ bridgeStatusLabel() }}
-            </span>
-            <span class="mapping-save-state" :class="{ saving: configStore.saving }">
-              <AppIcon :name="configStore.saving ? 'update' : 'check'" :size="16" />
-              {{ configStore.saving ? t('status.savingMapping') : t('status.autosave') }}
-            </span>
-          </div>
-        </header>
-
         <section class="card mapping-layout">
         <div class="mapping-heading">
           <p
@@ -2099,11 +2077,6 @@ watch(
 </template>
 
 <style scoped>
-.page {
-  width: 100%;
-  max-width: none;
-  box-sizing: border-box;
-}
 .mapping-heading {
   display: flex;
   align-items: baseline;
@@ -2951,29 +2924,8 @@ watch(
 }
 
 /* 首页仪表盘 */
-.page {
-  width: 100%;
-  max-width: 1260px;
-  margin: 0 auto;
-}
-
 .dashboard-page { min-height: 100%; display: flex; flex-direction: column; }
-
-.dashboard-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 18px;
-}
-
-.dashboard-head h1 {
-  margin: 0;
-  color: var(--text);
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.4px;
-}
+.page-heading h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 
 .overview-row {
   display: grid;
@@ -3156,7 +3108,6 @@ watch(
 }
 
 @media (max-width: 760px) {
-  .dashboard-head { align-items: flex-start; flex-direction: column; }
   .device-overview { padding: 20px; }
   .device-meta h2 { font-size: 18px; }
   .device-data { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
@@ -3166,22 +3117,6 @@ watch(
 }
 
 /* 按键映射页：沿用首页的控制台层级，但让编辑区保持专注。 */
-.mapping-page { width: 100%; max-width: 1260px; margin: 0 auto; }
-.mapping-page-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 18px; margin: 0 0 18px; }
-.mapping-page-head > div:first-child { min-width: 0; }
-.mapping-page-head h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 800; letter-spacing: -0.65px; }
-.mapping-subtitle { max-width: 54ch; margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
-.mapping-head-actions { justify-self: end; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
-.mapping-status-pill,
-.mapping-save-state { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; box-sizing: border-box; padding: 0 12px; border: 0; border-radius: 999px; color: var(--text-secondary); background: transparent; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.mapping-status-pill.connected { color: var(--success-text); background: var(--success-bg); }
-.mapping-status-pill.connecting { color: var(--warning-text); background: var(--warning-bg); }
-.mapping-status-pill.disconnected,
-.mapping-status-pill.error { color: var(--danger-text); background: var(--danger-bg); }
-.mapping-save-state { color: var(--success-text); background: var(--success-bg); }
-.mapping-save-state.saving { color: var(--primary-dark); background: var(--info-bg); }
-.mapping-save-state.saving > span { animation: mapping-saving-spin 1s linear infinite; }
-@keyframes mapping-saving-spin { to { transform: rotate(360deg); } }
 .mapping-layout { padding: 16px; border-radius: 14px; background: var(--card-bg); box-shadow: 0 12px 32px var(--shadow); }
 .mapping-layout .mapping-heading { min-height: 0; margin: 0 0 10px; }
 .mapping-layout .mapping-heading:empty { display: none; }
@@ -3199,9 +3134,6 @@ watch(
 }
 
 @media (max-width: 760px) {
-  .mapping-page-head { grid-template-columns: minmax(0, 1fr); align-items: start; margin-bottom: 14px; }
-  .mapping-head-actions { justify-self: start; justify-content: flex-start; }
-  .mapping-page-head h1 { font-size: 24px; }
   .mapping-layout { padding: 11px; }
   .mapping-layout .voice-toolbar { grid-template-columns: 1fr; }
   .mapping-layout .voice-toolbar-item:last-child { grid-column: auto; }

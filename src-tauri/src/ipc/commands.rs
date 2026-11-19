@@ -248,6 +248,7 @@ pub async fn stop_bridge(
     let _lifecycle = XIAOMI_LIFECYCLE_LOCK.lock();
     let bt = parse_bridge_type(&bridge_type)?;
     if bt == BridgeType::Xiaomi {
+        crate::audio::feedback::cancel();
         if let Some(runtime) = app.try_state::<Arc<XiaomiRuntime>>() {
             runtime.request_stop();
             runtime.cancel_active_session("stop_bridge");
@@ -564,6 +565,84 @@ pub async fn save_global_settings(
     Ok(())
 }
 
+#[tauri::command]
+pub(crate) async fn save_voice_feedback(
+    app: AppHandle,
+    settings: crate::audio::feedback_config::VoiceFeedbackSettings,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<ConfigManager>().set_voice_feedback(settings)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn import_voice_feedback(
+    request: tauri::ipc::Request<'_>,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<crate::audio::feedback_config::ImportedCue, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected a binary WAV segment".into());
+    };
+    crate::audio::feedback_config::import(config_manager.config_dir(), "", bytes)
+}
+
+#[tauri::command]
+pub(crate) async fn pick_voice_feedback_source(
+    app: AppHandle,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<Option<crate::audio::feedback_config::AudioSource>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let dir = config_manager.config_dir().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(file) = app.dialog().file().add_filter(
+            "Audio", &["wav", "wave", "mp3", "aac", "m4a", "mp4", "flac", "ogg", "oga", "opus", "webm"],
+        ).blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = file.into_path().map_err(|error| error.to_string())?;
+        crate::audio::feedback_config::import_source(&dir, &path).map(Some)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn read_voice_feedback_source(
+    id: String,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<tauri::ipc::Response, String> {
+    let dir = config_manager.config_dir().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::audio::feedback_config::read_source(&dir, &id).map(tauri::ipc::Response::new)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn read_voice_feedback_preset(
+    preset: crate::audio::feedback_config::Preset,
+    cue: crate::audio::feedback::Cue,
+) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(crate::audio::feedback_config::preset_bytes(preset, cue).to_vec())
+}
+
+#[tauri::command]
+pub(crate) async fn preview_voice_feedback(
+    settings: crate::audio::feedback_config::VoiceFeedbackSettings,
+    cue: crate::audio::feedback::Cue,
+    config_manager: State<'_, ConfigManager>,
+) -> Result<(), String> {
+    let dir = config_manager.config_dir().clone();
+    let clip = tauri::async_runtime::spawn_blocking(move || settings.clip(&dir, cue))
+        .await
+        .map_err(|error| error.to_string())??;
+    crate::audio::feedback::preview_clip(cue, clip);
+    Ok(())
+}
+
 /// 立即保存界面主题，不覆盖全局设置表单中尚未提交的其它字段。
 #[tauri::command]
 pub async fn set_theme_preference(
@@ -838,6 +917,7 @@ fn restart_xiaomi_bridge_core(
     }
     crate::bridges::xiaomi::key_mapping::cancel_pending_gestures();
     log::info!("XIAOMI host: restart bridge requested");
+    crate::audio::feedback::cancel();
     append_host_log(config_manager, "bridge restart requested");
 
     // Stop the coordinator before teardown, so it cannot reattach Tap during restart.

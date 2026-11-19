@@ -2008,6 +2008,9 @@ fn on_voice_remote_press(
     // Start and clear PCM only after the IME wakeup path has been committed.
     reset_pcm_session(state, started_at);
     mark_voice_shortcut_ready(state, None);
+    // Route the microphone and deliver the original shortcut before queuing
+    // the start cue. A playback problem cannot delay either operation.
+    crate::audio::feedback::voice_started();
     notify_voice_phase(app, gate, true);
     crate::bridges::xiaomi::voice_meter::set_session(true);
     log::info!(
@@ -2049,6 +2052,7 @@ fn on_voice_remote_release(
     if !was_pressed {
         return;
     }
+    crate::audio::feedback::voice_stopped();
 
     if toggle {
         if press_ms < minimum_press_ms {

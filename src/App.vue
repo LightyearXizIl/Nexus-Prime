@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterView, useRoute, useRouter } from "vue-router";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { loggedInvoke as invoke } from "./utils/appLogger";
@@ -24,6 +24,10 @@ interface ConflictSnapshot {
 
 const router = useRouter();
 const route = useRoute();
+const mainContent = ref<HTMLElement | null>(null);
+watch(() => route.path, () => {
+  if (mainContent.value) mainContent.value.scrollTop = 0;
+});
 const update = useUpdateStore();
 const { t } = useI18n();
 let unlistenNav: UnlistenFn | null = null;
@@ -148,7 +152,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container">
     <SideNav />
-    <main class="main-content" :class="{ 'mapping-content': route.name === 'xiaomi-mapping' }">
+    <main ref="mainContent" class="main-content thin-scrollbar">
       <RouterView />
     </main>
   </div>
@@ -408,17 +412,6 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.status-capsule {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-soft);
-  box-shadow: var(--shadow-sm);
-}
-
 #app {
   height: 100vh;
 }
@@ -434,12 +427,32 @@ textarea:focus-visible {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 26px 30px 32px;
   background: var(--canvas);
 }
 
-.main-content.mapping-content { scrollbar-width: none; }
-.main-content.mapping-content::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.thin-scrollbar {
+  --scroll-thumb: color-mix(in srgb, var(--text-secondary) 64%, transparent);
+}
+.thin-scrollbar::-webkit-scrollbar { width: 4px; }
+.thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, transparent, var(--scroll-thumb) 15% 85%, transparent);
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  --scroll-thumb: var(--text-secondary);
+}
+
+html.theme-reveal::view-transition { pointer-events: none; }
+html.theme-reveal #app *,
+html.theme-reveal #app *::before,
+html.theme-reveal #app *::after { transition: none !important; }
+html.theme-reveal::view-transition-group(root),
+html.theme-reveal::view-transition-old(root),
+html.theme-reveal::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 
 @media (max-width: 900px) {
   .main-content { padding: 20px; }

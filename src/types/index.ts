@@ -74,6 +74,50 @@ export interface DeviceConfig {
   voice_shortcut_enabled?: boolean;
 }
 
+export const voiceFeedbackPresets = [
+  "guitar", "soft", "glass", "pulse", "wood", "air", "switch", "notice", "crystal", "reply",
+] as const;
+export type VoiceCue = "start" | "end";
+export type VoiceFeedbackPreset = typeof voiceFeedbackPresets[number] | "custom";
+export type VoiceFeedbackSource = "preset" | "custom";
+
+export interface ImportedVoiceCue {
+  id: string;
+  name: string;
+  source_ms: number;
+  source_id?: string | null;
+  start_ms?: number;
+  duration_ms: number;
+}
+
+export interface VoiceCueSegment {
+  id: string;
+  start_ms: number;
+  duration_ms: number;
+}
+
+export interface VoiceCueSong {
+  source_id: string;
+  name: string;
+  source_ms: number;
+  start: VoiceCueSegment;
+  end: VoiceCueSegment;
+}
+
+export interface VoiceFeedbackSettings {
+  enabled: boolean;
+  preset: VoiceFeedbackPreset;
+  volume_percent?: number | null;
+  source_mode?: VoiceFeedbackSource | null;
+  songs?: VoiceCueSong[];
+  active_song_id?: string | null;
+  // Previous builds kept only one shared song.
+  song?: VoiceCueSong | null;
+  // Older local builds allowed two independent source files.
+  start?: ImportedVoiceCue | null;
+  end?: ImportedVoiceCue | null;
+}
+
 export interface GlobalSettings {
   autostart: boolean;
   autostart_minimized_to_tray: boolean;
@@ -83,6 +127,7 @@ export interface GlobalSettings {
   remote_microphone_always_on: boolean;
   remote_microphone_restore_delay_enabled: boolean;
   remote_microphone_restore_delay_seconds: number;
+  voice_feedback?: VoiceFeedbackSettings;
   theme: ThemePreference;
   log_retention_days: number;
 }

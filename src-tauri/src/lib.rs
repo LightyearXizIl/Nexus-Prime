@@ -29,6 +29,7 @@ pub(crate) fn cleanup_on_exit(app: &tauri::AppHandle) {
     if EXIT_CLEANUP_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    audio::feedback::cancel();
     bridges::xiaomi::key_mapping::cancel_pending_gestures();
     bridges::xiaomi::hid_injector::release_all();
     if let Some(runtime) =
@@ -124,6 +125,15 @@ pub fn run() {
                     settings.remote_microphone_restore_delay_enabled,
                     settings.remote_microphone_restore_delay_seconds,
                 );
+                if settings.voice_feedback.enabled {
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let manager = handle.state::<config::manager::ConfigManager>();
+                        if let Err(error) = manager.restore_voice_feedback() {
+                            log::warn!("VOICE FEEDBACK settings_unavailable error={error}");
+                        }
+                    });
+                }
             }
             app.manage(update::UpdateManager::default());
 
@@ -292,6 +302,12 @@ pub fn run() {
             ipc::commands::get_autostart,
             ipc::commands::get_global_settings,
             ipc::commands::save_global_settings,
+            ipc::commands::save_voice_feedback,
+            ipc::commands::import_voice_feedback,
+            ipc::commands::pick_voice_feedback_source,
+            ipc::commands::read_voice_feedback_source,
+            ipc::commands::read_voice_feedback_preset,
+            ipc::commands::preview_voice_feedback,
             ipc::commands::set_theme_preference,
             ipc::commands::set_language_preference,
             ipc::commands::get_xiaomi_host_status,

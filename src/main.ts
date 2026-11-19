@@ -6,6 +6,8 @@ import { applyCachedTheme, useThemeStore } from "./stores/theme";
 import { applyCachedLocale, useLocaleStore } from "./stores/locale";
 import { i18n } from "./i18n";
 import { installUiLogging, recordAppEvent } from "./utils/appLogger";
+import "./assets/settings-select.css";
+import "./assets/page-controls.css";
 
 applyCachedTheme();
 applyCachedLocale();

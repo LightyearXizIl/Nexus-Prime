@@ -240,6 +240,8 @@ pub struct GlobalSettings {
     /// 松开语音键后恢复原默认麦克风的延迟秒数，限制为 0–60 秒。
     #[serde(default = "default_remote_microphone_restore_delay_seconds")]
     pub remote_microphone_restore_delay_seconds: u8,
+    #[serde(default)]
+    pub(crate) voice_feedback: crate::audio::feedback_config::VoiceFeedbackSettings,
     /// 界面主题偏好；缺失时兼容旧配置并跟随系统
     #[serde(default)]
     pub theme: ThemePreference,
@@ -292,6 +294,7 @@ impl Default for GlobalSettings {
                 default_remote_microphone_restore_delay_enabled(),
             remote_microphone_restore_delay_seconds:
                 default_remote_microphone_restore_delay_seconds(),
+            voice_feedback: Default::default(),
             theme: ThemePreference::System,
             log_retention_days: default_log_retention_days(),
         }
@@ -724,7 +727,29 @@ impl ConfigManager {
         // stale settings form overwrite either preference.
         merged.theme = current.theme;
         merged.language = current.language;
+        merged.voice_feedback = current.voice_feedback;
         self.save_global_settings_unlocked(&merged)
+    }
+
+    pub(crate) fn set_voice_feedback(
+        &self,
+        preferences: crate::audio::feedback_config::VoiceFeedbackSettings,
+    ) -> Result<(), String> {
+        let _guard = self.global_settings_lock.lock();
+        let clips = preferences.prepare(&self.config_dir)?;
+        let mut settings = self.load_global_settings_unlocked()?;
+        let previous = std::mem::replace(&mut settings.voice_feedback, preferences);
+        self.save_global_settings_unlocked(&settings)?;
+        crate::audio::feedback::configure(clips);
+        previous.remove_deleted_song_assets(&self.config_dir, &settings.voice_feedback);
+        Ok(())
+    }
+
+    pub(crate) fn restore_voice_feedback(&self) -> Result<(), String> {
+        let _guard = self.global_settings_lock.lock();
+        let settings = self.load_global_settings_unlocked()?;
+        crate::audio::feedback::configure(settings.voice_feedback.prepare(&self.config_dir)?);
+        Ok(())
     }
 
     /// 只更新主题字段，保留可能尚未被其它界面重新读取的全局设置。

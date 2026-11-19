@@ -1,3 +1,6 @@
+pub mod feedback;
+pub(crate) mod feedback_config;
+pub(crate) mod endpoint_inventory;
 pub mod mixer;
 pub mod udp_server;
 pub mod pcm_router;

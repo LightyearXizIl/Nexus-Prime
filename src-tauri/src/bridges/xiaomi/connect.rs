@@ -149,6 +149,7 @@ impl XiaomiRuntime {
     pub fn end_session(&self, id: u64, reason: &str) -> bool {
         let _callback = self.callback_gate.lock();
         if self.sessions.end(id) {
+            crate::audio::feedback::cancel();
             log::info!("XIAOMI SESSION stop id={id} reason={reason}");
             true
         } else {

@@ -1,0 +1,44 @@
+.settings-select {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .settings-select, .settings-select::picker(select) { appearance: base-select; }
+  .settings-select { align-items: center; gap: 8px; }
+  .settings-select::picker-icon { color: var(--text-secondary); }
+  .settings-select::picker(select) {
+    margin-block: 4px;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-raised);
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+  .settings-select--below::picker(select) {
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: none;
+    margin: 4px 0 0;
+    inline-size: anchor-size(width);
+    max-block-size: min(320px, calc(100% - 4px));
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-secondary) 64%, transparent) transparent;
+  }
+  .settings-select option { min-height: 30px; padding: 5px 8px; border-radius: 5px; }
+  .settings-select option:checked { background: var(--surface-selected); }
+  .settings-select option:hover, .settings-select option:focus-visible { background: var(--surface-hover); }
+}

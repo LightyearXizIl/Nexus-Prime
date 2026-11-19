@@ -97,6 +97,7 @@ id_ed25519.*
 *.pcm
 *.raw
 *.wav
+!src-tauri/assets/voice-feedback/*.wav
 *.reg
 
 # Bundled WinUHid runtime and driver package

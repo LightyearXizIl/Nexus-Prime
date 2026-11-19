@@ -8,13 +8,16 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useThemeStore } from "../stores/theme";
 import { useUpdateStore } from "../stores/update";
 import { useLocaleStore } from "../stores/locale";
+import { useConfigStore } from "../stores/config";
 import { useI18n } from "vue-i18n";
+import { revealTheme } from "../utils/themeReveal";
 import type { AppLocale } from "../i18n";
-import type { GlobalSettings, ThemePreference } from "../types";
+import type { GlobalSettings, ThemePreference, VoiceFeedbackSettings as FeedbackPreferences } from "../types";
 import lightYearAuthor from "../assets/light_year_author.jpg";
 import SupportCard from "../components/SupportCard.vue";
+import VoiceFeedbackSettings from "../components/VoiceFeedbackSettings.vue";
 
-type SectionId = "general" | "appearance" | "about";
+type SectionId = "general" | "voice-feedback" | "appearance" | "about";
 type LogCleanupResult = { deletedFiles: number; freedBytes: number };
 
 const settings = ref<GlobalSettings>({
@@ -32,9 +35,13 @@ const settings = ref<GlobalSettings>({
 const theme = useThemeStore();
 const update = useUpdateStore();
 const locale = useLocaleStore();
+const configStore = useConfigStore();
 const { t } = useI18n();
 const saved = ref(true);
 const saving = ref(false);
+const savingVoiceFeedback = ref(false);
+const voiceFeedbackSaveFailed = ref(false);
+let pendingVoiceFeedback: FeedbackPreferences | undefined;
 const saveError = ref("");
 const appVersion = ref("v0.1.7");
 const activeSection = ref<SectionId>("general");
@@ -42,14 +49,19 @@ const settingsReady = ref(false);
 const clearingLogs = ref(false);
 const logCleanupFeedback = ref("");
 const logCleanupFailed = ref(false);
-const saveButtonLabel = computed(() => {
-  if (saving.value) return t("common.saving");
-  if (saveError.value) return t("common.saveRetry");
-  return saved.value ? t("common.savedShort") : t("common.save");
+const onVoiceSettings = computed(() => activeSection.value === "voice-feedback");
+const saveButton = computed(() => {
+  const inProgress = configStore.saving || (onVoiceSettings.value ? savingVoiceFeedback.value : saving.value);
+  const failed = onVoiceSettings.value ? voiceFeedbackSaveFailed.value : Boolean(saveError.value);
+  const complete = !inProgress && !failed && (onVoiceSettings.value || saved.value);
+  const label = inProgress ? "common.saving" : failed ? "common.saveRetry" : complete ? "common.savedShort" : "common.save";
+  const icon = inProgress ? "update" : failed ? "alert" : complete ? "check" : "save";
+  return { inProgress, failed, complete, label, icon };
 });
 
 const navigation = computed<Array<{ id: SectionId; label: string; caption: string }>>(() => [
   { id: "general", label: t("settings.general"), caption: t("settings.generalHint") },
+  { id: "voice-feedback", label: t("voiceFeedback.title"), caption: t("voiceFeedback.caption") },
   { id: "appearance", label: t("settings.appearance"), caption: t("settings.appearanceHint") },
   { id: "about", label: t("settings.about"), caption: t("settings.aboutHint") },
 ]);
@@ -108,6 +120,7 @@ async function saveSettings() {
   try {
     const settingsToSave = { ...settings.value, language: locale.preference, theme: theme.preference };
     await invoke("save_global_settings", { settings: settingsToSave });
+    settingsToSave.voice_feedback = settings.value.voice_feedback;
     settings.value = settingsToSave;
     saved.value = true;
     void update.setAutoCheckEnabled(settingsToSave.auto_check_updates);
@@ -122,6 +135,33 @@ async function saveSettings() {
 function onSettingChange() {
   saved.value = false;
   saveError.value = "";
+}
+
+function setVoiceFeedback(preferences: FeedbackPreferences) {
+  settings.value.voice_feedback = preferences;
+  pendingVoiceFeedback = preferences;
+  void saveVoiceFeedback();
+}
+
+async function saveVoiceFeedback() {
+  if (savingVoiceFeedback.value || !pendingVoiceFeedback) return;
+  savingVoiceFeedback.value = true;
+  voiceFeedbackSaveFailed.value = false;
+  try {
+    while (pendingVoiceFeedback) {
+      const preferences = pendingVoiceFeedback;
+      pendingVoiceFeedback = undefined;
+      try {
+        await invoke("save_voice_feedback", { settings: preferences });
+      } catch {
+        pendingVoiceFeedback ??= preferences;
+        voiceFeedbackSaveFailed.value = true;
+        return;
+      }
+    }
+  } finally {
+    savingVoiceFeedback.value = false;
+  }
 }
 
 function formatBytes(bytes: number) {
@@ -158,8 +198,13 @@ async function clearOldLogs() {
   }
 }
 
-async function setTheme(nextPreference: ThemePreference) {
-  await theme.setPreference(nextPreference);
+function setTheme(nextPreference: ThemePreference, event: MouseEvent) {
+  const apply = () => { void theme.setPreference(nextPreference); };
+  if (nextPreference === "system" || nextPreference === theme.effectiveTheme) {
+    apply();
+  } else {
+    revealTheme(event.currentTarget as HTMLButtonElement, apply);
+  }
 }
 
 function setLanguage(event: Event) {
@@ -188,26 +233,26 @@ async function openExternal(url: string) {
 </script>
 
 <template>
-  <div class="settings-page">
-    <header class="settings-header">
-      <div>
+  <div class="settings-page page-shell">
+    <header class="settings-header page-heading">
+      <div class="page-heading-copy">
         <h1>{{ t("settings.title") }}</h1>
         <p>{{ t("settings.subtitle") }}</p>
       </div>
-      <div class="save-area">
+      <div class="save-area page-heading-actions">
         <button
           type="button"
-          class="save-button"
-          :class="{ 'is-saving': saving, 'is-saved': saved && !saving, 'is-error': !!saveError }"
-          :disabled="saved || saving"
-          :aria-busy="saving"
-          :title="saveError || undefined"
-          @click="saveSettings"
+          class="save-button page-action"
+          :class="{ 'is-saving': saveButton.inProgress, 'is-saved is-muted': saveButton.complete, 'is-error': saveButton.failed }"
+          :disabled="saveButton.complete || saveButton.inProgress"
+          :aria-busy="saveButton.inProgress"
+          :title="onVoiceSettings ? undefined : (saveError || undefined)"
+          @click="onVoiceSettings ? saveVoiceFeedback() : saveSettings()"
         >
-          <span class="save-button-symbol" aria-hidden="true">
-            <AppIcon class="save-button-icon" :name="saving ? 'update' : saveError ? 'alert' : saved ? 'check' : 'save'" />
+          <span class="save-button-symbol page-action-symbol" aria-hidden="true">
+            <AppIcon class="save-button-icon" :name="saveButton.icon" />
           </span>
-          <span class="save-button-label" aria-live="polite" aria-atomic="true">{{ saveButtonLabel }}</span>
+          <span class="save-button-label" aria-live="polite" aria-atomic="true">{{ t(saveButton.label) }}</span>
         </button>
       </div>
     </header>
@@ -332,7 +377,7 @@ async function openExternal(url: string) {
                 <span>{{ t("settings.logRetentionHint") }}</span>
               </div>
               <div class="log-retention-controls">
-                <select v-model.number="settings.log_retention_days" class="language-select" :aria-label="t('settings.logRetention')" @change="onSettingChange">
+                <select v-model.number="settings.log_retention_days" class="settings-select language-select" :aria-label="t('settings.logRetention')" @change="onSettingChange">
                   <option v-for="days in [1, 3, 7, 14, 30]" :key="days" :value="days">{{ t("settings.logRetentionDays", { days }) }}</option>
                 </select>
                 <button type="button" class="clear-logs-button" :disabled="clearingLogs" @click="clearOldLogs">
@@ -344,6 +389,20 @@ async function openExternal(url: string) {
               </div>
             </div>
           </div>
+        </section>
+
+        <section v-else-if="activeSection === 'voice-feedback'" id="settings-panel-voice-feedback" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-voice-feedback">
+          <div class="card-head">
+            <div>
+              <h2>{{ t("voiceFeedback.title") }}</h2>
+              <p>{{ t("voiceFeedback.description") }}</p>
+            </div>
+          </div>
+          <VoiceFeedbackSettings
+            :model-value="settings.voice_feedback"
+            :saving="savingVoiceFeedback || voiceFeedbackSaveFailed"
+            @update:model-value="setVoiceFeedback"
+          />
         </section>
 
         <section v-else-if="activeSection === 'appearance'" id="settings-panel-appearance" class="settings-card" role="tabpanel" aria-labelledby="settings-tab-appearance">
@@ -360,7 +419,7 @@ async function openExternal(url: string) {
                 <strong>{{ t("settings.language") }}</strong>
                 <span>{{ t("settings.languageHint") }}</span>
               </div>
-              <select :value="locale.preference" class="language-select" :disabled="locale.saving" :aria-label="t('settings.language')" @change="setLanguage">
+              <select :value="locale.preference" class="settings-select language-select" :disabled="locale.saving" :aria-label="t('settings.language')" @change="setLanguage">
                 <option value="zh-CN">简体中文</option>
                 <option value="zh-TW">繁體中文</option>
                 <option value="en">English</option>
@@ -375,7 +434,7 @@ async function openExternal(url: string) {
                 </div>
               </div>
               <div class="theme-segmented" role="group" :aria-label="t('settings.theme')">
-                <button v-for="option in ([['light', t('settings.light')], ['system', t('settings.system')], ['dark', t('settings.dark')]] as const)" :key="option[0]" type="button" :disabled="theme.saving" :class="{ active: theme.preference === option[0] }" @click="setTheme(option[0])">
+                <button v-for="option in ([['light', t('settings.light')], ['system', t('settings.system')], ['dark', t('settings.dark')]] as const)" :key="option[0]" type="button" :disabled="theme.saving" :class="{ active: theme.preference === option[0] }" @click="setTheme(option[0], $event)">
                   {{ option[1] }}
                 </button>
               </div>
@@ -505,21 +564,9 @@ async function openExternal(url: string) {
 </template>
 
 <style scoped>
-.settings-page { width: 100%; max-width: 1260px; margin: 0 auto; box-sizing: border-box; }
-.settings-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
 .credit-kicker { margin: 0 0 7px; color: var(--primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; font-weight: 800; letter-spacing: 0.13em; }
-.settings-header h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 800; letter-spacing: -0.65px; }
-.settings-header > div > p:last-child { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; }
-.save-area { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-height: 36px; }
-.save-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 112px; min-height: 38px; padding: 7px 15px 7px 10px; border: 1px solid transparent; border-radius: 999px; color: #fff; background: var(--primary); box-shadow: none; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s ease, border-color .15s ease, opacity .15s ease; }
-.save-button:hover:not(:disabled) { background: var(--primary-dark); }
-.save-button:disabled { cursor: default; }
-.save-button.is-saved { border-color: var(--border); color: var(--text-secondary); background: var(--surface-raised); }
 .save-button.is-saved .save-button-symbol { color: var(--success-text); background: var(--success-bg); }
-.save-button.is-error { border-color: var(--danger); color: var(--danger-text); background: var(--danger-bg); box-shadow: none; }
-.save-button.is-error:hover { background: var(--danger-bg); }
 .save-button.is-saving { opacity: .8; cursor: wait; }
-.save-button-symbol { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; }
 .save-button-icon { display: block; width: 14px; height: 14px; }
 .save-button-label { white-space: nowrap; }
 .save-button.is-saving .save-button-icon { animation: settings-spin 1s linear infinite; }
@@ -560,7 +607,7 @@ async function openExternal(url: string) {
 .disabled-toggle::before { display: block; width: 17px; height: 17px; margin: 3px; border-radius: 50%; background: var(--control-thumb); content: ""; }
 
 .appearance-list { gap: 0; }
-.language-select { min-width: 130px; height: 34px; padding: 0 27px 0 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); font: inherit; font-size: 12px; }
+.language-select { min-width: 130px; }
 .log-retention-controls { display: grid; grid-template-columns: auto auto; justify-items: end; gap: 6px; }
 .microphone-delay-controls { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .seconds-input { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }
@@ -643,9 +690,6 @@ async function openExternal(url: string) {
   .settings-nav button { min-width: 130px; }
 }
 @media (max-width: 680px) {
-  .settings-header { align-items: flex-start; flex-direction: column; margin-bottom: 14px; }
-  .settings-header h1 { font-size: 24px; }
-  .save-area { justify-content: flex-start; flex-wrap: wrap; }
   .settings-card { padding: 16px; }
   .log-retention-controls { grid-template-columns: 1fr; justify-items: stretch; }
   .log-retention-controls .language-select, .clear-logs-button { width: 100%; }
@@ -667,7 +711,6 @@ async function openExternal(url: string) {
   .author-identity { align-items: stretch; flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .save-button { transition: none; }
   .save-button.is-saving .save-button-icon { animation: none; }
 }
 </style>

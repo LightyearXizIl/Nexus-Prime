@@ -11,6 +11,7 @@ import { useUpdateStore } from "../stores/update";
 import { useI18n } from "vue-i18n";
 import type { BridgeStatus } from "../types";
 import { connectedDeviceName, connectionStatusPresentation } from "../utils/connectionStatus";
+import { revealTheme } from "../utils/themeReveal";
 
 const maximized = ref(false);
 let unlistenResize: UnlistenFn | undefined;
@@ -55,8 +56,8 @@ function navigate(path: "/xiaomi" | "/xiaomi/mapping" | "/settings") {
   if (route.path !== path) void router.push(path);
 }
 
-function toggleTheme() {
-  void theme.toggle();
+function toggleTheme(event: MouseEvent) {
+  revealTheme(event.currentTarget as HTMLButtonElement, () => { void theme.toggle(); });
 }
 
 </script>

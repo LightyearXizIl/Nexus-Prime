@@ -1,16 +1,16 @@
 {
-  "tag_name": "v0.5.8",
-  "name": "Nexus Prime v0.5.8",
-  "body": "## 界面恢复\n\n- 按正式版 v0.5.6 恢复字号、间距和卡片布局，保留原有位置的 SVG 图标重绘。\n- 首页、按键映射恢复居中导航；主题与设置保持在导航右侧。\n- 最小化、最大化/还原和关闭放入独立自绘标题栏，关闭行为沿用托盘设置。\n- 服务图标恢复原有底座和占位，快捷操作恢复旧版文字按钮；赞赏红心恢复实心并保留跳动。\n\n## 状态与滚动\n\n- 删除服务状态下方额外提示区，启动、连接及修复状态统一显示在实时动态。\n- 长消息完整换行，后台状态变化实时更新；相同轮询状态不重复刷屏，相关消息保留蓝牙设置入口。\n- 按键映射隐藏页面右侧滚动条，保留滚轮、触控板与键盘滚动及底部内容访问。\n\n## 验证\n\n前端 88 项、Gadget 10 项、Rust workspace 205 项测试通过，2 项现场环境测试忽略。生产前端、Windows 全目标检查、Windows 调试应用和 x64 NSIS 构建通过。浏览器模拟检查覆盖深浅主题及 1080×814、880×720 窗口的提示位置、完整换行、轮询去重、状态更新、映射滚动、导航居中与实心红心。\n\n真实遥控器、驱动生命周期和原生窗口操作仍需安装后现场验收。Windows x64 安装包未签名；旧版可覆盖安装并保留现有映射和设置。",
+  "tag_name": "v0.5.9",
+  "name": "Nexus Prime v0.5.9",
+  "body": "## 本版更新\n\n- 语音键按下和松开时可播放独立提示音。设置中提供 10 组预设、分别试听、0–150% 音量调节和自动保存。\n- 自定义曲库可保存多首歌曲，每首歌曲用同一音源裁剪开始音和结束音。支持拖动全曲波形定位、编辑选段起点与终点、独立恢复默认，以及在应用内确认删除。\n- 预设和已保存歌曲菜单固定向下展开。首页、按键映射和设置统一页头布局与控件样式，按键映射和输入法设置使用细滚动条，深浅主题从按钮中心向外圆形切换。\n- 输入法设置按千问、微信、豆包排序，使用各自的产品图标，统一说明与快捷键卡片布局，移除 ChatGPT 入口。\n\n从旧版升级时，运行新版 Windows x64 安装包即可覆盖安装。应用内更新使用随包发布的 `latest.json`。",
   "published_at": null,
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "Nexus.Prime_0.5.8_x64-setup.exe",
-      "size": 13731423,
-      "digest": "sha256:c0fd620ddb3b5ed18b329069f07ed9127ef161f4e8c3ef31cd8361cece56bb2f",
-      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.8/Nexus.Prime_0.5.8_x64-setup.exe"
+      "name": "Nexus.Prime_0.5.9_x64-setup.exe",
+      "size": 14308439,
+      "digest": "sha256:31dffff0ae95305eda4f6cf61580c188877238bbc52596cf68d6eb284b015f77",
+      "browser_download_url": "https://github.com/LightyearXizIl/Nexus-Prime/releases/download/v0.5.9/Nexus.Prime_0.5.9_x64-setup.exe"
     }
   ]
 }

@@ -2,10 +2,29 @@
 import AppIcon from "./AppIcon.vue";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { ImePreset } from "../utils/imePreset";
+import doubaoIcon from "../assets/input-methods/doubao.jpg";
+import qianwenIcon from "../assets/input-methods/qianwen.jpg";
+import wechatIcon from "../assets/input-methods/wechat.jpg";
 
 export type { ImePreset } from "../utils/imePreset";
 
-export type ImeProvider = "codex" | "wechat" | "qianwen" | "doubao";
+const providerOrder = ["qianwen", "wechat", "doubao"] as const;
+type ImeProvider = typeof providerOrder[number];
+type ImeOption = {
+  preset: Exclude<ImePreset, "codex">;
+  label: string;
+  shortcut: string;
+  description: string;
+  action: string;
+};
+type ImeProviderDetails = {
+  label: string;
+  icon: string;
+  heading: string;
+  summary: string;
+  note: string;
+  options: ImeOption[];
+};
 
 const props = defineProps<{
   open: boolean;
@@ -21,38 +40,63 @@ const emit = defineEmits<{
 }>();
 
 const STORAGE_KEY = "nexus-prime.input-method-settings.provider";
-const providers: Array<{ id: ImeProvider; label: string }> = [
-  { id: "codex", label: "ChatGPT" },
-  { id: "wechat", label: "微信" },
-  { id: "qianwen", label: "千问" },
-  { id: "doubao", label: "豆包" },
-];
-const qianwenOptions: Array<{ preset: ImePreset; shortcut: string; status: string }> = [
-  { preset: "qianwen-left-ctrl", shortcut: "左 Ctrl", status: "可选快捷键" },
-  { preset: "qianwen-left-ctrl-win", shortcut: "左 Ctrl + 左 Win", status: "可选快捷键" },
-  { preset: "qianwen-left-win-alt", shortcut: "左 Win + 左 Alt", status: "可选快捷键" },
-  { preset: "qianwen", shortcut: "右 Alt", status: "默认快捷键" },
-];
+const providers: Record<ImeProvider, ImeProviderDetails> = {
+  doubao: {
+    label: "豆包输入法",
+    icon: doubaoIcon,
+    heading: "选择适合麦克风的语音模式",
+    summary: "用遥控器麦克风时，推荐长按模式。用电脑麦克风时，也可以选择免按模式。",
+    note: "松开遥控器语音键后，遥控器会停止传送音频。",
+    options: [
+      { preset: "doubao-hold", label: "长按模式 · 推荐", shortcut: "右 Alt", description: "按住遥控器语音键说话，松开结束。", action: "应用右 Alt 长按" },
+      { preset: "doubao-hands-free", label: "免按模式", shortcut: "右 Alt + 空格", description: "短按开始，随后按任意键结束。", action: "应用右 Alt + 空格" },
+    ],
+  },
+  wechat: {
+    label: "微信输入法",
+    icon: wechatIcon,
+    heading: "选择微信输入法的语音模式",
+    summary: "微信输入法支持按住说话和启动语音输入。请选用和微信输入法设置一致的快捷键。",
+    note: "微信输入法里可以同时开启两种模式，遥控器会发送这里选中的一种。",
+    options: [
+      { preset: "wechat-current", label: "按住说话 · 推荐", shortcut: "左 Ctrl + 左 Shift + D", description: "按住说话，松手结束并上屏。", action: "应用按住说话" },
+      { preset: "wechat", label: "启动语音输入", shortcut: "左 Ctrl + 左 Win", description: "短按启动，随后按任意键结束。", action: "应用启动语音输入" },
+    ],
+  },
+  qianwen: {
+    label: "千问输入法",
+    icon: qianwenIcon,
+    heading: "选择千问的按住说话快捷键",
+    summary: "在千问输入法的语音输入设置里选择同一个组合。遥控器按下时按住该组合，松开时释放。",
+    note: "右 Alt 是默认快捷键。",
+    options: [
+      { preset: "qianwen", label: "默认快捷键", shortcut: "右 Alt", description: "按住说话，松开结束。", action: "应用 右 Alt" },
+      { preset: "qianwen-left-ctrl", label: "可选快捷键", shortcut: "左 Ctrl", description: "按住说话，松开结束。", action: "应用 左 Ctrl" },
+      { preset: "qianwen-left-ctrl-win", label: "可选快捷键", shortcut: "左 Ctrl + 左 Win", description: "按住说话，松开结束。", action: "应用 左 Ctrl + 左 Win" },
+      { preset: "qianwen-left-win-alt", label: "可选快捷键", shortcut: "左 Win + 左 Alt", description: "按住说话，松开结束。", action: "应用 左 Win + 左 Alt" },
+    ],
+  },
+};
 
-const activeProvider = ref<ImeProvider>("codex");
+const activeProvider = ref<ImeProvider>(providerOrder[0]);
 const lastAppliedPreset = ref<ImePreset | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
 let lastFocusedElement: HTMLElement | null = null;
-const activeLabel = computed(
-  () => providers.find((provider) => provider.id === activeProvider.value)?.label ?? "Codex"
-);
+const activeDetails = computed(() => providers[activeProvider.value]);
 
 function isImeProvider(value: string | null): value is ImeProvider {
-  return providers.some((provider) => provider.id === value);
+  return providerOrder.some(provider => value === provider);
 }
 
 function restoreProvider() {
   const stored = window.localStorage.getItem(STORAGE_KEY);
-  activeProvider.value = isImeProvider(stored) ? stored : "codex";
+  activeProvider.value = isImeProvider(stored) ? stored : providerOrder[0];
 }
 
 function selectProvider(provider: ImeProvider) {
   activeProvider.value = provider;
+  if (panelRef.value) panelRef.value.scrollTop = 0;
   window.localStorage.setItem(STORAGE_KEY, provider);
 }
 
@@ -80,16 +124,16 @@ function onKeydown(event: KeyboardEvent) {
     event.target.getAttribute("role") === "tab"
   ) {
     event.preventDefault();
-    const currentIndex = providers.findIndex((provider) => provider.id === activeProvider.value);
+    const currentIndex = providerOrder.indexOf(activeProvider.value);
     const nextIndex =
       event.key === "Home"
         ? 0
         : event.key === "End"
-          ? providers.length - 1
-          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + providers.length) % providers.length;
-    const nextProvider = providers[nextIndex];
-    selectProvider(nextProvider.id);
-    nextTick(() => document.getElementById(`ime-tab-${nextProvider.id}`)?.focus());
+          ? providerOrder.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + providerOrder.length) % providerOrder.length;
+    const nextProvider = providerOrder[nextIndex];
+    selectProvider(nextProvider);
+    nextTick(() => document.getElementById(`ime-tab-${nextProvider}`)?.focus());
     return;
   }
 
@@ -147,176 +191,62 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
           <h3 id="ime-settings-title">输入法设置</h3>
           <p>遥控器语音键需要与所选输入法的语音快捷键一致。</p>
         </div>
-
-        <div class="ime-provider-tabs" role="tablist" aria-label="选择输入法">
-          <button
-            v-for="provider in providers"
-            :key="provider.id"
-            type="button"
-            role="tab"
-            :id="`ime-tab-${provider.id}`"
-            :aria-selected="activeProvider === provider.id"
-            :aria-controls="`ime-panel-${provider.id}`"
-            :tabindex="activeProvider === provider.id ? 0 : -1"
-            :class="{ active: activeProvider === provider.id }"
-            @click="selectProvider(provider.id)"
-          >
-            {{ provider.label }}
-          </button>
-        </div>
-
         <button class="ime-button ime-button--secondary ime-close" type="button" aria-label="关闭输入法设置" @click="close">
           <AppIcon name="close" />
         </button>
+        <div class="ime-provider-tabs" role="tablist" aria-label="选择输入法">
+          <button
+            v-for="provider in providerOrder"
+            :key="provider"
+            type="button"
+            role="tab"
+            :id="'ime-tab-' + provider"
+            :aria-selected="activeProvider === provider"
+            :aria-controls="'ime-panel-' + provider"
+            :tabindex="activeProvider === provider ? 0 : -1"
+            :class="{ active: activeProvider === provider }"
+            @click="selectProvider(provider)"
+          >
+            {{ providers[provider].label }}
+          </button>
+        </div>
       </header>
 
       <div
-        :id="`ime-panel-${activeProvider}`"
-        class="ime-panel"
+        :id="'ime-panel-' + activeProvider"
+        ref="panelRef"
+        class="ime-panel thin-scrollbar"
         role="tabpanel"
-        :aria-labelledby="`ime-tab-${activeProvider}`"
+        :aria-labelledby="'ime-tab-' + activeProvider"
       >
-        <template v-if="activeProvider === 'codex'">
-          <div class="ime-panel-copy">
-            <span class="ime-eyebrow">{{ activeLabel }} · 推荐</span>
-            <h4>主页键切换到 ChatGPT，语音键按住说话</h4>
-            <p id="ime-codex-summary">
-              应用后，单击主页键会启动或激活 ChatGPT，并把输入框切到焦点；语音键只负责按住听写，发送
-              <code>左 Ctrl + 左 Shift + D</code>。
-            </p>
-            <p class="ime-detail">
-              请在 ChatGPT / Codex 设置中确认“按住进行听写或长按”为 Ctrl+Shift+D；若已改过快捷键，请在按键映射中录入相同组合。
-            </p>
-          </div>
-          <aside class="ime-panel-action ime-callout">
+        <div class="ime-panel-copy">
+          <img class="ime-provider-icon" :src="activeDetails.icon" alt="" width="64" height="64" />
+          <h4>{{ activeDetails.heading }}</h4>
+          <p :id="'ime-' + activeProvider + '-summary'">{{ activeDetails.summary }}</p>
+          <p class="ime-detail">{{ activeDetails.note }}</p>
+        </div>
+        <div class="ime-panel-action">
+          <section v-for="option in activeDetails.options" :key="option.preset" class="ime-option">
             <div class="ime-option-head">
-              <span class="ime-status">推荐映射</span>
-              <span v-if="activePreset === 'codex'" class="ime-current">当前已应用</span>
+              <span class="ime-status">{{ option.label }}</span>
+              <span v-if="activePreset === option.preset" class="ime-current">当前已应用</span>
             </div>
-            <strong>左 Ctrl + 左 Shift + D</strong>
-            <p>触发模式：按住</p>
-            <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'codex'" :disabled="!configReady || saving" @click="apply('codex')">
-              <span>{{ saving ? "正在应用…" : "快速应用此映射" }}</span>
+            <strong>{{ option.shortcut }}</strong>
+            <p>{{ option.description }}</p>
+            <button
+              class="ime-button ime-button--primary"
+              type="button"
+              :aria-label="option.action"
+              :aria-pressed="activePreset === option.preset"
+              :disabled="!configReady || saving"
+              @click="apply(option.preset)"
+            >
+              <span>{{ saving && lastAppliedPreset === option.preset ? "正在应用…" : "应用此快捷键" }}</span>
               <AppIcon name="chevron" />
             </button>
-            <span v-if="applyHint && lastAppliedPreset === 'codex'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-          </aside>
-        </template>
-
-        <template v-else-if="activeProvider === 'wechat'">
-          <div class="ime-panel-copy">
-            <span class="ime-eyebrow">{{ activeLabel }} · 两种语音模式</span>
-            <h4>与微信输入法的语音设置保持一致</h4>
-            <p id="ime-wechat-summary">
-              微信输入法提供“启动语音输入”和“按住说话”两种快捷键。本软件每次只应用其中一种，
-              请与微信输入法“设置 → 语音输入”中的快捷键保持一致。
-            </p>
-            <ol>
-              <li>“启动语音输入”使用 <code>左 Ctrl + 左 Win</code>，按下即可启动。</li>
-              <li>“按住说话”使用 <code>左 Ctrl + 左 Shift + D</code>，松手结束并上屏。</li>
-              <li>两项可以同时在微信输入法中启用；本软件只发送下方选中的一种。</li>
-            </ol>
-          </div>
-          <aside class="ime-panel-action ime-wechat-actions">
-            <section class="ime-wechat-option">
-              <div class="ime-option-head">
-                <span class="ime-status">启动语音输入</span>
-                <span v-if="activePreset === 'wechat'" class="ime-current">当前已应用</span>
-              </div>
-              <strong>左 Ctrl + 左 Win</strong>
-              <p>按下即可启用语音输入，按任意键均可结束；触发模式：点击</p>
-              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat'" :disabled="!configReady || saving" @click="apply('wechat')">
-                <span>{{ saving ? "正在应用…" : "应用启动语音输入" }}</span>
-                <AppIcon name="chevron" />
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === 'wechat'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </section>
-
-            <section class="ime-wechat-option">
-              <div class="ime-option-head">
-                <span class="ime-status">按住说话</span>
-                <span v-if="activePreset === 'wechat-current'" class="ime-current">当前已应用</span>
-              </div>
-              <strong>左 Ctrl + 左 Shift + D</strong>
-              <p>按住可语音输入，松手结束并上屏；触发模式：按住（推荐）</p>
-              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'wechat-current'" :disabled="!configReady || saving" @click="apply('wechat-current')">
-                <span>{{ saving ? "正在应用…" : "应用按住说话" }}</span>
-                <AppIcon name="chevron" />
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === 'wechat-current'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </section>
-          </aside>
-        </template>
-
-        <template v-else-if="activeProvider === 'qianwen'">
-          <div class="ime-panel-copy">
-            <span class="ime-eyebrow">{{ activeLabel }} · 四种语音快捷键</span>
-            <h4>选择与千问输入法一致的按住说话快捷键</h4>
-            <p id="ime-qianwen-summary">
-              千问输入法可将“短按或按住说话”设为下方四种快捷键之一。本软件会在遥控器按下时按住、松开时释放同一组合。
-            </p>
-            <p class="ime-detail">
-              请在千问输入法“语音输入”中选择相同组合；此处不会自动修改千问设置。右 Alt 是千问的默认快捷键。
-            </p>
-          </div>
-          <aside class="ime-panel-action ime-qianwen-actions">
-            <section v-for="option in qianwenOptions" :key="option.preset" class="ime-qianwen-option">
-              <div class="ime-option-head">
-                <span class="ime-status">{{ option.status }}</span>
-                <span v-if="activePreset === option.preset" class="ime-current">当前已应用</span>
-              </div>
-              <strong>{{ option.shortcut }}</strong>
-              <p>触发模式：按住</p>
-              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === option.preset" :disabled="!configReady || saving" @click="apply(option.preset)">
-                <span>{{ saving ? "正在应用…" : `应用 ${option.shortcut}` }}</span>
-                <AppIcon name="chevron" />
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === option.preset" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </section>
-          </aside>
-        </template>
-
-        <template v-else>
-          <div class="ime-panel-copy">
-            <span class="ime-eyebrow">豆包输入法 · 语音输入</span>
-            <h4>按你的豆包语音模式选择同一套快捷键</h4>
-            <p id="ime-doubao-summary">
-              豆包输入法的长按模式使用 <code>右 Alt</code>；免按模式使用
-              <code>右 Alt + 空格</code>。
-            </p>
-            <p class="ime-detail">
-              免按模式更适合电脑麦克风：小米遥控器松开语音键后会停止传送音频。使用遥控器麦克风时，请选择长按模式。
-            </p>
-          </div>
-          <aside class="ime-panel-action ime-doubao-actions">
-            <section class="ime-doubao-option">
-              <div class="ime-option-head">
-                <span class="ime-status">推荐 · 长按模式</span>
-                <span v-if="activePreset === 'doubao-hold'" class="ime-current">当前已应用</span>
-              </div>
-              <strong>右 Alt</strong>
-              <p>触发模式：按住遥控器语音键说话，松开结束。</p>
-              <button class="ime-button ime-button--primary" type="button" :aria-pressed="activePreset === 'doubao-hold'" :disabled="!configReady || saving" @click="apply('doubao-hold')">
-                <span>{{ saving ? "正在应用…" : "应用右 Alt 长按" }}</span>
-                <AppIcon name="chevron" />
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === 'doubao-hold'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </section>
-            <section class="ime-doubao-option">
-              <div class="ime-option-head">
-                <span class="ime-status">免按模式</span>
-                <span v-if="activePreset === 'doubao-hands-free'" class="ime-current">当前已应用</span>
-              </div>
-              <strong>右 Alt + 空格</strong>
-              <p>触发模式：短按启动，随后按任意键结束。</p>
-              <button class="ime-button ime-button--secondary" type="button" :aria-pressed="activePreset === 'doubao-hands-free'" :disabled="!configReady || saving" @click="apply('doubao-hands-free')">
-                <span>{{ saving ? "正在应用…" : "应用右 Alt + 空格" }}</span>
-                <AppIcon name="chevron" />
-              </button>
-              <span v-if="applyHint && lastAppliedPreset === 'doubao-hands-free'" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
-            </section>
-          </aside>
-        </template>
+            <span v-if="applyHint && lastAppliedPreset === option.preset" class="ime-apply-hint" aria-live="polite">{{ applyHint }}</span>
+          </section>
+        </div>
       </div>
     </section>
   </div>
@@ -358,8 +288,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-dialog {
   width: min(920px, calc(100vw - 64px));
-  height: min(560px, calc(100vh - 64px));
-  height: min(560px, calc(100dvh - 64px));
+  height: min(500px, calc(100vh - 64px));
+  height: min(500px, calc(100dvh - 64px));
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -373,10 +303,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-dialog-head {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) auto minmax(80px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
-  padding: 18px 20px 14px;
+  gap: 13px 16px;
+  padding: 18px 24px 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -384,13 +314,14 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 .ime-title-block p,
 .ime-panel-copy h4,
 .ime-panel-copy p,
-.ime-panel-copy ol,
 .ime-panel-action p { margin: 0; }
 .ime-title-block h3 { font-size: 16px; color: var(--text); }
 .ime-title-block p { margin-top: 5px; font-size: 12px; color: var(--text-secondary); }
 
 .ime-provider-tabs {
-  display: inline-flex;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--nav-segment-border);
@@ -487,53 +418,43 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 .ime-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(280px, .95fr);
+  grid-template-columns: minmax(205px, 1fr) minmax(0, 2.35fr);
   gap: 24px;
-  align-items: stretch;
+  align-content: start;
   min-height: 0;
   padding: 24px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
-.ime-panel-copy { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; min-width: 0; }
-.ime-eyebrow { color: var(--primary); font-size: 12px; font-weight: 700; }
-.ime-panel-copy h4 { color: var(--text); font-size: 20px; line-height: 1.32; }
-.ime-panel-copy p, .ime-panel-copy ol { color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
-.ime-panel-copy code { padding: 2px 6px; border-radius: 4px; background: var(--surface-hover); color: var(--text); font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
-.ime-panel-copy ol { padding-left: 1.3em; }
-.ime-panel-copy li + li { margin-top: 5px; }
-.ime-detail { color: var(--text-muted) !important; }
-
-.ime-panel-action { display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
-.ime-callout { align-items: flex-start; gap: 10px; }
-.ime-status { padding: 3px 7px; border: 1px solid var(--info-border); border-radius: 999px; color: var(--info-text); background: var(--info-bg); font-size: 11px; font-weight: 600; }
-.ime-callout strong, .ime-placeholder-action strong { color: var(--text); font-size: 17px; }
-.ime-callout p { color: var(--text-secondary); font-size: 12px; }
-.ime-callout .ime-button { margin-top: 6px; }
-.ime-apply-hint { color: var(--success-text); font-size: 12px; line-height: 1.45; }
-
-.ime-wechat-actions, .ime-qianwen-actions, .ime-doubao-actions { gap: 12px; padding: 14px; }
-.ime-wechat-option, .ime-qianwen-option, .ime-doubao-option { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
-.ime-option-head { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; }
+.ime-panel-copy { display: grid; align-content: start; justify-items: center; gap: 10px; min-width: 0; padding: 18px 4px 0; text-align: center; }
+.ime-provider-icon { display: block; width: 64px; height: 64px; margin-bottom: 4px; border-radius: 14px; object-fit: contain; }
+.ime-panel-copy h4 { color: var(--text); font-size: 18px; line-height: 1.35; text-wrap: balance; }
+.ime-panel-copy p { max-width: 235px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; text-wrap: pretty; }
+.ime-panel-copy .ime-detail { color: var(--text-muted); }
+.ime-panel-action { display: grid; align-content: start; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.ime-option { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
+.ime-option-head { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; }
+.ime-status { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
 .ime-current { color: var(--success-text); font-size: 11px; font-weight: 700; }
-.ime-wechat-option strong, .ime-qianwen-option strong, .ime-doubao-option strong { color: var(--text); font-size: 16px; }
-.ime-wechat-option p, .ime-qianwen-option p, .ime-doubao-option p { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.ime-wechat-option .ime-button, .ime-qianwen-option .ime-button, .ime-doubao-option .ime-button { width: 100%; margin-top: 2px; }
+.ime-option strong { color: var(--text); font-size: 15px; overflow-wrap: anywhere; }
+.ime-option p { flex: 1; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.ime-option .ime-button { width: 100%; margin-top: 4px; }
+.ime-apply-hint { color: var(--success-text); font-size: 12px; line-height: 1.45; }
 
 @media (max-width: 780px) {
   .ime-backdrop { padding: 18px; }
   .ime-dialog {
     width: min(100%, calc(100vw - 36px));
-    height: min(560px, calc(100vh - 36px));
-    height: min(560px, calc(100dvh - 36px));
+    height: min(500px, calc(100vh - 36px));
+    height: min(500px, calc(100dvh - 36px));
   }
-  .ime-dialog-head { grid-template-columns: 1fr auto; }
-  .ime-provider-tabs { grid-column: 1 / -1; grid-row: 2; justify-self: center; }
   .ime-panel { grid-template-columns: 1fr; gap: 18px; padding: 20px; }
+  .ime-panel-copy { padding-top: 0; }
 }
 
 @media (max-width: 520px) {
-  .ime-provider-tabs button { min-width: 0; padding: 0 10px; }
+  .ime-provider-tabs button { min-width: 0; padding: 0 7px; font-size: 12px; }
+  .ime-panel-action { grid-template-columns: 1fr; }
   .ime-title-block p { display: none; }
   .ime-panel-copy h4 { font-size: 18px; }
 }

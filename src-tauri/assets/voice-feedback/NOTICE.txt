@@ -1,0 +1,18 @@
+Native guitar feedback: Meta Steel Guitar, Meta Creative Audio team.
+Source: https://github.com/facebookincubator/Meta-open-sound
+Pinned commit: e2ff154845994fe4135becc4d5b857c19f172784
+Public domain: CC0 1.0 Universal.
+Changes: seven original acoustic-guitar string recordings, trimmed, balanced,
+strummed as Cadd9/C-major, subtle room reflections, smooth release.
+No endorsement is implied. Embedded in Nexus Prime.
+
+Soft click and Message ding: Kenney Interface Sounds 1.0, CC0 1.0 Universal.
+Source: https://kenney.nl/assets/interface-sounds
+Archive mirror: https://gametech.byte888.com/vault/sfx/kenney/interface-sounds.zip
+Archive SHA-256: f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232
+Soft click: trimmed the two transients of Audio/switch_004.ogg as separate cues.
+Message ding: trimmed Audio/confirmation_001.ogg and Audio/confirmation_003.ogg.
+Both pairs were resampled, level-matched and faded for brief cues.
+
+Clear bell and Soft reply: original synthesized waveforms, generated with
+scripts/generate_voice_cues.py.

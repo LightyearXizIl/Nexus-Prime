@@ -39,6 +39,7 @@ export function recordAppEvent(event: AppLogEvent) {
 
 export async function loggedInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const started = performance.now();
+  const details = command === "save_global_settings" || command === "save_voice_feedback" ? {} : args ?? {};
   try {
     const result = args === undefined
       ? await invoke<T>(command)
@@ -48,7 +49,7 @@ export async function loggedInvoke<T>(command: string, args?: Record<string, unk
         category: "command",
         action: command,
         durationMs: Math.round(performance.now() - started),
-        details: args ?? {},
+        details,
       });
     }
     return result;
@@ -58,7 +59,7 @@ export async function loggedInvoke<T>(command: string, args?: Record<string, unk
       action: command,
       outcome: "error",
       durationMs: Math.round(performance.now() - started),
-      details: { args: args ?? {}, error: String(error) },
+      details: { args: details, error: String(error) },
     });
     throw error;
   }
@@ -86,7 +87,7 @@ export function installUiLogging() {
   }, true);
   document.addEventListener("change", (event) => {
     const element = event.target as HTMLInputElement | HTMLSelectElement | null;
-    if (!element || !["INPUT", "SELECT", "TEXTAREA"].includes(element.tagName)) return;
+    if (!element || element.type === "file" || !["INPUT", "SELECT", "TEXTAREA"].includes(element.tagName)) return;
     const value = element instanceof HTMLInputElement && element.type === "checkbox"
       ? element.checked
       : element.value;

@@ -52,7 +52,7 @@ Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具�
 
 | 项目 | 说明 |
 | --- | --- |
-| 当前版本 | v0.5.8 |
+| 当前版本 | v0.5.9 |
 | 技术栈 | Rust · Tauri 2 · Vue 3 · TypeScript |
 | 运行平台 | Windows 10 / 11（64 位） |
 | 通信范围 | 蓝牙、PCM 与 HID 均绑定本机回环地址 |
@@ -61,6 +61,8 @@ Nexus Prime 是一款面向 Windows 的小米遥控器 2 Pro 桌面桥接工具�
 > 本项目不需要 API Key、账号密码或远程业务服务器。音频和 HID 桥接均绑定本机回环地址。
 
 ## 最近更新
+
+- **v0.5.9**（2026-11-20）：语音键开始音与结束音可试听、调音量和裁剪，支持 10 组预设与多首自定义歌曲。输入法设置更新为千问、微信、豆包，统一页头、滚动条和设置控件。
 
 - **v0.5.8**（2026-11-14）：按 v0.5.6 恢复界面布局与居中导航，三个窗口按钮移至独立自绘标题栏；状态提示只在实时动态中完整换行，按键映射隐藏右侧滚动条但保留滚动，赞赏红心恢复实心与跳动。
 
@@ -155,9 +157,9 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 
 从 [GitHub Releases](https://github.com/LightyearXizIl/Nexus-Prime/releases) 下载 NSIS 安装包：
 
-- NSIS：`Nexus.Prime_0.5.8_x64-setup.exe`
+- NSIS：`Nexus.Prime_0.5.9_x64-setup.exe`
 
-当前正式版：[v0.5.8 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.5.8)。
+当前正式版：[v0.5.9 Release](https://github.com/LightyearXizIl/Nexus-Prime/releases/tag/v0.5.9)。
 
 安装步骤：
 
@@ -170,6 +172,10 @@ Windows 依赖可参考 [Tauri 2 官方准备工作](https://v2.tauri.app/start/
 从旧版升级时直接运行新版安装包即可原位覆盖，不需要先卸载；按键映射、连击、长按与全局设置会继续保存在应用数据目录中。
 
 VB-CABLE 安装可能需要管理员权限和重启。其许可证与再分发条件见 [第三方组件声明](./THIRD_PARTY_NOTICES.md)。
+
+### 语音提示音
+
+在「设置 → 语音提示音」开启功能，可选预设或导入本机歌曲。导入后，在开始音和结束音的波形上分别选取片段，可拖动全曲波形定位、试听、恢复默认和调整播放音量。每首歌曲的两个片段与设置自动保存，重启后可从「已保存歌曲」切换。
 
 ### 自动连接与等待状态
 

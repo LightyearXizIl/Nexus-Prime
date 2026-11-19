@@ -1,0 +1,55 @@
+.page-shell {
+  width: 100%;
+  max-width: 1260px;
+  margin-inline: auto;
+}
+
+.page-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px 20px;
+  min-height: 64px;
+  margin-bottom: 20px;
+}
+
+.page-heading-copy { align-self: start; min-width: 0; }
+.page-heading h1 { margin: 0; color: var(--text); font-size: 27px; font-weight: 800; letter-spacing: -0.65px; }
+.page-heading-copy p { margin: 7px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
+.page-heading-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+
+.page-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 112px;
+  min-height: 38px;
+  padding: 7px 15px 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+button.page-action { cursor: pointer; transition: background .15s ease, border-color .15s ease, opacity .15s ease; }
+button.page-action:hover:not(:disabled) { background: var(--primary-dark); }
+button.page-action:disabled { cursor: default; }
+.page-action.is-muted { border-color: var(--border); color: var(--text-secondary); background: var(--surface-raised); }
+.page-action.is-error, .page-action.is-danger { border-color: var(--danger); color: var(--danger-text); background: var(--danger-bg); }
+button.page-action.is-error:hover:not(:disabled), button.page-action.is-danger:hover:not(:disabled) { background: var(--danger-bg); }
+.page-action-symbol { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; }
+
+@media (max-width: 680px) {
+  .page-heading { grid-template-columns: 1fr; margin-bottom: 14px; }
+  .page-heading h1 { font-size: 24px; }
+  .page-heading-actions { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.page-action { transition: none; }
+}
